@@ -114,7 +114,6 @@
   let reactionTimer = null;
   let tickTimer = null;
   let saveTimer = null;
-  let walkTimer = null;
   let lastFrameAt = Date.now();
   let coinWindow = 0;
   let lastPaydayAt = 0;
@@ -156,7 +155,7 @@
   }
 
   function speak(text, ms) {
-    if (!state.settings.showBubble) return;
+    if (!state.settings.showBubble || state.settings.dnd) return;
     el.bubbleText.textContent = text;
     el.bubble.classList.add("show");
     if (bubbleTimer) clearTimeout(bubbleTimer);
@@ -339,7 +338,7 @@
     const wait =
       delay === undefined ? G.nextActionDelay(undefined, state.settings.ambientIntervalSec) : delay;
     ambientTimer = setTimeout(() => {
-      if (!dragging && Date.now() >= busyUntil) {
+      if (!dragging && !state.settings.dnd && Date.now() >= busyUntil) {
         const action = G.pickAmbientAction(actions, state);
         if (action && action.name !== currentAction) {
           playReaction(action.name, Math.min(6000, action.durationMs * 2 + 900));
@@ -543,12 +542,12 @@
   function renderConfig() {
     const settings = state.settings;
     const ambient = Math.round(settings.ambientIntervalSec || 60);
-    const walk = Math.round(settings.autoWalkIntervalSec || 45);
+    const walk = Math.round(settings.roamSpeed || 55);
     const scale = Math.round((settings.scale || 1) * 100);
     el.cfgAmbient.value = String(Math.min(600, Math.max(5, ambient)));
     el.cfgAmbientVal.textContent = `${ambient} 秒`;
-    el.cfgWalk.value = String(Math.min(600, Math.max(10, walk)));
-    el.cfgWalkVal.textContent = `${walk} 秒`;
+    el.cfgWalk.value = String(Math.min(200, Math.max(20, walk)));
+    el.cfgWalkVal.textContent = `${walk} px/秒`;
     el.cfgScale.value = String(Math.min(150, Math.max(70, scale)));
     el.cfgScaleVal.textContent = `${scale}%`;
     el.config.querySelectorAll("[data-toggle]").forEach((button) => {
@@ -952,6 +951,8 @@
     if (!due.length) return;
     due.forEach((item) => {
       G.markScheduleNotified(state, item.id, now);
+      // 勿扰模式下只记账，不发声、不弹通知
+      if (state.settings.dnd) return;
       // 超过 90 分钟的老日程不打扰
       if (now - G.scheduleTimestamp(item, now) > 90 * 60000) return;
       speak(`该${item.text}啦`, 3400);
@@ -1088,7 +1089,7 @@
     if (key === "showBubble") {
       if (!state.settings.showBubble) el.bubble.classList.remove("show");
     }
-    if (key === "autoWalk") scheduleAutoWalk();
+    if (key === "autoWalk" || key === "followCursor") refreshRects();
     if (key === "sound" && state.settings.sound) playSound("coin");
     updateMenu();
     if (configOpen) renderConfig();
@@ -1102,6 +1103,8 @@
       safeMode: "安全模式",
       sound: "音效",
       analytics: "本地统计",
+      followCursor: "跟随鼠标",
+      dnd: "勿扰模式",
     };
     toast(`${labels[key] || key}：${state.settings[key] ? "开" : "关"}`);
   }
@@ -1115,6 +1118,7 @@
       startScreenY: event.screenY,
       startBounds: null,
       moved: false,
+      samples: [],
     };
     try {
       el.petWrap.setPointerCapture(event.pointerId);
@@ -1137,6 +1141,8 @@
       setAction(WALK_ACTION, { force: true });
     }
     if (!dragging.moved || !dragging.startBounds) return;
+    dragging.samples.push({ x: event.screenX, y: event.screenY, t: performance.now() });
+    if (dragging.samples.length > 8) dragging.samples.shift();
     api.setPosition({
       x: dragging.startBounds.x + dx,
       y: dragging.startBounds.y + dy,
@@ -1146,6 +1152,17 @@
   function endDrag(event) {
     if (!dragging || (event && event.pointerId !== dragging.pointerId)) return;
     const moved = dragging.moved;
+    let velocity = { x: 0, y: 0 };
+    if (moved && dragging.samples.length >= 2) {
+      const now = performance.now();
+      const recent = dragging.samples.filter((sample) => now - sample.t < 160);
+      if (recent.length >= 2) {
+        const first = recent[0];
+        const last = recent[recent.length - 1];
+        const dt = Math.max(16, last.t - first.t);
+        velocity = { x: (last.x - first.x) / dt, y: (last.y - first.y) / dt };
+      }
+    }
     try {
       if (el.petWrap.hasPointerCapture(dragging.pointerId))
         el.petWrap.releasePointerCapture(dragging.pointerId);
@@ -1156,53 +1173,178 @@
     el.petWrap.classList.remove("dragging");
     busyUntil = 0;
     if (moved) {
-      setAction(baseAction, { force: true });
+      if (Math.hypot(velocity.x, velocity.y) > 0.25) {
+        throwPet(velocity.x, velocity.y);
+      } else {
+        setAction(baseAction, { force: true });
+        refreshRects();
+      }
       scheduleSave(600);
     } else {
       handlePet();
     }
   }
 
-  // ------------------------------------------------------------- 自动散步
-  function scheduleAutoWalk() {
-    if (TEST_MODE) return;
-    if (walkTimer) clearTimeout(walkTimer);
-    const base = Math.max(10, Number(state.settings.autoWalkIntervalSec) || 45) * 1000;
-    const wait = base * (0.75 + Math.random() * 0.5);
-    walkTimer = setTimeout(async () => {
-      if (state.settings.autoWalk && !dragging && !menuOpen && Date.now() >= busyUntil) {
-        await autoWalkStep();
-      }
-      scheduleAutoWalk();
-    }, wait);
+  // ------------------------------------------------------------- 自主漫游
+  // 仿主流桌宠：在桌面上走来走去、走走停停；可选跟随鼠标；拖拽松手后会抛掷。
+  const roam = {
+    timer: null,
+    state: "idle", // idle | walking | paused
+    targetX: null,
+    dir: 1,
+    pauseUntil: 0,
+    bounds: null,
+    area: null,
+    flying: null,
+  };
+
+  async function refreshRects() {
+    roam.bounds = await api.getBounds();
+    roam.area = await api.getWorkArea();
   }
 
-  async function autoWalkStep() {
-    const bounds = await api.getBounds();
-    if (!bounds) return;
-    const distance = (Math.random() < 0.5 ? -1 : 1) * rand(70, 180);
-    const duration = 1500;
-    const startedAt = performance.now();
-    busyUntil = Date.now() + duration + 400;
+  function setFlip(flip) {
+    el.petWrap.classList.toggle("flip", Boolean(flip));
+  }
+
+  function stopRoamWalk() {
+    if (roam.state === "walking") setAction(baseAction, { force: true });
+    roam.state = "idle";
+    roam.targetX = null;
+    setFlip(false);
+  }
+
+  async function planRoamStep() {
+    if (!roam.bounds || !roam.area) await refreshRects();
+    const bounds = roam.bounds;
+    const area = roam.area;
+    if (!bounds || !area) return;
+
+    let targetX;
+    if (state.settings.followCursor) {
+      const cursor = await api.getCursor();
+      const center = bounds.x + bounds.width / 2;
+      if (Math.abs(cursor.x - center) < 160) {
+        roam.state = "paused";
+        roam.pauseUntil = Date.now() + rand(2500, 5000);
+        return;
+      }
+      targetX = cursor.x - bounds.width / 2;
+    } else {
+      roam.dir = Math.random() < 0.5 ? -1 : 1;
+      if (bounds.x <= area.x + 16) roam.dir = 1;
+      if (bounds.x >= area.x + area.width - bounds.width - 16) roam.dir = -1;
+      targetX = bounds.x + roam.dir * rand(90, 280);
+    }
+
+    targetX = Math.max(area.x, Math.min(area.x + area.width - bounds.width, targetX));
+    if (Math.abs(targetX - bounds.x) < 12) {
+      roam.state = "paused";
+      roam.pauseUntil = Date.now() + rand(4000, 9000);
+      return;
+    }
+    roam.dir = targetX < bounds.x ? -1 : 1;
+    roam.targetX = targetX;
+    roam.state = "walking";
+    setFlip(roam.dir < 0);
     setAction(WALK_ACTION, { force: true });
-    return new Promise((resolve) => {
-      // 用定时器推进而不是 rAF：窗口被遮挡时也能走完，避免卡在走路动作上
-      const timer = setInterval(() => {
-        if (!state.settings.autoWalk || dragging) {
-          clearInterval(timer);
-          setAction(baseAction, { force: true });
-          return resolve();
-        }
-        const t = Math.min(1, (performance.now() - startedAt) / duration);
-        api.setPosition({ x: bounds.x + distance * t, y: bounds.y });
-        if (t >= 1) {
-          clearInterval(timer);
-          setAction(baseAction, { force: true });
-          scheduleSave(600);
-          resolve();
-        }
-      }, 16);
-    });
+  }
+
+  async function roamTick() {
+    if (!state || state.settings.dnd) return;
+    if (!state.settings.autoWalk && !state.settings.followCursor) {
+      if (roam.state === "walking") stopRoamWalk();
+      return;
+    }
+    if (roamingBlocked() || Date.now() < busyUntil || roam.flying) {
+      if (roam.state === "walking") stopRoamWalk();
+      return;
+    }
+    if (!roam.bounds) await refreshRects();
+    if (roam.state === "paused" && Date.now() < roam.pauseUntil) return;
+    if (roam.state !== "walking") {
+      await planRoamStep();
+      return;
+    }
+
+    const step = ((state.settings.roamSpeed || 55) / 1000) * 16;
+    const nextX =
+      roam.dir > 0
+        ? Math.min(roam.targetX, roam.bounds.x + step)
+        : Math.max(roam.targetX, roam.bounds.x - step);
+    roam.bounds.x = nextX;
+    api.setPosition({ x: nextX, y: roam.bounds.y });
+    if (Math.abs(nextX - roam.targetX) < 1) {
+      stopRoamWalk();
+      roam.state = "paused";
+      roam.pauseUntil = Date.now() + rand(5000, 14000);
+    }
+  }
+
+  function roamingBlocked() {
+    return Boolean(
+      dragging ||
+      menuOpen ||
+      libraryOpen ||
+      shopOpen ||
+      scheduleOpen ||
+      configOpen ||
+      growthOpen ||
+      !el.petWrap
+    );
+  }
+
+  function startRoam() {
+    if (TEST_MODE) return;
+    if (roam.timer) clearInterval(roam.timer);
+    refreshRects();
+    roam.timer = setInterval(roamTick, 16);
+  }
+
+  /** 松手时按最后几个采样点算速度，做抛物线 + 边缘反弹。 */
+  async function throwPet(vx, vy) {
+    const bounds = await api.getBounds();
+    const area = await api.getWorkArea();
+    if (!bounds || !area) return;
+    let x = bounds.x;
+    let y = bounds.y;
+    let speedX = vx * 16;
+    let speedY = vy * 16;
+    roam.flying = true;
+    setAction(WALK_ACTION, { force: true });
+    const timer = setInterval(() => {
+      speedY += 0.55;
+      speedX *= 0.992;
+      x += speedX;
+      y += speedY;
+      const right = area.x + area.width - bounds.width;
+      const bottom = area.y + area.height - bounds.height;
+      if (x < area.x) {
+        x = area.x;
+        speedX = Math.abs(speedX) * 0.55;
+      } else if (x > right) {
+        x = right;
+        speedX = -Math.abs(speedX) * 0.55;
+      }
+      if (y < area.y) {
+        y = area.y;
+        speedY = Math.abs(speedY) * 0.5;
+      } else if (y > bottom) {
+        y = bottom;
+        speedY = -Math.abs(speedY) * 0.42;
+        speedX *= 0.86;
+      }
+      api.setPosition({ x, y });
+      roam.bounds = { ...bounds, x, y };
+      if (Math.abs(speedX) < 0.2 && Math.abs(speedY) < 0.2 && Math.abs(y - bottom) < 2) {
+        clearInterval(timer);
+        roam.flying = null;
+        setAction(baseAction, { force: true });
+        bounce("hurt");
+        refreshRects();
+        scheduleSave(600);
+      }
+    }, 16);
   }
 
   // ------------------------------------------------------------- 菜单 / 穿透
@@ -1276,7 +1418,13 @@
       else if (cmd === "play") doPlay();
       else if (cmd === "upgrade") doUpgrade();
       else if (cmd === "next-action") nextAction();
-      else if (cmd === "library") openLibrary();
+      else if (cmd === "summon") {
+        api.summon().then(() => {
+          playReaction(pickByCategory("happy").name, 1600);
+          refreshRects();
+          toast("我在这儿！");
+        });
+      } else if (cmd === "library") openLibrary();
       else if (cmd === "shop") openSidePanel("shop");
       else if (cmd === "schedule") openSidePanel("schedule");
       else if (cmd === "config") openSidePanel("config");
@@ -1347,9 +1495,8 @@
       scheduleSave(500);
     });
     el.cfgWalk.addEventListener("input", () => {
-      state.settings.autoWalkIntervalSec = Number(el.cfgWalk.value);
-      el.cfgWalkVal.textContent = `${state.settings.autoWalkIntervalSec} 秒`;
-      if (!TEST_MODE) scheduleAutoWalk();
+      state.settings.roamSpeed = Number(el.cfgWalk.value);
+      el.cfgWalkVal.textContent = `${state.settings.roamSpeed} px/秒`;
       scheduleSave(500);
     });
     el.cfgScale.addEventListener("input", () => {
@@ -1379,7 +1526,7 @@
       setAction(currentAction, { force: true });
       if (!TEST_MODE) {
         scheduleAmbient();
-        scheduleAutoWalk();
+        refreshRects();
       }
       reportHitboxes();
       scheduleSave(500);
@@ -1477,7 +1624,7 @@
 
     startLoops();
     scheduleAmbient(4000);
-    scheduleAutoWalk();
+    startRoam();
     checkScheduleReminders();
     setInterval(checkScheduleReminders, 20000);
     nextMumbleAt = Date.now() + rand(15000, 30000);

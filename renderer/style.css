@@ -81,6 +81,10 @@ body.lib-open #stage {
   opacity: 1;
 }
 
+#pet-wrap.flip .pet-layer.in {
+  transform: scaleX(-1);
+}
+
 .pet-layer:not(.in) {
   position: absolute;
   bottom: 0;

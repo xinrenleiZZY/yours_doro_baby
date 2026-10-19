@@ -12,6 +12,7 @@ const {
   nativeImage,
   shell,
   Notification,
+  globalShortcut,
 } = require("electron");
 const fs = require("fs");
 const path = require("path");
@@ -250,6 +251,24 @@ function safeSetPosition(x, y) {
   }
 }
 
+function summonToCursor() {
+  if (!win) return null;
+  const point = screen.getCursorScreenPoint();
+  const area = screen.getDisplayNearestPoint(point).workArea;
+  const bounds = win.getBounds();
+  const x = Math.max(
+    area.x + 8,
+    Math.min(area.x + area.width - bounds.width - 8, point.x - bounds.width / 2)
+  );
+  const y = Math.max(
+    area.y + 8,
+    Math.min(area.y + area.height - bounds.height - 8, point.y - bounds.height * 0.6)
+  );
+  win.showInactive();
+  safeSetPosition(x, y);
+  return { x, y };
+}
+
 function createWindow() {
   const saved = readSave();
   const savedWindow = (saved && saved.window) || {};
@@ -347,6 +366,7 @@ function buildTrayMenu() {
     { type: "separator" },
     { label: "喂饭（20 金币）", click: () => send("pet:command", "feed") },
     { label: "陪玩（30 金币）", click: () => send("pet:command", "play") },
+    { label: "叫它过来（Ctrl+Alt+R）", click: summonToCursor },
     { label: "换个动作", click: () => send("pet:command", "next-action") },
     { label: "搬砖升级", click: () => send("pet:command", "upgrade") },
     { type: "separator" },
@@ -450,6 +470,18 @@ function registerIpc() {
   });
 
   ipcMain.handle("win:get-bounds", () => (win ? win.getBounds() : null));
+
+  ipcMain.handle("screen:get-work-area", () => {
+    if (!win) return screen.getPrimaryDisplay().workArea;
+    const bounds = win.getBounds();
+    return screen.getDisplayNearestPoint({
+      x: bounds.x + bounds.width / 2,
+      y: bounds.y + bounds.height / 2,
+    }).workArea;
+  });
+
+  ipcMain.handle("screen:get-cursor", () => screen.getCursorScreenPoint());
+  ipcMain.handle("win:summon", () => summonToCursor());
 
   ipcMain.handle("pet:hitboxes", (_event, boxes) => {
     pointerWatch.hitboxes = sanitizeHitboxes(boxes);
@@ -575,6 +607,9 @@ if (!gotLock) {
     registerIpc();
     createWindow();
     createTray();
+    const shortcutToggle = globalShortcut.register("CommandOrControl+Alt+D", () => toggleWindow());
+    const shortcutSummon = globalShortcut.register("CommandOrControl+Alt+R", () => summonToCursor());
+    log("info", "注册全局快捷键", { toggle: shortcutToggle, summon: shortcutSummon });
 
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -590,5 +625,9 @@ if (!gotLock) {
   app.on("before-quit", () => {
     send("pet:command", "before-quit");
     endSession();
+  });
+
+  app.on("will-quit", () => {
+    globalShortcut.unregisterAll();
   });
 }

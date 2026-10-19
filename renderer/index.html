@@ -86,6 +86,7 @@
         <button data-cmd="library"><span>动作库…</span><em id="menu-library-count"></em></button>
         <button data-cmd="next-action">随便来一个</button>
         <button data-cmd="clear-base">恢复随机表演</button>
+        <button data-cmd="summon">叫它过来</button>
       </div>
       <div class="menu-title">小生意</div>
       <div class="menu-group">
@@ -141,8 +142,8 @@
         <p class="cfg-hint">两次随机表演之间的基础间隔，实际有 ±25% 浮动</p>
       </div>
       <div class="cfg-section">
-        <div class="cfg-label"><span>自动散步间隔</span><b id="cfg-walk-val">45 秒</b></div>
-        <input id="cfg-walk" type="range" min="10" max="600" step="5" value="45" />
+        <div class="cfg-label"><span>漫游速度</span><b id="cfg-walk-val">55 px/秒</b></div>
+        <input id="cfg-walk" type="range" min="20" max="200" step="5" value="55" />
       </div>
       <div class="cfg-section">
         <div class="cfg-label"><span>宠物大小</span><b id="cfg-scale-val">100%</b></div>
@@ -156,6 +157,8 @@
         <button data-toggle="safeMode"><span>安全模式</span><i class="switch"></i></button>
         <button data-toggle="sound"><span>音效</span><i class="switch"></i></button>
         <button data-toggle="analytics"><span>本地统计</span><i class="switch"></i></button>
+        <button data-toggle="followCursor"><span>跟随鼠标</span><i class="switch"></i></button>
+        <button data-toggle="dnd"><span>勿扰模式</span><i class="switch"></i></button>
       </div>
       <div class="cfg-footer">
         <span class="cfg-hint">修改立即生效并自动保存</span>

@@ -395,5 +395,19 @@ test("主题购买后立即应用，且不能重复购买", () => {
   assert.strictEqual(G.purchase(state, G.SHOP_ITEMS.theme_night, NOW).reason, "owned");
 });
 
+test("漫游 / 跟随鼠标 / 勿扰设置会被保留并夹取", () => {
+  const state = G.hydrate({ settings: { roamSpeed: 9999, followCursor: true, dnd: true } }, NOW);
+  assert.strictEqual(state.settings.roamSpeed, 200);
+  assert.strictEqual(state.settings.followCursor, true);
+  assert.strictEqual(state.settings.dnd, true);
+  const clean = sanitizeSave({
+    coins: 1,
+    settings: { roamSpeed: 999, followCursor: true, dnd: true },
+  });
+  assert.strictEqual(clean.settings.roamSpeed, 200);
+  assert.strictEqual(clean.settings.followCursor, true);
+  assert.strictEqual(clean.settings.dnd, true);
+});
+
 console.log(`\n通过 ${passed} / ${passed + failures.length}`);
 if (failures.length) process.exit(1);

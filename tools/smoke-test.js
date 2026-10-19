@@ -493,7 +493,7 @@ async function runScenarios(win) {
   );
   check(
     "配置中心能打开",
-    config.open && config.toggles === 7 && config.ambient === "60",
+    config.open && config.toggles === 9 && config.ambient === "60",
     JSON.stringify(config)
   );
 

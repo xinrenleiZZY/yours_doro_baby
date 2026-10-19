@@ -74,6 +74,9 @@
       sound: true,
       theme: "default",
       analytics: false,
+      followCursor: false,
+      dnd: false,
+      roamSpeed: 55,
     },
   };
 
@@ -386,6 +389,7 @@
       state.settings.theme = "default";
     }
     state.settings.analytics = state.settings.analytics === true;
+    state.settings.roamSpeed = num(state.settings.roamSpeed, 55, 20, 200);
     if (state.lastTick > now) state.lastTick = now;
     return state;
   }

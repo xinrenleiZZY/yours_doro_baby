@@ -16,6 +16,9 @@ contextBridge.exposeInMainWorld("petAPI", {
   loadActions: () => ipcRenderer.invoke("pet:actions"),
 
   getBounds: () => ipcRenderer.invoke("win:get-bounds"),
+  getWorkArea: () => ipcRenderer.invoke("screen:get-work-area"),
+  getCursor: () => ipcRenderer.invoke("screen:get-cursor"),
+  summon: () => ipcRenderer.invoke("win:summon"),
   setPosition: (pos) => ipcRenderer.invoke("win:set-position", pos),
   setUiSize: (size) => ipcRenderer.invoke("win:set-ui-size", size),
   setHitboxes: (boxes) => ipcRenderer.invoke("pet:hitboxes", boxes),
