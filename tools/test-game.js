@@ -108,9 +108,9 @@ test("摸头加心情并且掉 1~3 金币", () => {
   for (const roll of [0, 0.5, 0.999]) {
     const state = G.hydrate({ mood: 50 }, NOW);
     const result = G.pet(state, NOW, () => roll);
-    assert.ok(result.bonus >= 1 && result.bonus <= 3);
+    assert.ok(result.bonus >= 1 && result.bonus <= 2);
     assert.strictEqual(state.coins, result.bonus);
-    assert.strictEqual(state.mood, 51.2);
+    assert.strictEqual(state.mood, 51);
     assert.strictEqual(state.stats.pets, 1);
   }
 });
@@ -227,13 +227,13 @@ test("商城：装扮购买后解锁", () => {
   assert.strictEqual(state.coins, 940);
 });
 
-test("咖啡让产出翻倍，招财猫永久 +10%", () => {
-  const state = G.hydrate({ coins: 1000, mood: 50, satiety: 80 }, NOW);
+test("咖啡让产出 ×1.5，招财猫永久 +10%", () => {
+  const state = G.hydrate({ coins: 3000, mood: 50, satiety: 80 }, NOW);
   const base = G.incomePerSecond(state);
   G.purchase(state, G.SHOP_ITEMS.coffee, Date.now());
-  assert.ok(G.incomePerSecond(state) >= base * 1.99);
+  assert.ok(G.incomePerSecond(state) >= base * 1.49);
   G.purchase(state, G.SHOP_ITEMS.lucky_cat, NOW);
-  assert.ok(G.incomePerSecond(state) >= base * 2 * 1.09);
+  assert.ok(G.incomePerSecond(state) >= base * 1.5 * 1.09);
 });
 
 test("日程：添加、到期、提醒、完成、删除", () => {
@@ -388,7 +388,7 @@ test("日程支持工作日 / 周末过滤，并能延后", () => {
 });
 
 test("主题购买后立即应用，且不能重复购买", () => {
-  const state = G.hydrate({ coins: 2000 }, NOW);
+  const state = G.hydrate({ coins: 10000 }, NOW);
   assert.strictEqual(G.purchase(state, G.SHOP_ITEMS.theme_night, NOW).ok, true);
   assert.strictEqual(state.settings.theme, "night");
   assert.strictEqual(state.perks.theme_night, true);

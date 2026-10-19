@@ -28,11 +28,11 @@
     feedValue: 30, // 一顿饭回多少饱食度
     playCost: 30, // 玩具的价格
     playValue: 25, // 玩具回多少心情
-    petCooldownMs: 1200,
-    petMoodGain: 1.2,
-    petCoinBonus: [1, 3], // 摸头随机掉落的金币区间
+    petCooldownMs: 1500,
+    petMoodGain: 1.0,
+    petCoinBonus: [1, 2], // 摸头随机掉落的金币区间
     upgradeBaseCost: 120, // 升级花费 = upgradeBaseCost * level^upgradeCostPower
-    upgradeCostPower: 1.45,
+    upgradeCostPower: 1.35,
     offlineEfficiency: 0.5, // 离线收益按在线的多少比例结算
     offlineCapHours: 8, // 离线收益最多结算多少小时
     offlineSatietyFloor: 30, // 离线时饱食度最低掉到这个值
@@ -159,17 +159,17 @@
       id: "coffee",
       name: "提神咖啡",
       type: "buff",
-      price: 80,
+      price: 120,
       buff: "double_income",
       minutes: 10,
       icon: "☕",
-      desc: "接下来 10 分钟产出翻倍",
+      desc: "接下来 10 分钟产出 ×1.5",
     },
     lucky_cat: {
       id: "lucky_cat",
       name: "招财猫",
       type: "permanent",
-      price: 320,
+      price: 2000,
       icon: "🐱",
       desc: "永久 +10% 产出",
     },
@@ -178,7 +178,7 @@
       name: "夜行主题",
       type: "theme",
       theme: "night",
-      price: 800,
+      price: 6000,
       icon: "🌙",
       desc: "深色面板 + 夜间配色",
     },
@@ -187,7 +187,7 @@
       name: "薄荷主题",
       type: "theme",
       theme: "mint",
-      price: 1000,
+      price: 10000,
       icon: "🌿",
       desc: "清爽的薄荷绿面板",
     },
@@ -196,7 +196,7 @@
       name: "樱花主题",
       type: "theme",
       theme: "sakura",
-      price: 1200,
+      price: 16000,
       icon: "🌸",
       desc: "更浓的樱花粉面板",
     },
@@ -232,8 +232,8 @@
     },
   ];
 
-  const DRESS_BASE_PRICE = 60;
-  const DRESS_PRICE_STEP = 12;
+  const DRESS_BASE_PRICE = 80;
+  const DRESS_PRICE_STEP = 20;
   const SCHEDULE_MAX = 20;
 
   // 动作库按"分组"给随机表演加权：表情包/小剧场少一点，日常多一点
@@ -400,7 +400,7 @@
     const moodFactor = 1 + BALANCE.moodBonus * (state.mood / 100);
     const perkFactor = state.perks && state.perks.lucky_cat ? 1.1 : 1;
     const buffUntil = (state.buffs && state.buffs.double_income) || 0;
-    const buffFactor = buffUntil > Date.now() ? 2 : 1;
+    const buffFactor = buffUntil > Date.now() ? 1.5 : 1;
     const feedFactor =
       state.satiety < BALANCE.hungryThreshold
         ? state.satiety <= BALANCE.emptyThreshold
@@ -626,12 +626,12 @@
 
   function purchase(state, item, now) {
     if (!item || !item.id) return { ok: false, reason: "bad-item" };
-    if (!canAfford(state, item.price)) return { ok: false, reason: "coin" };
     if (item.type === "dress" && isUnlocked(state, { category: "dress", name: item.action })) {
       return { ok: false, reason: "owned" };
     }
     if (item.type === "permanent" && state.perks[item.id]) return { ok: false, reason: "owned" };
     if (item.type === "theme" && state.perks[`theme_${item.theme}`]) return { ok: false, reason: "owned" };
+    if (!canAfford(state, item.price)) return { ok: false, reason: "coin" };
 
     const ts = now || Date.now();
     state.coins -= item.price;

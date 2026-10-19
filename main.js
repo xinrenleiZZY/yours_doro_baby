@@ -306,9 +306,13 @@ function createWindow() {
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   win.setMenuBarVisibility(false);
   const panelArg = process.argv.find((arg) => arg.startsWith("--panel="));
+  const themeArg = process.argv.find((arg) => arg.startsWith("--theme="));
+  const query = {};
+  if (panelArg) query.panel = panelArg.split("=")[1];
+  if (themeArg) query.theme = themeArg.split("=")[1];
   win.loadFile(
     path.join(__dirname, "renderer", "index.html"),
-    panelArg ? { query: { panel: panelArg.split("=")[1] } } : undefined
+    Object.keys(query).length ? { query } : undefined
   );
 
   win.once("ready-to-show", () => {
@@ -514,12 +518,13 @@ function registerIpc() {
     };
     win.setSize(next.width, next.height, false);
     if (next.width > WINDOW_SIZE.width) {
-      // 展开动作库时尽量保证整块面板可见；关闭时会还原到原来的位置
+      // 展开面板时整块窗口必须留在工作区内，否则底部的按钮会被任务栏/屏幕边缘挡住
       uiRestoreBounds = previous;
       const bounds = win.getBounds();
       const area = screen.getDisplayNearestPoint({ x: bounds.x, y: bounds.y }).workArea;
       const x = Math.min(bounds.x, area.x + area.width - bounds.width - 8);
-      safeSetPosition(Math.max(area.x + 8, x), bounds.y);
+      const y = Math.min(bounds.y, area.y + area.height - bounds.height - 8);
+      safeSetPosition(Math.max(area.x + 8, x), Math.max(area.y + 8, y));
     } else if (uiRestoreBounds) {
       win.setBounds(uiRestoreBounds);
       uiRestoreBounds = null;

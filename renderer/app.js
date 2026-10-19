@@ -1636,6 +1636,10 @@
 
     // 调试入口：electron . --panel=shop / schedule / library
     const initialPanel = TEST_MODE ? null : new URLSearchParams(location.search).get("panel");
+    const themePreview = TEST_MODE ? null : new URLSearchParams(location.search).get("theme");
+    if (themePreview && ["night", "mint", "sakura"].includes(themePreview)) {
+      document.body.dataset.theme = themePreview;
+    }
     if (initialPanel) setTimeout(() => openSidePanel(initialPanel), 700);
 
     if (TEST_MODE) {
