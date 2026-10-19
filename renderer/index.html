@@ -23,6 +23,10 @@
           <span class="chip" id="chip-satiety">🍚 <b>80</b></span>
           <span class="chip" id="chip-mood">💗 <b>80</b></span>
         </div>
+        <div id="event-chips">
+          <span class="event-chip" id="wish-chip"></span>
+          <span class="event-chip" id="visitor-chip"></span>
+        </div>
       </div>
 
       <div id="bubble" class="interactive">
@@ -93,6 +97,8 @@
         <button data-cmd="shop"><span>商城</span><em>金币消费</em></button>
         <button data-cmd="schedule"><span>日程表</span><em id="menu-schedule-count"></em></button>
         <button data-cmd="growth"><span>任务与成就</span><em id="menu-task-count"></em></button>
+        <button data-cmd="gacha"><span>扭蛋机</span><em>500 / 次</em></button>
+        <button data-cmd="minigame"><span>接金币</span><em>小游戏</em></button>
       </div>
       <div class="menu-title">设置</div>
       <div class="menu-group">
@@ -175,10 +181,48 @@
       <div class="growth-scroll">
         <div class="cfg-label"><span>每日任务</span><b id="growth-daily-date"></b></div>
         <div id="growth-daily"></div>
+        <div class="cfg-label"><span>动作图鉴</span><b id="growth-codex"></b></div>
+        <div id="growth-codex-list" class="growth-stats"></div>
+        <div class="cfg-label"><span>签到 / 存钱罐</span><b id="growth-checkin-info"></b></div>
+        <div class="growth-actions">
+          <button id="btn-checkin">签到</button>
+          <button id="btn-bank-200">存 200</button>
+          <button id="btn-bank-1000">存 1000</button>
+          <button id="btn-bank-withdraw">取出</button>
+        </div>
+        <div id="growth-bank" class="growth-stats"></div>
+        <div id="growth-room" class="growth-stats"></div>
         <div class="cfg-label"><span>成就</span><b id="growth-ach-count"></b></div>
         <div id="growth-achievements"></div>
         <div class="cfg-label"><span>本地统计（仅本机）</span><b id="growth-stats-toggle"></b></div>
         <div id="growth-stats" class="growth-stats"></div>
+      </div>
+    </div>
+
+    <div id="gacha" class="interactive" role="dialog" aria-label="扭蛋机">
+      <header>
+        <span>扭蛋机</span>
+        <em id="gacha-coins"></em>
+        <button id="gacha-close" title="收起">✕</button>
+      </header>
+      <div class="gacha-body">
+        <div class="gacha-machine">🎰</div>
+        <p class="gacha-desc">500 金币一次：金币 / 食物玩具 / 未解锁装扮 / 主题</p>
+        <button id="gacha-pull">抽一次</button>
+        <p id="gacha-result" class="gacha-result"></p>
+      </div>
+    </div>
+
+    <div id="minigame" class="interactive" role="dialog" aria-label="接金币小游戏">
+      <header>
+        <span>接金币</span>
+        <em id="minigame-status"></em>
+        <button id="minigame-close" title="收起">✕</button>
+      </header>
+      <div id="minigame-area"></div>
+      <div class="minigame-bar">
+        <span>得分 <b id="minigame-score">0</b></span>
+        <button id="minigame-start">开始（15 秒）</button>
       </div>
     </div>
 

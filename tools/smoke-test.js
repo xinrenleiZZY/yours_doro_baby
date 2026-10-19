@@ -400,7 +400,7 @@ async function runScenarios(win) {
       balance: document.getElementById("shop-balance").textContent
     })`
   );
-  check("商城能打开并列出货物", shop.open && shop.items >= 4 && shop.tabs === 5, JSON.stringify(shop));
+  check("商城能打开并列出货物", shop.open && shop.items >= 4 && shop.tabs === 6, JSON.stringify(shop));
 
   const beforeBuy = await getState(win);
   await js(win, `document.querySelector(".shop-item button").click()`);
@@ -560,7 +560,7 @@ async function runScenarios(win) {
   );
   check(
     "任务与成就面板能打开",
-    growth.open && growth.daily === 4 && growth.ach === 8,
+    growth.open && growth.daily === 4 && growth.ach === 12,
     JSON.stringify(growth)
   );
 
@@ -573,7 +573,76 @@ async function runScenarios(win) {
     afterClaim.coins > beforeClaim.coins && afterClaim.daily.claimed.includes("feed1"),
     `${beforeClaim.coins.toFixed(0)}→${afterClaim.coins.toFixed(0)}`
   );
+
+  const beforeCheckin = await getState(win);
+  await js(win, `document.getElementById("btn-checkin").click()`);
+  await wait(150);
+  const afterCheckin = await getState(win);
+  check(
+    "每日签到",
+    afterCheckin.coins > beforeCheckin.coins && afterCheckin.checkin.lastDate !== "",
+    `${beforeCheckin.coins.toFixed(0)}→${afterCheckin.coins.toFixed(0)}`
+  );
+
+  await js(win, `document.getElementById("btn-bank-200").click()`);
+  await wait(150);
+  const afterBank = await getState(win);
+  check("存钱罐能存钱", afterBank.bank.amount === 200, `${afterBank.bank.amount} 金币`);
+
+  const codexText = await js(win, `document.getElementById("growth-codex").textContent`);
+  check("图鉴进度显示", /\d+ \/ 295/.test(codexText), codexText);
   await js(win, `document.getElementById("growth-close").click()`);
+
+  // 7f. 扭蛋 / 接金币
+  await js(win, `window.__doroTest.openGacha()`);
+  await wait(150);
+  const gachaOpen = await js(win, `document.getElementById("gacha").classList.contains("show")`);
+  const gachaDisabled = await js(win, `document.getElementById("gacha-pull").disabled`);
+  check("扭蛋机面板能打开", gachaOpen && gachaDisabled === true, `disabled=${gachaDisabled}`);
+
+  await js(win, `window.__doroTest.openMinigame()`);
+  await wait(150);
+  await js(win, `document.getElementById("minigame-start").click()`);
+  await wait(700);
+  const coinCount = await js(win, `document.querySelectorAll(".minigame-coin").length`);
+  if (coinCount > 0) await js(win, `document.querySelector(".minigame-coin").click()`);
+  const score = await js(win, `Number(document.getElementById("minigame-score").textContent)`);
+  const beforeMini = await getState(win);
+  await js(win, `document.getElementById("minigame-close").click()`);
+  await wait(250);
+  const afterMini = await getState(win);
+  check(
+    "接金币小游戏能玩并结算",
+    score >= 1 && afterMini.coins > beforeMini.coins,
+    `score=${score}，${beforeMini.coins.toFixed(0)}→${afterMini.coins.toFixed(0)}`
+  );
+
+  // 7g. 心愿 / 访客
+  await js(win, `window.__doroTest.forceWish()`);
+  await wait(100);
+  check("心愿事件显示", await js(win, `document.getElementById("wish-chip").classList.contains("show")`));
+  const beforeWish = await getState(win);
+  await js(win, `document.getElementById("wish-chip").click()`);
+  await wait(200);
+  const afterWish = await getState(win);
+  check(
+    "心愿能完成",
+    afterWish.coins > beforeWish.coins,
+    `${beforeWish.coins.toFixed(0)}→${afterWish.coins.toFixed(0)}`
+  );
+
+  await js(win, `window.__doroTest.forceVisitor()`);
+  await wait(100);
+  const visitorShown = await js(win, `document.getElementById("visitor-chip").classList.contains("show")`);
+  const beforeVisitor = await getState(win);
+  await js(win, `document.getElementById("visitor-chip").click()`);
+  await wait(200);
+  const afterVisitor = await getState(win);
+  check(
+    "访客能接待",
+    visitorShown && afterVisitor.coins > beforeVisitor.coins,
+    `${beforeVisitor.coins.toFixed(0)}→${afterVisitor.coins.toFixed(0)}`
+  );
 
   // 8. 设置开关
   const beforeToggle = await getState(win);

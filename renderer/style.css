@@ -219,6 +219,42 @@ body.lib-open #stage {
   gap: 5px;
 }
 
+#event-chips {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  align-items: flex-start;
+}
+
+.event-chip {
+  display: none;
+  align-items: center;
+  gap: 4px;
+  max-width: 240px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  cursor: pointer;
+  box-shadow: 0 3px 8px rgba(80, 40, 60, 0.18);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.event-chip.show {
+  display: inline-flex;
+}
+
+.event-chip.wish {
+  background: linear-gradient(180deg, #fff3c4, #ffe08a);
+  color: #7a5a12;
+}
+
+.event-chip.visitor {
+  background: linear-gradient(180deg, #dff7ea, #a8e6c6);
+  color: #25654a;
+}
+
 .chip {
   font-size: 10px;
   padding: 3px 7px;
@@ -568,7 +604,9 @@ body.lib-open #stage {
 #shop,
 #schedule,
 #config,
-#growth {
+#growth,
+#gacha,
+#minigame {
   position: absolute;
   right: 6px;
   top: 10px;
@@ -588,7 +626,9 @@ body.lib-open #stage {
 #shop.show,
 #schedule.show,
 #config.show,
-#growth.show {
+#growth.show,
+#gacha.show,
+#minigame.show {
   display: flex;
 }
 
@@ -596,7 +636,9 @@ body.lib-open #stage {
 #shop header,
 #schedule header,
 #config header,
-#growth header {
+#growth header,
+#gacha header,
+#minigame header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -609,7 +651,9 @@ body.lib-open #stage {
 #shop header em,
 #schedule header em,
 #config header em,
-#growth header em {
+#growth header em,
+#gacha header em,
+#minigame header em {
   font-style: normal;
   font-size: 9px;
   color: #b18d9f;
@@ -620,7 +664,9 @@ body.lib-open #stage {
 #shop header button,
 #schedule header button,
 #config header button,
-#growth header button {
+#growth header button,
+#gacha header button,
+#minigame header button {
   border: none;
   background: transparent;
   color: #b58ea3;
@@ -1112,6 +1158,142 @@ body.lib-open #stage {
 
 .cfg-toggles button:hover {
   background: #ffe9f3;
+}
+
+.growth-actions {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.growth-actions button {
+  flex: 1;
+  min-width: 60px;
+  border: none;
+  border-radius: 8px;
+  padding: 4px 6px;
+  font-size: 9.5px;
+  font-family: inherit;
+  background: var(--soft-bg-2);
+  color: var(--pink-deep);
+  cursor: pointer;
+}
+
+.growth-actions button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.gacha-body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 18px 8px;
+}
+
+.gacha-machine {
+  font-size: 46px;
+  filter: drop-shadow(0 4px 6px rgba(80, 40, 60, 0.25));
+}
+
+.gacha-desc {
+  margin: 0;
+  font-size: 10px;
+  color: #8d7480;
+  text-align: center;
+  line-height: 1.5;
+}
+
+#gacha-pull {
+  border: none;
+  border-radius: 999px;
+  padding: 8px 30px;
+  font-size: 12px;
+  font-family: inherit;
+  font-weight: 700;
+  color: #fff;
+  background: linear-gradient(180deg, #ffb7d3, var(--pink-deep));
+  cursor: pointer;
+  box-shadow: 0 4px 10px rgba(226, 96, 154, 0.35);
+}
+
+#gacha-pull:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.gacha-result {
+  min-height: 18px;
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--pink-deep);
+}
+
+#minigame-area {
+  position: relative;
+  flex: 1;
+  min-height: 220px;
+  border-radius: 10px;
+  background: var(--soft-bg);
+  overflow: hidden;
+}
+
+.minigame-coin {
+  position: absolute;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  user-select: none;
+  filter: drop-shadow(0 2px 3px rgba(120, 80, 20, 0.35));
+  animation: coin-in 0.14s ease;
+}
+
+@keyframes coin-in {
+  from {
+    transform: scale(0.4);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.minigame-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--ink);
+}
+
+#minigame-start {
+  border: none;
+  border-radius: 8px;
+  padding: 5px 10px;
+  font-size: 10px;
+  font-family: inherit;
+  color: #fff;
+  background: linear-gradient(180deg, #ffb7d3, var(--pink-deep));
+  cursor: pointer;
+}
+
+#minigame-start:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+#companion-pet {
+  position: absolute;
+  right: 66px;
+  bottom: 26px;
+  width: 64px;
+  height: auto;
+  pointer-events: none;
+  filter: hue-rotate(140deg) drop-shadow(0 4px 6px rgba(60, 30, 45, 0.3));
 }
 
 /* ---------------------------------------------------------------- 任务与成就 */

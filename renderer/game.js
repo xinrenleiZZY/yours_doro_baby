@@ -11,7 +11,7 @@
 })(typeof self !== "undefined" ? self : this, function () {
   "use strict";
 
-  const SAVE_VERSION = 3;
+  const SAVE_VERSION = 4;
 
   // ---- 经济数值 -------------------------------------------------------------
   const BALANCE = {
@@ -60,6 +60,16 @@
     daily: { date: "", progress: { pets: 0, feeds: 0, plays: 0, actionsViewed: 0 }, claimed: [] },
     achievements: [],
     metrics: { days: {} },
+    seenActions: [],
+    wish: null,
+    checkin: { lastDate: "", streak: 0 },
+    bank: { amount: 0, dueAt: 0 },
+    gacha: { pulls: 0 },
+    minigame: { lastPlayedAt: 0 },
+    visitor: null,
+    nextVisitorAt: 0,
+    room: { furniture: [] },
+    companion: { adopted: false },
     window: { x: null, y: null },
     settings: {
       alwaysOnTop: true,
@@ -230,7 +240,73 @@
       reward: 50,
       value: (s) => s.stats.scheduleAdded || 0,
     },
+    {
+      id: "seen10",
+      label: "图鉴：看过 10 个动作",
+      goal: 10,
+      reward: 40,
+      value: (s) => (s.seenActions || []).length,
+    },
+    {
+      id: "seen50",
+      label: "图鉴：看过 50 个动作",
+      goal: 50,
+      reward: 100,
+      value: (s) => (s.seenActions || []).length,
+    },
+    {
+      id: "seen100",
+      label: "图鉴：看过 100 个动作",
+      goal: 100,
+      reward: 200,
+      value: (s) => (s.seenActions || []).length,
+    },
+    {
+      id: "seen295",
+      label: "图鉴：集齐 295 个动作",
+      goal: 295,
+      reward: 600,
+      value: (s) => (s.seenActions || []).length,
+    },
   ];
+
+  const WISH_CATEGORIES = [
+    { key: "idle", group: "日常" },
+    { key: "happy", group: "情绪" },
+    { key: "eat", group: "吃睡" },
+    { key: "play", group: "玩乐" },
+    { key: "dress", group: "换装" },
+    { key: "scene", group: "小剧场" },
+  ];
+
+  const TITLES = [
+    { level: 50, name: "摸鱼合伙人" },
+    { level: 30, name: "摸鱼总监" },
+    { level: 20, name: "摸鱼经理" },
+    { level: 10, name: "摸鱼主管" },
+    { level: 5, name: "摸鱼专员" },
+    { level: 1, name: "摸鱼实习生" },
+  ];
+
+  const GACHA_PRICE = 500;
+  const BANK_HOURS = 8;
+  const BANK_RATE = 0.15;
+  const MINIGAME_COOLDOWN_MS = 5 * 60000;
+
+  const FURNITURE = {
+    cat_tree: { id: "cat_tree", name: "猫爬架", icon: "🐈", price: 800, bonus: 0.05, desc: "+5% 产出" },
+    rug: { id: "rug", name: "小地毯", icon: "🧶", price: 500, bonus: 0.02, desc: "+2% 产出" },
+    plant: { id: "plant", name: "绿植", icon: "🪴", price: 1200, bonus: 0.04, desc: "+4% 产出" },
+    lamp: { id: "lamp", name: "落地灯", icon: "💡", price: 2000, bonus: 0.06, desc: "+6% 产出" },
+    companion: {
+      id: "companion",
+      name: "伙伴 doro",
+      icon: "🐣",
+      price: 3000,
+      bonus: 0.08,
+      desc: "领养小伙伴，+8% 产出",
+    },
+  };
 
   const DRESS_BASE_PRICE = 80;
   const DRESS_PRICE_STEP = 20;
@@ -318,6 +394,22 @@
         metrics: raw.metrics && typeof raw.metrics === "object" ? raw.metrics : { days: {} },
       });
     },
+    // 3 -> 4：图鉴 / 心愿 / 签到 / 银行 / 扭蛋 / 访客 / 房间 / 伙伴
+    3: (raw) => {
+      return Object.assign({}, raw, {
+        version: 4,
+        seenActions: Array.isArray(raw.seenActions) ? raw.seenActions : [],
+        wish: raw.wish || null,
+        checkin: raw.checkin || { lastDate: "", streak: 0 },
+        bank: raw.bank || { amount: 0, dueAt: 0 },
+        gacha: raw.gacha || { pulls: 0 },
+        minigame: raw.minigame || { lastPlayedAt: 0 },
+        visitor: raw.visitor || null,
+        nextVisitorAt: raw.nextVisitorAt || 0,
+        room: raw.room || { furniture: [] },
+        companion: raw.companion || { adopted: false },
+      });
+    },
   };
 
   function migrate(raw) {
@@ -380,6 +472,35 @@
       raw.metrics && typeof raw.metrics === "object" && raw.metrics.days
         ? { days: raw.metrics.days }
         : { days: {} };
+    state.seenActions = Array.isArray(raw.seenActions)
+      ? raw.seenActions.filter((name) => typeof name === "string").slice(0, 500)
+      : [];
+    state.wish = raw.wish && typeof raw.wish === "object" ? raw.wish : null;
+    state.checkin =
+      raw.checkin && typeof raw.checkin === "object"
+        ? { lastDate: String(raw.checkin.lastDate || ""), streak: num(raw.checkin.streak, 0, 0, 9999) }
+        : { lastDate: "", streak: 0 };
+    state.bank =
+      raw.bank && typeof raw.bank === "object"
+        ? { amount: num(raw.bank.amount, 0, 0), dueAt: num(raw.bank.dueAt, 0, 0) }
+        : { amount: 0, dueAt: 0 };
+    state.gacha =
+      raw.gacha && typeof raw.gacha === "object" ? { pulls: num(raw.gacha.pulls, 0, 0) } : { pulls: 0 };
+    state.minigame =
+      raw.minigame && typeof raw.minigame === "object"
+        ? { lastPlayedAt: num(raw.minigame.lastPlayedAt, 0, 0) }
+        : { lastPlayedAt: 0 };
+    state.visitor = raw.visitor && typeof raw.visitor === "object" ? raw.visitor : null;
+    state.nextVisitorAt = num(raw.nextVisitorAt, 0, 0);
+    if (!state.nextVisitorAt) state.nextVisitorAt = now + 10 * 60000;
+    state.room =
+      raw.room && Array.isArray(raw.room.furniture)
+        ? { furniture: raw.room.furniture.slice(0, 20) }
+        : { furniture: [] };
+    state.companion =
+      raw.companion && typeof raw.companion === "object"
+        ? { adopted: raw.companion.adopted === true }
+        : { adopted: false };
     state.window = Object.assign({}, DEFAULT_STATE.window, raw.window || {});
     state.settings = Object.assign({}, DEFAULT_STATE.settings, raw.settings || {});
     state.settings.scale = num(state.settings.scale, 1, 0.6, 1.8);
@@ -407,7 +528,9 @@
           ? BALANCE.starvingMultiplier
           : BALANCE.hungryMultiplier
         : 1;
-    return base * moodFactor * feedFactor * perkFactor * buffFactor;
+    const roomBonus = roomBonusValue(state);
+    const companionBonus = state.companion && state.companion.adopted ? FURNITURE.companion.bonus : 0;
+    return base * moodFactor * feedFactor * perkFactor * buffFactor * (1 + roomBonus + companionBonus);
   }
 
   function incomeBreakdown(state) {
@@ -631,6 +754,12 @@
     }
     if (item.type === "permanent" && state.perks[item.id]) return { ok: false, reason: "owned" };
     if (item.type === "theme" && state.perks[`theme_${item.theme}`]) return { ok: false, reason: "owned" };
+    if (item.type === "furniture" && state.room && state.room.furniture.includes(item.furnitureId)) {
+      return { ok: false, reason: "owned" };
+    }
+    if (item.type === "companion" && state.companion && state.companion.adopted) {
+      return { ok: false, reason: "owned" };
+    }
     if (!canAfford(state, item.price)) return { ok: false, reason: "coin" };
 
     const ts = now || Date.now();
@@ -647,6 +776,12 @@
     } else if (item.type === "theme") {
       state.perks[`theme_${item.theme}`] = true;
       state.settings.theme = item.theme;
+    } else if (item.type === "furniture") {
+      if (!state.room) state.room = { furniture: [] };
+      state.room.furniture.push(item.furnitureId);
+    } else if (item.type === "companion") {
+      if (!state.companion) state.companion = { adopted: false };
+      state.companion.adopted = true;
     } else if (item.type === "dress") {
       if (!state.unlocked.includes(item.action)) state.unlocked.push(item.action);
     }
@@ -834,6 +969,229 @@
     return { days: days.length, todaySeconds: Math.round(today), sessions: state.stats.sessions };
   }
 
+  // ---- 图鉴 / 心愿 / 签到 / 银行 / 扭蛋 / 小游戏 / 访客 / 房间 ---------------
+  function markSeen(state, name) {
+    if (!name) return;
+    if (!Array.isArray(state.seenActions)) state.seenActions = [];
+    if (!state.seenActions.includes(name)) {
+      state.seenActions.push(name);
+      if (state.seenActions.length > 500) state.seenActions.shift();
+    }
+  }
+
+  function codexSummary(state, actions) {
+    const list = actions || [];
+    const seen = new Set(state.seenActions || []);
+    const groups = {};
+    let seenCount = 0;
+    list.forEach((action) => {
+      const group = action.group || "其它";
+      if (!groups[group]) groups[group] = { total: 0, seen: 0 };
+      groups[group].total += 1;
+      if (seen.has(action.name)) {
+        groups[group].seen += 1;
+        seenCount += 1;
+      }
+    });
+    return { total: list.length, seen: seenCount, groups };
+  }
+
+  function titleForLevel(level) {
+    const entry = TITLES.find((item) => level >= item.level);
+    return entry ? entry.name : TITLES[TITLES.length - 1].name;
+  }
+
+  function wishStatus(state, now) {
+    const wish = state.wish;
+    if (!wish) return null;
+    const ts = now || Date.now();
+    const secondsLeft = Math.max(0, Math.ceil((wish.expiresAt - ts) / 1000));
+    return { ...wish, secondsLeft, expired: secondsLeft <= 0 };
+  }
+
+  function createWish(state, now) {
+    const ts = now || Date.now();
+    const choice = WISH_CATEGORIES[Math.floor(Math.random() * WISH_CATEGORIES.length)];
+    state.wish = {
+      id: `w${ts.toString(36)}`,
+      category: choice.key,
+      group: choice.group,
+      reward: 40 + (state.level || 1) * 2,
+      expiresAt: ts + 10 * 60000,
+    };
+    return state.wish;
+  }
+
+  function completeWish(state, action, now) {
+    const wish = state.wish;
+    if (!wish || !action || (now || Date.now()) >= wish.expiresAt) return null;
+    if (action.category !== wish.category) return null;
+    state.wish = null;
+    state.coins += wish.reward;
+    state.totalEarned += wish.reward;
+    state.mood = clamp(state.mood + 5, 0, 100);
+    return { reward: wish.reward };
+  }
+
+  function checkinStatus(state, now) {
+    const key = dayKey(now);
+    const lastDate = (state.checkin && state.checkin.lastDate) || "";
+    return { canCheckin: lastDate !== key, streak: (state.checkin && state.checkin.streak) || 0, lastDate };
+  }
+
+  function doCheckin(state, now) {
+    const ts = now || Date.now();
+    const key = dayKey(ts);
+    if (!state.checkin) state.checkin = { lastDate: "", streak: 0 };
+    if (state.checkin.lastDate === key) return { ok: false };
+    const yesterday = dayKey(ts - 86400000);
+    state.checkin.streak = state.checkin.lastDate === yesterday ? state.checkin.streak + 1 : 1;
+    state.checkin.lastDate = key;
+    const reward = 20 + Math.min(state.checkin.streak, 7) * 10;
+    state.coins += reward;
+    state.totalEarned += reward;
+    return { ok: true, reward, streak: state.checkin.streak };
+  }
+
+  function bankStatus(state, now) {
+    const bank = state.bank || { amount: 0, dueAt: 0 };
+    const ts = now || Date.now();
+    const amount = bank.amount || 0;
+    return {
+      amount,
+      dueAt: bank.dueAt || 0,
+      ready: amount > 0 && ts >= bank.dueAt,
+      secondsLeft: Math.max(0, Math.ceil(((bank.dueAt || 0) - ts) / 1000)),
+      payout: Math.round(amount * (1 + BANK_RATE)),
+    };
+  }
+
+  function bankDeposit(state, amount, now) {
+    const ts = now || Date.now();
+    const value = Math.floor(Number(amount) || 0);
+    const status = bankStatus(state, ts);
+    if (status.amount > 0) return { ok: false, reason: "busy" };
+    if (value < 100 || value > state.coins) return { ok: false, reason: "coin" };
+    state.coins -= value;
+    state.bank = { amount: value, dueAt: ts + BANK_HOURS * 3600000 };
+    return { ok: true };
+  }
+
+  function bankWithdraw(state, now) {
+    const status = bankStatus(state, now);
+    if (!status.ready) return { ok: false };
+    state.coins += status.payout;
+    state.totalEarned += status.payout - status.amount;
+    state.bank = { amount: 0, dueAt: 0 };
+    return { ok: true, payout: status.payout };
+  }
+
+  /** 扭蛋：金币 / 食物玩具 / 未解锁装扮 / 未拥有主题。 */
+  function pullGacha(state, actions, now) {
+    if (state.coins < GACHA_PRICE) return { ok: false, reason: "coin" };
+    state.coins -= GACHA_PRICE;
+    state.gacha.pulls = (state.gacha.pulls || 0) + 1;
+    const roll = Math.random();
+    const items = Object.values(SHOP_ITEMS).filter((item) => item.type === "food" || item.type === "toy");
+    const lockedDress = (actions || []).filter(
+      (a) => a.category === "dress" && !state.unlocked.includes(a.name)
+    );
+    const themes = Object.values(SHOP_ITEMS).filter(
+      (item) => item.type === "theme" && !state.perks[`theme_${item.theme}`]
+    );
+
+    if (roll < 0.45) {
+      const amount = 100 + Math.floor(Math.random() * 401);
+      state.coins += amount;
+      state.totalEarned += amount;
+      return { ok: true, type: "coins", label: `金币 +${amount}`, amount };
+    }
+    if (roll < 0.72 && items.length) {
+      const item = items[Math.floor(Math.random() * items.length)];
+      state.inventory[item.id] = (state.inventory[item.id] || 0) + 1;
+      return { ok: true, type: "item", label: `${item.icon} ${item.name}` };
+    }
+    if (roll < 0.9 && lockedDress.length) {
+      const action = lockedDress[Math.floor(Math.random() * lockedDress.length)];
+      state.unlocked.push(action.name);
+      return { ok: true, type: "dress", label: `解锁「${action.label}」`, action: action.name };
+    }
+    if (themes.length) {
+      const theme = themes[Math.floor(Math.random() * themes.length)];
+      state.perks[`theme_${theme.theme}`] = true;
+      state.settings.theme = theme.theme;
+      return { ok: true, type: "theme", label: `${theme.icon} ${theme.name}`, theme: theme.theme };
+    }
+    const amount = 300;
+    state.coins += amount;
+    state.totalEarned += amount;
+    return { ok: true, type: "coins", label: `金币 +${amount}`, amount };
+  }
+
+  function minigameStatus(state, now) {
+    const ts = now || Date.now();
+    const last = (state.minigame && state.minigame.lastPlayedAt) || 0;
+    const secondsLeft = Math.max(0, Math.ceil((MINIGAME_COOLDOWN_MS - (ts - last)) / 1000));
+    return { ready: secondsLeft === 0, secondsLeft };
+  }
+
+  function finishMinigame(state, score, now) {
+    const ts = now || Date.now();
+    const reward = Math.max(5, Math.round((Number(score) || 0) * 2));
+    state.coins += reward;
+    state.totalEarned += reward;
+    state.minigame = { lastPlayedAt: ts };
+    return reward;
+  }
+
+  function spawnVisitor(state, now) {
+    const ts = now || Date.now();
+    const kinds = [
+      { kind: "cat", label: "猫猫来访", icon: "🐈", reward: 80 },
+      { kind: "pigeon", label: "鸽子来访", icon: "🐦", reward: 60 },
+      { kind: "friend", label: "另一只 doro 来访", icon: "🐣", reward: 120 },
+    ];
+    const choice = kinds[Math.floor(Math.random() * kinds.length)];
+    state.visitor = { ...choice, expiresAt: ts + 3 * 60000 };
+    state.nextVisitorAt = ts + (25 + Math.random() * 20) * 60000;
+    return state.visitor;
+  }
+
+  function visitorStatus(state, now) {
+    if (!state.visitor) return null;
+    const ts = now || Date.now();
+    if (ts >= state.visitor.expiresAt) {
+      state.visitor = null;
+      return null;
+    }
+    return { ...state.visitor, secondsLeft: Math.ceil((state.visitor.expiresAt - ts) / 1000) };
+  }
+
+  function maybeVisitor(state, now) {
+    const ts = now || Date.now();
+    if (state.visitor) return visitorStatus(state, ts);
+    if (ts < (state.nextVisitorAt || 0)) return null;
+    return spawnVisitor(state, ts);
+  }
+
+  function acceptVisitor(state, now) {
+    const visitor = visitorStatus(state, now);
+    if (!visitor) return null;
+    state.visitor = null;
+    state.coins += visitor.reward;
+    state.totalEarned += visitor.reward;
+    state.mood = clamp(state.mood + 5, 0, 100);
+    return visitor;
+  }
+
+  function roomBonusValue(state) {
+    const owned = (state.room && state.room.furniture) || [];
+    return owned.reduce((sum, id) => {
+      const item = FURNITURE[id];
+      return sum + (item && item.id !== "companion" ? item.bonus : 0);
+    }, 0);
+  }
+
   function formatCoins(value) {
     const abs = Math.abs(value);
     if (abs >= 1e9) return `${(value / 1e9).toFixed(2)}B`;
@@ -851,6 +1209,13 @@
     SHOP_ITEMS,
     DAILY_TASKS,
     ACHIEVEMENTS,
+    WISH_CATEGORIES,
+    TITLES,
+    GACHA_PRICE,
+    BANK_HOURS,
+    BANK_RATE,
+    MINIGAME_COOLDOWN_MS,
+    FURNITURE,
     DRESS_BASE_PRICE,
     DRESS_PRICE_STEP,
     SCHEDULE_MAX,
@@ -875,6 +1240,25 @@
     achievementList,
     claimAchievement,
     analyticsSummary,
+    markSeen,
+    codexSummary,
+    titleForLevel,
+    wishStatus,
+    createWish,
+    completeWish,
+    checkinStatus,
+    doCheckin,
+    bankStatus,
+    bankDeposit,
+    bankWithdraw,
+    pullGacha,
+    minigameStatus,
+    finishMinigame,
+    spawnVisitor,
+    visitorStatus,
+    maybeVisitor,
+    acceptVisitor,
+    roomBonusValue,
     SAVE_VERSION,
     migrate,
     hydrate,

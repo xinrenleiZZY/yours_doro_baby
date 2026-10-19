@@ -35,6 +35,8 @@
     coinRate: $("coin-rate"),
     chipSatiety: $("chip-satiety"),
     chipMood: $("chip-mood"),
+    wishChip: $("wish-chip"),
+    visitorChip: $("visitor-chip"),
     panel: $("panel"),
     panelCoins: $("panel-coins"),
     panelIncome: $("panel-income"),
@@ -90,6 +92,24 @@
     growthAchCount: $("growth-ach-count"),
     growthStats: $("growth-stats"),
     growthStatsToggle: $("growth-stats-toggle"),
+    growthCodex: $("growth-codex"),
+    growthCodexList: $("growth-codex-list"),
+    growthCheckinInfo: $("growth-checkin-info"),
+    growthBank: $("growth-bank"),
+    growthRoom: $("growth-room"),
+    btnCheckin: $("btn-checkin"),
+    btnBank200: $("btn-bank-200"),
+    btnBank1000: $("btn-bank-1000"),
+    btnBankWithdraw: $("btn-bank-withdraw"),
+    gacha: $("gacha"),
+    gachaCoins: $("gacha-coins"),
+    gachaPull: $("gacha-pull"),
+    gachaResult: $("gacha-result"),
+    minigame: $("minigame"),
+    minigameStatus: $("minigame-status"),
+    minigameArea: $("minigame-area"),
+    minigameScore: $("minigame-score"),
+    minigameStart: $("minigame-start"),
   };
 
   const PET_BOX = { width: 246, height: 188 };
@@ -106,6 +126,8 @@
   let scheduleOpen = false;
   let configOpen = false;
   let growthOpen = false;
+  let gachaOpen = false;
+  let minigameOpen = false;
   let shopTab = "食物";
   const libState = { group: "全部", query: "", page: 0 };
   let currentAction = null;
@@ -217,6 +239,74 @@
     }
   }
 
+  // ------------------------------------------------------------- 事件 / 图鉴
+  let wishTimer = null;
+
+  function scheduleWish(delayMs) {
+    if (wishTimer) clearTimeout(wishTimer);
+    if (TEST_MODE) return;
+    const wait = delayMs === undefined ? rand(20000, 45000) : delayMs;
+    wishTimer = setTimeout(() => {
+      if (!state.wish && !state.settings.dnd) G.createWish(state);
+      updateEventChips();
+      scheduleSave(500);
+      scheduleWish(rand(15, 30) * 60000);
+    }, wait);
+  }
+
+  function updateEventChips() {
+    const wish = G.wishStatus(state);
+    if (wish && !wish.expired) {
+      el.wishChip.textContent = `💭 想看${wish.group}类动作 +${wish.reward}（${Math.max(
+        1,
+        Math.ceil(wish.secondsLeft / 60)
+      )}分）`;
+      el.wishChip.classList.add("show");
+    } else {
+      el.wishChip.classList.remove("show");
+      if (wish && wish.expired) {
+        state.wish = null;
+        scheduleWish();
+      }
+    }
+
+    const visitor = G.visitorStatus(state);
+    if (visitor) {
+      el.visitorChip.textContent = `${visitor.icon} ${visitor.label} +${visitor.reward}（点我接待）`;
+      el.visitorChip.classList.add("show");
+    } else {
+      el.visitorChip.classList.remove("show");
+    }
+  }
+
+  function noteAction(action) {
+    G.markSeen(state, action.name);
+    const done = G.completeWish(state, action, Date.now());
+    if (!done) return;
+    toast(`心愿完成 +${done.reward} 金币`);
+    playSound("coin");
+    floatText(`💭 +${done.reward}`, { x: rand(120, 200), y: rand(160, 190) });
+    updateHud(0);
+    updateEventChips();
+    scheduleWish(rand(15, 30) * 60000);
+    updateMenu();
+    if (growthOpen) renderGrowth();
+  }
+
+  function syncCompanion() {
+    const existing = document.getElementById("companion-pet");
+    const adopted = state.companion && state.companion.adopted;
+    if (adopted && !existing) {
+      const img = new Image();
+      img.id = "companion-pet";
+      img.alt = "伙伴";
+      img.src = "../assets/pet/idle_stand.webp";
+      el.stage.appendChild(img);
+    } else if (!adopted && existing) {
+      existing.remove();
+    }
+  }
+
   // ------------------------------------------------------------- 鼠标命中区域
   // 主进程按这些矩形判断"光标是不是在 doro 身上"，从而决定窗口是否穿透。
   let hitboxTimer = null;
@@ -246,6 +336,8 @@
       add(el.schedule, 4);
       add(el.config, 4);
       add(el.growth, 4);
+      add(el.gacha, 4);
+      add(el.minigame, 4);
       api.setHitboxes(boxes);
     }, 30);
   }
@@ -294,7 +386,7 @@
     el.petStack.appendChild(next);
     currentAction = action.name;
     activeLayer = next;
-    el.petLabel.textContent = `Lv.${state.level} ${action.label}`;
+    el.petLabel.textContent = `Lv.${state.level} ${G.titleForLevel(state.level)} · ${action.label}`;
     reportHitboxes();
 
     let revealed = false;
@@ -321,6 +413,7 @@
   function playReaction(name, ms) {
     const action = actionInfo(name);
     if (!action) return;
+    G.markSeen(state, action.name);
     setAction(action.name, { force: true });
     busyUntil = Date.now() + (ms || 2200);
     if (reactionTimer) clearTimeout(reactionTimer);
@@ -457,6 +550,7 @@
     setAction(baseAction, { force: true });
     state.recent = [action.name, ...state.recent.filter((name) => name !== action.name)].slice(0, 12);
     G.bumpDaily(state, "actionsViewed");
+    noteAction(action);
     speak(`换成「${action.label}」`, 1800);
     updateMenu();
     updateHud(0);
@@ -611,6 +705,37 @@
       );
     });
 
+    const codex = G.codexSummary(state, actions);
+    el.growthCodex.textContent = `${codex.seen} / ${codex.total}`;
+    el.growthCodexList.textContent = Object.entries(codex.groups)
+      .map(([group, stat]) => `${group} ${stat.seen}/${stat.total}`)
+      .join(" · ");
+
+    const checkin = G.checkinStatus(state);
+    el.growthCheckinInfo.textContent = checkin.canCheckin
+      ? `连续 ${checkin.streak} 天`
+      : `今日已签 · 连续 ${checkin.streak} 天`;
+    el.btnCheckin.disabled = !checkin.canCheckin;
+    el.btnCheckin.textContent = checkin.canCheckin ? "签到" : "已签";
+
+    const bank = G.bankStatus(state);
+    el.btnBank200.disabled = bank.amount > 0 || state.coins < 200;
+    el.btnBank1000.disabled = bank.amount > 0 || state.coins < 1000;
+    el.btnBankWithdraw.disabled = !bank.ready;
+    el.growthBank.textContent =
+      bank.amount > 0
+        ? bank.ready
+          ? `已存 ${G.formatCoins(bank.amount)}，现在可取 ${G.formatCoins(bank.payout)}`
+          : `已存 ${G.formatCoins(bank.amount)}，约 ${Math.ceil(bank.secondsLeft / 3600)} 小时后可取 ${G.formatCoins(bank.payout)}`
+        : `8 小时 15% 利息，最低 200 金币`;
+
+    const room = (state.room && state.room.furniture) || [];
+    el.growthRoom.textContent = room.length
+      ? `房间：${room.map((id) => (G.FURNITURE[id] ? G.FURNITURE[id].icon : "")).join(" ")}（合计 +${Math.round(
+          G.roomBonusValue(state) * 100
+        )}%）`
+      : "房间还空着，去商城「家具」看看";
+
     const achievements = G.achievementList(state);
     el.growthAchCount.textContent = `${achievements.filter((item) => item.claimed).length}/${achievements.length}`;
     el.growthAchievements.innerHTML = "";
@@ -644,12 +769,82 @@
       : "在配置中心开启「本地统计」后显示；只存本机，不上传。";
   }
 
+  function renderGacha() {
+    el.gachaCoins.textContent = `${G.formatCoins(state.coins)} 金币`;
+    el.gachaPull.disabled = state.coins < G.GACHA_PRICE;
+  }
+
+  const mini = { running: false, score: 0, spawnTimer: null, endTimer: null };
+
+  function renderMinigame() {
+    const status = G.minigameStatus(state);
+    el.minigameStatus.textContent = mini.running
+      ? "进行中…"
+      : status.ready
+        ? "15 秒，点金币得分"
+        : `冷却 ${Math.ceil(status.secondsLeft / 60)} 分钟`;
+    el.minigameStart.disabled = mini.running || !status.ready;
+    el.minigameScore.textContent = String(mini.score);
+  }
+
+  function stopMinigame(reward) {
+    if (!mini.running) return;
+    mini.running = false;
+    clearInterval(mini.spawnTimer);
+    clearTimeout(mini.endTimer);
+    mini.spawnTimer = null;
+    mini.endTimer = null;
+    el.minigameArea.innerHTML = "";
+    if (reward !== false) {
+      const coins = G.finishMinigame(state, mini.score, Date.now());
+      toast(`接金币得分 ${mini.score}，奖励 +${coins} 金币`);
+      playSound("coin");
+      updateHud(0);
+      scheduleSave(600);
+    }
+    renderMinigame();
+    if (growthOpen) renderGrowth();
+  }
+
+  function spawnMinigameCoin() {
+    const area = el.minigameArea;
+    if (!area) return;
+    const coin = document.createElement("span");
+    coin.className = "minigame-coin";
+    coin.textContent = "🪙";
+    coin.style.left = `${5 + Math.random() * (area.clientWidth - 40)}px`;
+    coin.style.top = `${5 + Math.random() * (area.clientHeight - 40)}px`;
+    coin.addEventListener("click", (event) => {
+      event.stopPropagation();
+      mini.score += 1;
+      el.minigameScore.textContent = String(mini.score);
+      coin.remove();
+    });
+    area.appendChild(coin);
+    setTimeout(() => coin.remove(), 1800);
+  }
+
+  function startMinigame() {
+    if (mini.running) return;
+    const status = G.minigameStatus(state);
+    if (!status.ready) return;
+    mini.running = true;
+    mini.score = 0;
+    el.minigameArea.innerHTML = "";
+    renderMinigame();
+    mini.spawnTimer = setInterval(spawnMinigameCoin, 450);
+    mini.endTimer = setTimeout(() => stopMinigame(true), 15000);
+    spawnMinigameCoin();
+  }
+
   function openSidePanel(name) {
     libraryOpen = name === "library";
     shopOpen = name === "shop";
     scheduleOpen = name === "schedule";
     configOpen = name === "config";
     growthOpen = name === "growth";
+    gachaOpen = name === "gacha";
+    minigameOpen = name === "minigame";
     closeMenu();
     el.panel.classList.remove("show");
     document.body.classList.add("lib-open");
@@ -659,22 +854,37 @@
     el.schedule.classList.toggle("show", scheduleOpen);
     el.config.classList.toggle("show", configOpen);
     el.growth.classList.toggle("show", growthOpen);
+    el.gacha.classList.toggle("show", gachaOpen);
+    el.minigame.classList.toggle("show", minigameOpen);
     if (libraryOpen) renderLibrary();
     if (shopOpen) renderShop();
     if (scheduleOpen) renderSchedule();
     if (configOpen) renderConfig();
     if (growthOpen) renderGrowth();
+    if (gachaOpen) renderGacha();
+    if (minigameOpen) renderMinigame();
     if (libraryOpen) setTimeout(() => el.librarySearch.focus(), 60);
     reportHitboxes();
   }
 
   function closeSidePanels() {
-    if (!libraryOpen && !shopOpen && !scheduleOpen && !configOpen && !growthOpen) return;
+    if (
+      !libraryOpen &&
+      !shopOpen &&
+      !scheduleOpen &&
+      !configOpen &&
+      !growthOpen &&
+      !gachaOpen &&
+      !minigameOpen
+    )
+      return;
     libraryOpen = false;
     shopOpen = false;
     scheduleOpen = false;
     configOpen = false;
     growthOpen = false;
+    gachaOpen = false;
+    minigameOpen = false;
     document.body.classList.remove("lib-open");
     api.setUiSize({ width: 320, height: 360 });
     el.library.classList.remove("show");
@@ -682,6 +892,8 @@
     el.schedule.classList.remove("show");
     el.config.classList.remove("show");
     el.growth.classList.remove("show");
+    el.gacha.classList.remove("show");
+    el.minigame.classList.remove("show");
     reportHitboxes();
   }
 
@@ -694,7 +906,7 @@
   }
 
   // ------------------------------------------------------------- 商城
-  const SHOP_TABS = ["食物", "玩具", "增益", "主题", "装扮"];
+  const SHOP_TABS = ["食物", "玩具", "增益", "主题", "家具", "装扮"];
 
   function dressShopItems() {
     return actions
@@ -712,7 +924,23 @@
 
   function shopCatalog(tab) {
     if (tab === "装扮") return dressShopItems();
-    const map = { 食物: ["food"], 玩具: ["toy"], 增益: ["buff", "permanent"], 主题: ["theme"] };
+    if (tab === "家具") {
+      return Object.values(G.FURNITURE).map((item) => ({
+        id: `furniture:${item.id}`,
+        name: item.name,
+        type: item.id === "companion" ? "companion" : "furniture",
+        furnitureId: item.id,
+        price: item.price,
+        icon: item.icon,
+        desc: item.desc,
+      }));
+    }
+    const map = {
+      食物: ["food"],
+      玩具: ["toy"],
+      增益: ["buff", "permanent"],
+      主题: ["theme"],
+    };
     return Object.values(G.SHOP_ITEMS).filter((item) => (map[tab] || []).includes(item.type));
   }
 
@@ -720,6 +948,10 @@
     if (item.type === "dress") return G.isUnlocked(state, { category: "dress", name: item.action }) ? 1 : 0;
     if (item.type === "permanent") return state.perks[item.id] ? 1 : 0;
     if (item.type === "theme") return state.perks[`theme_${item.theme}`] ? 1 : 0;
+    if (item.type === "furniture") {
+      return state.room && state.room.furniture.includes(item.furnitureId) ? 1 : 0;
+    }
+    if (item.type === "companion") return state.companion && state.companion.adopted ? 1 : 0;
     return state.inventory[item.id] || 0;
   }
 
@@ -782,7 +1014,11 @@
       price.className = "shop-price";
       price.textContent = `${item.price} 币`;
 
-      const ownedPermanently = item.type === "dress" || item.type === "permanent";
+      const ownedPermanently =
+        item.type === "dress" ||
+        item.type === "permanent" ||
+        item.type === "furniture" ||
+        item.type === "companion";
       const buy = document.createElement("button");
       if (item.type === "theme") {
         const equipped = state.settings.theme === item.theme;
@@ -818,6 +1054,11 @@
     if (item.type === "dress") {
       speak(`解锁了「${item.name}」，去动作库换上吧`, 2600);
       renderLibrary();
+    } else if (item.type === "companion") {
+      syncCompanion();
+      speak("伙伴来啦，以后一起搬砖", 2400);
+    } else if (item.type === "furniture") {
+      speak(`「${item.name}」放好啦`, 2000);
     } else if (item.type === "theme") {
       applyTheme();
       speak(`${item.name} 已启用`, 2200);
@@ -829,6 +1070,7 @@
     updateHud(0);
     renderShop();
     updateMenu();
+    if (growthOpen) renderGrowth();
     scheduleSave(800);
   }
 
@@ -1071,6 +1313,7 @@
   function nextAction() {
     const action = G.pickAmbientAction(actions, state);
     G.bumpDaily(state, "actionsViewed");
+    noteAction(action);
     playReaction(action.name, Math.min(6000, action.durationMs * 2 + 900));
     speak(action.label, 1800);
     updateMenu();
@@ -1290,6 +1533,8 @@
       scheduleOpen ||
       configOpen ||
       growthOpen ||
+      gachaOpen ||
+      minigameOpen ||
       !el.petWrap
     );
   }
@@ -1349,7 +1594,9 @@
 
   // ------------------------------------------------------------- 菜单 / 穿透
   function openMenu(x, y) {
-    if (libraryOpen || shopOpen || scheduleOpen || configOpen || growthOpen) closeSidePanels();
+    if (libraryOpen || shopOpen || scheduleOpen || configOpen || growthOpen || gachaOpen || minigameOpen) {
+      closeSidePanels();
+    }
     menuOpen = true;
     el.menu.classList.add("show");
     const rect = el.menu.getBoundingClientRect();
@@ -1390,8 +1637,8 @@
       if (!event.target.closest) return;
       if (!event.target.closest("#menu") && !event.target.closest("#pet-wrap")) closeMenu();
       if (
-        (libraryOpen || shopOpen || scheduleOpen || configOpen || growthOpen) &&
-        !event.target.closest("#library, #shop, #schedule, #config, #growth") &&
+        (libraryOpen || shopOpen || scheduleOpen || configOpen || growthOpen || gachaOpen || minigameOpen) &&
+        !event.target.closest("#library, #shop, #schedule, #config, #growth, #gacha, #minigame") &&
         !event.target.closest("#pet-wrap")
       ) {
         closeSidePanels();
@@ -1429,6 +1676,8 @@
       else if (cmd === "schedule") openSidePanel("schedule");
       else if (cmd === "config") openSidePanel("config");
       else if (cmd === "growth") openSidePanel("growth");
+      else if (cmd === "gacha") openSidePanel("gacha");
+      else if (cmd === "minigame") openSidePanel("minigame");
       else if (cmd === "clear-base") {
         baseAction = IDLE_ACTION;
         setAction(baseAction, { force: true });
@@ -1444,10 +1693,95 @@
     });
 
     el.coinPill.addEventListener("click", () => {
-      if (libraryOpen || shopOpen || scheduleOpen) closeSidePanels();
+      if (libraryOpen || shopOpen || scheduleOpen || configOpen || growthOpen || gachaOpen || minigameOpen) {
+        closeSidePanels();
+      }
       el.panel.classList.toggle("show");
       reportHitboxes();
     });
+
+    el.wishChip.addEventListener("click", () => {
+      const wish = G.wishStatus(state);
+      if (!wish || wish.expired) return;
+      const pool = actions.filter(
+        (action) => action.category === wish.category && G.isUnlocked(state, action) && !action.blocked
+      );
+      if (!pool.length) return;
+      const action = pool[Math.floor(Math.random() * pool.length)];
+      playReaction(action.name, 2400);
+      noteAction(action);
+      speak(`这是「${action.label}」`, 1800);
+    });
+
+    el.visitorChip.addEventListener("click", () => {
+      const visitor = G.acceptVisitor(state, Date.now());
+      if (!visitor) return;
+      toast(`${visitor.icon} ${visitor.label} +${visitor.reward} 金币`);
+      playSound("coin");
+      bounce("hop");
+      updateHud(0);
+      updateEventChips();
+      scheduleSave(600);
+      if (growthOpen) renderGrowth();
+    });
+
+    el.btnCheckin.addEventListener("click", () => {
+      const result = G.doCheckin(state, Date.now());
+      if (!result.ok) return;
+      toast(`签到成功 +${result.reward}（连续 ${result.streak} 天）`);
+      playSound("coin");
+      updateHud(0);
+      renderGrowth();
+      updateMenu();
+      scheduleSave(600);
+    });
+
+    const deposit = (amount) => {
+      const result = G.bankDeposit(state, amount, Date.now());
+      if (!result.ok) {
+        toast(result.reason === "busy" ? "已经有一笔存款了" : "金币不足或低于 200");
+        return;
+      }
+      toast(`已存入 ${amount} 金币，8 小时后可取`);
+      updateHud(0);
+      renderGrowth();
+      scheduleSave(600);
+    };
+    el.btnBank200.addEventListener("click", () => deposit(200));
+    el.btnBank1000.addEventListener("click", () => deposit(1000));
+    el.btnBankWithdraw.addEventListener("click", () => {
+      const result = G.bankWithdraw(state, Date.now());
+      if (!result.ok) return;
+      toast(`取出 ${result.payout} 金币（含 15% 利息）`);
+      playSound("coin");
+      updateHud(0);
+      renderGrowth();
+      scheduleSave(600);
+    });
+
+    $("gacha-close").addEventListener("click", closeSidePanels);
+    $("minigame-close").addEventListener("click", () => {
+      stopMinigame(true);
+      closeSidePanels();
+    });
+    el.gachaPull.addEventListener("click", () => {
+      const result = G.pullGacha(state, actions, Date.now());
+      if (!result.ok) {
+        toast("金币不够，先搬会儿砖吧");
+        return;
+      }
+      el.gachaResult.textContent = result.label;
+      toast(`扭蛋：${result.label}`);
+      playSound("buy");
+      if (result.type === "theme") applyTheme();
+      if (result.type === "dress") renderLibrary();
+      updateHud(0);
+      renderGacha();
+      renderShop();
+      updateMenu();
+      scheduleSave(600);
+    });
+    el.minigameStart.addEventListener("click", startMinigame);
     $("panel-close").addEventListener("click", () => {
       el.panel.classList.remove("show");
       reportHitboxes();
@@ -1626,6 +1960,14 @@
     startLoops();
     scheduleAmbient(4000);
     startRoam();
+    updateEventChips();
+    scheduleWish();
+    syncCompanion();
+    setInterval(() => {
+      G.maybeVisitor(state, Date.now());
+      updateEventChips();
+      if (growthOpen) renderGrowth();
+    }, 30000);
     checkScheduleReminders();
     setInterval(checkScheduleReminders, 20000);
     nextMumbleAt = Date.now() + rand(15000, 30000);
@@ -1667,6 +2009,16 @@
         openSchedule: () => openSidePanel("schedule"),
         openConfig: () => openSidePanel("config"),
         openGrowth: () => openSidePanel("growth"),
+        openGacha: () => openSidePanel("gacha"),
+        openMinigame: () => openSidePanel("minigame"),
+        forceWish: () => {
+          G.createWish(state, Date.now());
+          updateEventChips();
+        },
+        forceVisitor: () => {
+          G.spawnVisitor(state, Date.now());
+          updateEventChips();
+        },
         closePanels: closeSidePanels,
       };
       document.documentElement.dataset.doroReady = "1";

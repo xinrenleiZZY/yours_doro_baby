@@ -409,5 +409,108 @@ test("漫游 / 跟随鼠标 / 勿扰设置会被保留并夹取", () => {
   assert.strictEqual(clean.settings.dnd, true);
 });
 
+test("图鉴记录去重并按分类统计", () => {
+  const state = G.hydrate({}, NOW);
+  G.markSeen(state, "a");
+  G.markSeen(state, "a");
+  G.markSeen(state, "b");
+  const actions = [
+    { name: "a", group: "日常", category: "idle" },
+    { name: "b", group: "情绪", category: "happy" },
+    { name: "c", group: "日常", category: "idle" },
+  ];
+  const codex = G.codexSummary(state, actions);
+  assert.strictEqual(codex.seen, 2);
+  assert.strictEqual(codex.total, 3);
+  assert.strictEqual(codex.groups["日常"].seen, 1);
+  assert.strictEqual(codex.groups["日常"].total, 2);
+});
+
+test("心愿只认对应分类", () => {
+  const state = G.hydrate({}, NOW);
+  state.wish = { id: "w", category: "eat", group: "吃睡", reward: 50, expiresAt: NOW + 60000 };
+  assert.strictEqual(G.completeWish(state, { category: "play" }, NOW), null);
+  const done = G.completeWish(state, { category: "eat" }, NOW);
+  assert.strictEqual(done.reward, 50);
+  assert.strictEqual(state.coins, 50);
+  assert.strictEqual(state.wish, null);
+});
+
+test("签到每天一次，连续天数累加", () => {
+  const state = G.hydrate({}, NOW);
+  const first = G.doCheckin(state, NOW);
+  assert.strictEqual(first.ok, true);
+  assert.strictEqual(first.streak, 1);
+  assert.strictEqual(G.doCheckin(state, NOW).ok, false);
+  const second = G.doCheckin(state, NOW + 86400000);
+  assert.strictEqual(second.streak, 2);
+});
+
+test("存钱罐到期才能取出并结算利息", () => {
+  const state = G.hydrate({ coins: 1000 }, NOW);
+  assert.strictEqual(G.bankDeposit(state, 200, NOW).ok, true);
+  assert.strictEqual(state.coins, 800);
+  assert.strictEqual(G.bankWithdraw(state, NOW).ok, false);
+  const later = NOW + G.BANK_HOURS * 3600000 + 1000;
+  const result = G.bankWithdraw(state, later);
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(result.payout, 230);
+});
+
+test("扭蛋扣 500 金币并返回结果", () => {
+  const state = G.hydrate({ coins: 1000 }, NOW);
+  const result = G.pullGacha(state, [], NOW);
+  assert.strictEqual(result.ok, true);
+  assert.ok(state.coins >= 400);
+  assert.strictEqual(state.gacha.pulls, 1);
+});
+
+test("小游戏结算金币并进入冷却", () => {
+  const state = G.hydrate({}, NOW);
+  const reward = G.finishMinigame(state, 10, NOW);
+  assert.ok(reward >= 5);
+  assert.strictEqual(G.minigameStatus(state, NOW).ready, false);
+  assert.strictEqual(G.minigameStatus(state, NOW + G.MINIGAME_COOLDOWN_MS + 1).ready, true);
+  assert.ok(G.finishMinigame(state, -5, NOW) >= 5);
+});
+
+test("访客能生成并接待奖励", () => {
+  const state = G.hydrate({}, NOW);
+  state.nextVisitorAt = NOW;
+  const visitor = G.maybeVisitor(state, NOW);
+  assert.ok(visitor);
+  const before = state.coins;
+  const accepted = G.acceptVisitor(state, NOW);
+  assert.ok(accepted);
+  assert.ok(state.coins > before);
+});
+
+test("家具与伙伴提升产出", () => {
+  const state = G.hydrate({ coins: 10000, mood: 100, satiety: 80 }, NOW);
+  const base = G.incomePerSecond(state);
+  assert.strictEqual(
+    G.purchase(state, { id: "furniture:rug", type: "furniture", furnitureId: "rug", price: 500 }, NOW).ok,
+    true
+  );
+  assert.ok(G.incomePerSecond(state) > base);
+  assert.strictEqual(
+    G.purchase(
+      state,
+      { id: "furniture:companion", type: "companion", furnitureId: "companion", price: 3000 },
+      NOW
+    ).ok,
+    true
+  );
+  assert.ok(G.incomePerSecond(state) >= base * 1.1 - 1e-9);
+});
+
+test("v3 老存档迁移补齐 v4 字段", () => {
+  const state = G.hydrate({ version: 3, coins: 10 }, NOW);
+  assert.deepStrictEqual(state.seenActions, []);
+  assert.deepStrictEqual(state.room.furniture, []);
+  assert.strictEqual(state.companion.adopted, false);
+  assert.strictEqual(state.version, G.SAVE_VERSION);
+});
+
 console.log(`\n通过 ${passed} / ${passed + failures.length}`);
 if (failures.length) process.exit(1);
