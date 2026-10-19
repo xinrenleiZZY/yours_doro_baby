@@ -305,7 +305,11 @@ function createWindow() {
   win.setAlwaysOnTop(runtime.alwaysOnTop, "screen-saver");
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   win.setMenuBarVisibility(false);
-  win.loadFile(path.join(__dirname, "renderer", "index.html"));
+  const panelArg = process.argv.find((arg) => arg.startsWith("--panel="));
+  win.loadFile(
+    path.join(__dirname, "renderer", "index.html"),
+    panelArg ? { query: { panel: panelArg.split("=")[1] } } : undefined
+  );
 
   win.once("ready-to-show", () => {
     win.showInactive();

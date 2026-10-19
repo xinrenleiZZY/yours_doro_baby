@@ -1541,8 +1541,9 @@
     // 光标离开所有可交互区域时把菜单收起来（穿透模式下点不到外面）
     api.onCursor((payload) => {
       if (!payload || payload.inside !== false) return;
+      // 只自动收起右键菜单。动作库 / 商城 / 日程等大面板如果也按"光标离开"
+      // 收起，窗口一放大、光标落在面板外就会立刻被关掉，看起来像闪退。
       if (menuOpen) closeMenu();
-      if (libraryOpen || shopOpen || scheduleOpen) closeSidePanels();
     });
 
     api.onCommand((command) => {
@@ -1632,6 +1633,10 @@
     window.addEventListener("beforeunload", () => saveNow());
     // 定时兜底存档：避免异常退出/崩溃时丢失进度（用户操作仍走上面的防抖保存）
     setInterval(() => saveNow(), 15000);
+
+    // 调试入口：electron . --panel=shop / schedule / library
+    const initialPanel = TEST_MODE ? null : new URLSearchParams(location.search).get("panel");
+    if (initialPanel) setTimeout(() => openSidePanel(initialPanel), 700);
 
     if (TEST_MODE) {
       // 只给 tools/smoke-test.js 用；正常启动不会挂这个钩子

@@ -388,6 +388,9 @@ async function runScenarios(win) {
   await wait(150);
   await js(win, `document.querySelectorAll("#shop-tabs button")[0].click()`);
   await wait(80);
+  win.webContents.send("pet:cursor", { inside: false });
+  await wait(150);
+  check("光标离开不会关掉商城", await js(win, `document.getElementById("shop").classList.contains("show")`));
   const shop = await js(
     win,
     `({
