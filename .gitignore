@@ -1,0 +1,31 @@
+# 依赖
+node_modules/
+
+# 构建 / 打包产物
+dist/
+out/
+release/
+
+# 本地调试与测试产物
+.tmp-userdata/
+.tmp-smoke-userdata/
+.tmp-perf-userdata/
+_smoke-report.txt
+_perf-report.json
+_shot_*.png
+_cutout_check.png
+_strip_*.png
+_contact_sheet.png
+_sheets/
+_library_scan.txt
+_quality_check.png
+_newpet.png
+*.log
+
+# 原始 GIF 素材体积较大（约 246MB），保留在本地用于重建 assets
+doro_dz/
+
+# 系统垃圾
+.DS_Store
+Thumbs.db
+desktop.ini

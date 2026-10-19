@@ -1,0 +1,80 @@
+{
+  "name": "yours-doro-baby",
+  "productName": "doro_dz 桌面宠物",
+  "version": "0.1.0",
+  "description": "一只住在桌面上的 doro：会自己演各种小动作，还会每秒给你产金币。",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "test": "npm run test:unit && npm run test:smoke",
+    "test:unit": "node tools/test-game.js",
+    "test:smoke": "electron tools/smoke-test.js",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "assets": "node tools/build-assets.js",
+    "assets:library": "node tools/build-assets.js --library",
+    "assets:thumbs": "node tools/build-assets.js --thumbs",
+    "perf": "electron tools/measure-perf.js",
+    "dist": "electron-builder --publish never",
+    "pack": "electron-builder --dir"
+  },
+  "author": "",
+  "license": "MIT",
+  "private": true,
+  "devDependencies": {
+    "electron": "^44.7.2",
+    "electron-builder": "^26.15.3",
+    "eslint": "^9.39.5",
+    "prettier": "^3.9.10"
+  },
+  "build": {
+    "appId": "com.yoursdoro.pet",
+    "productName": "doro_dz 桌面宠物",
+    "compression": "maximum",
+    "electronLanguages": [
+      "zh-CN",
+      "en-US"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "lib/**/*",
+      "renderer/**/*",
+      "assets/actions.json",
+      "assets/pet/**/*",
+      "assets/thumbs/**/*",
+      "assets/icons/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/icons/tray.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "doro"
+    },
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "https://example.invalid/doro-updates"
+      }
+    ]
+  }
+}

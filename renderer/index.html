@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; img-src 'self' data: file:; style-src 'self' 'unsafe-inline' file:; script-src 'self' file:;"
+    />
+    <title>doro</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div id="stage">
+      <div id="fx"></div>
+
+      <div id="hud" class="interactive">
+        <div class="coin-pill" id="coin-pill" title="点击收起/展开面板">
+          <span class="coin"></span>
+          <span id="coin-value">0</span>
+          <span id="coin-rate">+1.0/s</span>
+        </div>
+        <div id="status-chips">
+          <span class="chip" id="chip-satiety">🍚 <b>80</b></span>
+          <span class="chip" id="chip-mood">💗 <b>80</b></span>
+        </div>
+      </div>
+
+      <div id="bubble" class="interactive">
+        <span id="bubble-text"></span>
+      </div>
+
+      <div id="pet-wrap" class="interactive">
+        <div id="pet-stack"></div>
+      </div>
+      <div id="pet-label">Lv.1 发呆</div>
+    </div>
+
+    <div id="panel" class="interactive">
+      <header>
+        <span id="panel-title">doro 的小账本</span>
+        <button id="panel-close" title="收起">✕</button>
+      </header>
+      <div class="row big">
+        <span class="label">金币</span>
+        <span id="panel-coins">0</span>
+      </div>
+      <div class="row">
+        <span class="label">产出</span>
+        <span id="panel-income">+1.0 / 秒</span>
+      </div>
+      <div class="bar-row">
+        <span class="label">🍚 饱食</span>
+        <div class="bar"><i id="bar-satiety"></i></div>
+        <span id="val-satiety">80</span>
+      </div>
+      <div class="bar-row">
+        <span class="label">💗 心情</span>
+        <div class="bar"><i id="bar-mood"></i></div>
+        <span id="val-mood">80</span>
+      </div>
+      <div class="row small">
+        <span class="label">累计赚到</span>
+        <span id="panel-total">0</span>
+      </div>
+      <div class="row small">
+        <span class="label">摸头次数</span>
+        <span id="panel-pets">0</span>
+      </div>
+      <div class="actions">
+        <button id="btn-feed">喂饭 <em>20</em></button>
+        <button id="btn-play">陪玩 <em>30</em></button>
+        <button id="btn-upgrade" class="primary">升级 <em id="upgrade-cost">120</em></button>
+      </div>
+      <p class="hint" id="panel-hint">右键 doro 可以打开菜单</p>
+    </div>
+
+    <div id="menu" class="interactive">
+      <div class="menu-group">
+        <button data-cmd="pet">摸摸头</button>
+        <button data-cmd="feed">喂饭 <em>20</em></button>
+        <button data-cmd="play">陪玩 <em>30</em></button>
+        <button data-cmd="upgrade">搬砖升级 <em id="menu-upgrade-cost">120</em></button>
+      </div>
+      <div class="menu-title">换个动作</div>
+      <div class="menu-group">
+        <button data-cmd="library"><span>动作库…</span><em id="menu-library-count"></em></button>
+        <button data-cmd="next-action">随便来一个</button>
+        <button data-cmd="clear-base">恢复随机表演</button>
+      </div>
+      <div class="menu-title">小生意</div>
+      <div class="menu-group">
+        <button data-cmd="shop"><span>商城</span><em>金币消费</em></button>
+        <button data-cmd="schedule"><span>日程表</span><em id="menu-schedule-count"></em></button>
+        <button data-cmd="growth"><span>任务与成就</span><em id="menu-task-count"></em></button>
+      </div>
+      <div class="menu-title">设置</div>
+      <div class="menu-group">
+        <button data-cmd="config"><span>配置中心</span><em>频率 / 大小</em></button>
+        <button data-toggle="alwaysOnTop"><span>窗口置顶</span><i class="switch"></i></button>
+        <button data-toggle="clickThrough"><span>点击穿透</span><i class="switch"></i></button>
+        <button data-toggle="autoLaunch"><span>开机自启</span><i class="switch"></i></button>
+        <button data-toggle="autoWalk"><span>自动散步</span><i class="switch"></i></button>
+        <button data-toggle="showBubble"><span>说话气泡</span><i class="switch"></i></button>
+      </div>
+      <div class="menu-group">
+        <button data-cmd="reset-position">回到默认位置</button>
+        <button data-cmd="open-folder">打开存档文件夹</button>
+        <button data-cmd="open-log">打开日志</button>
+        <button data-cmd="quit" class="danger">退出 doro</button>
+      </div>
+    </div>
+
+    <div id="library" class="interactive" role="dialog" aria-label="动作库">
+      <header>
+        <span>动作库 <em id="library-count"></em></span>
+        <button id="library-close" title="收起">✕</button>
+      </header>
+      <input id="library-search" type="search" placeholder="搜索动作 / 分类…" autocomplete="off" />
+      <div class="lib-tabs" id="library-tabs"></div>
+      <div class="lib-grid" id="library-grid"></div>
+      <footer>
+        <button id="library-prev" title="上一页">‹</button>
+        <span id="library-page">1 / 1</span>
+        <button id="library-next" title="下一页">›</button>
+      </footer>
+    </div>
+
+    <div id="config" class="interactive" role="dialog" aria-label="配置中心">
+      <header>
+        <span>配置中心</span>
+        <button id="config-close" title="收起">✕</button>
+      </header>
+      <div class="cfg-section">
+        <div class="cfg-label"><span>动作频率</span><b id="cfg-ambient-val">60 秒</b></div>
+        <input id="cfg-ambient" type="range" min="5" max="600" step="5" value="60" />
+        <div class="cfg-presets">
+          <button data-ambient="120">慢 120s</button>
+          <button data-ambient="60">中 60s</button>
+          <button data-ambient="25">快 25s</button>
+        </div>
+        <p class="cfg-hint">两次随机表演之间的基础间隔，实际有 ±25% 浮动</p>
+      </div>
+      <div class="cfg-section">
+        <div class="cfg-label"><span>自动散步间隔</span><b id="cfg-walk-val">45 秒</b></div>
+        <input id="cfg-walk" type="range" min="10" max="600" step="5" value="45" />
+      </div>
+      <div class="cfg-section">
+        <div class="cfg-label"><span>宠物大小</span><b id="cfg-scale-val">100%</b></div>
+        <input id="cfg-scale" type="range" min="70" max="150" step="5" value="100" />
+      </div>
+      <div class="cfg-toggles">
+        <button data-toggle="showBubble"><span>说话气泡</span><i class="switch"></i></button>
+        <button data-toggle="autoWalk"><span>自动散步</span><i class="switch"></i></button>
+        <button data-toggle="clickThrough"><span>点击穿透</span><i class="switch"></i></button>
+        <button data-toggle="alwaysOnTop"><span>窗口置顶</span><i class="switch"></i></button>
+        <button data-toggle="safeMode"><span>安全模式</span><i class="switch"></i></button>
+        <button data-toggle="sound"><span>音效</span><i class="switch"></i></button>
+        <button data-toggle="analytics"><span>本地统计</span><i class="switch"></i></button>
+      </div>
+      <div class="cfg-footer">
+        <span class="cfg-hint">修改立即生效并自动保存</span>
+        <button id="cfg-reset">恢复默认</button>
+      </div>
+    </div>
+
+    <div id="growth" class="interactive" role="dialog" aria-label="任务与成就">
+      <header>
+        <span>任务与成就</span>
+        <em id="growth-coins">0 金币</em>
+        <button id="growth-close" title="收起">✕</button>
+      </header>
+      <div class="growth-scroll">
+        <div class="cfg-label"><span>每日任务</span><b id="growth-daily-date"></b></div>
+        <div id="growth-daily"></div>
+        <div class="cfg-label"><span>成就</span><b id="growth-ach-count"></b></div>
+        <div id="growth-achievements"></div>
+        <div class="cfg-label"><span>本地统计（仅本机）</span><b id="growth-stats-toggle"></b></div>
+        <div id="growth-stats" class="growth-stats"></div>
+      </div>
+    </div>
+
+    <div id="shop" class="interactive" role="dialog" aria-label="商城">
+      <header>
+        <span>商城</span>
+        <em id="shop-balance">0 金币</em>
+        <button id="shop-close" title="收起">✕</button>
+      </header>
+      <div class="lib-tabs" id="shop-tabs"></div>
+      <div class="shop-list" id="shop-list"></div>
+    </div>
+
+    <div id="schedule" class="interactive" role="dialog" aria-label="日程表">
+      <header>
+        <span>日程表</span>
+        <em id="schedule-date"></em>
+        <button id="schedule-close" title="收起">✕</button>
+      </header>
+      <div class="sched-add">
+        <input id="sched-time" type="time" value="09:00" />
+        <input id="sched-text" maxlength="30" placeholder="要做什么？" autocomplete="off" />
+        <select id="sched-repeat" title="重复">
+          <option value="daily">每天</option>
+          <option value="weekdays">工作日</option>
+          <option value="weekend">周末</option>
+          <option value="once">仅一次</option>
+        </select>
+        <button id="sched-add">加</button>
+      </div>
+      <div class="sched-list" id="sched-list"></div>
+      <p class="hint">到点 doro 会说话提醒，并弹系统通知；勾选完成，第二天自动重置。</p>
+    </div>
+
+    <div id="toast"></div>
+
+    <script src="game.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,399 @@
+/* 经济 / 状态逻辑的单元测试：node tools/test-game.js */
+const assert = require("assert");
+const G = require("../renderer/game.js");
+const { sanitizeSave } = require("../lib/save-schema.js");
+
+let passed = 0;
+const failures = [];
+
+function test(name, fn) {
+  try {
+    fn();
+    passed += 1;
+    console.log(`  ok  ${name}`);
+  } catch (err) {
+    failures.push({ name, err });
+    console.log(`FAIL  ${name}\n      ${err.message}`);
+  }
+}
+
+const NOW = 1_700_000_000_000;
+
+console.log("doro 经济逻辑测试");
+
+test("损坏的存档会被兜底成新档", () => {
+  const state = G.hydrate({ coins: "x", level: -8, mood: 1e9 }, NOW);
+  assert.strictEqual(state.coins, 0);
+  assert.strictEqual(state.level, 1);
+  assert.ok(state.mood <= 100);
+  assert.strictEqual(state.lastTick, NOW);
+});
+
+test("正常情况下每秒产出 = 等级 × 心情系数", () => {
+  const state = G.hydrate({ level: 2, mood: 100, satiety: 80 }, NOW);
+  assert.strictEqual(G.incomePerSecond(state), 2 * 1.5);
+  state.mood = 0;
+  assert.strictEqual(G.incomePerSecond(state), 2 * 1);
+});
+
+test("饿了产出打折，但不会完全停产", () => {
+  const state = G.hydrate({ level: 4, mood: 0, satiety: 20 }, NOW);
+  assert.ok(Math.abs(G.incomePerSecond(state) - 4 * 1 * G.BALANCE.hungryMultiplier) < 1e-9);
+  state.satiety = 0;
+  assert.ok(Math.abs(G.incomePerSecond(state) - 4 * 1 * G.BALANCE.starvingMultiplier) < 1e-9);
+  assert.ok(G.incomePerSecond(state) > 0);
+});
+
+test("tick 按毫秒结算金币并消耗饱食度/心情", () => {
+  const state = G.hydrate({ level: 1, mood: 100, satiety: 100 }, NOW);
+  const before = state.coins;
+  G.tick(state, 60_000); // 1 分钟
+  assert.ok(Math.abs(state.coins - before - 1.5 * 60) < 1e-6);
+  assert.ok(Math.abs(state.satiety - (100 - G.BALANCE.satietyDecayPerMinute)) < 1e-6);
+  assert.ok(state.mood < 100);
+});
+
+test("离线收益打折且有 8 小时上限", () => {
+  const state = G.hydrate({ level: 10, mood: 100, satiety: 100, lastTick: NOW - 40 * 3600 * 1000 }, NOW);
+  const expect = G.incomePerSecond(state) * G.BALANCE.offlineCapHours * 3600 * G.BALANCE.offlineEfficiency;
+  const result = G.settleOffline(state, NOW);
+  assert.ok(Math.abs(result.earned - expect) < 1e-6);
+  assert.strictEqual(result.seconds, G.BALANCE.offlineCapHours * 3600);
+  assert.ok(state.satiety >= G.BALANCE.offlineSatietyFloor);
+  assert.ok(state.mood >= G.BALANCE.offlineMoodFloor);
+});
+
+test("刚刚才玩过就不结算离线收益", () => {
+  const state = G.hydrate({ lastTick: NOW - 10_000 }, NOW);
+  const result = G.settleOffline(state, NOW);
+  assert.strictEqual(result.earned, 0);
+  assert.strictEqual(state.lastTick, NOW);
+});
+
+test("喂饭花钱换饱食度，钱不够会被拒绝", () => {
+  const state = G.hydrate({ coins: 100, satiety: 40 }, NOW);
+  const ok = G.feed(state, NOW);
+  assert.strictEqual(ok.ok, true);
+  assert.strictEqual(state.coins, 100 - G.BALANCE.feedCost);
+  assert.strictEqual(state.satiety, 40 + G.BALANCE.feedValue);
+  assert.strictEqual(state.stats.feeds, 1);
+
+  state.coins = 1;
+  const no = G.feed(state, NOW);
+  assert.strictEqual(no.ok, false);
+  assert.strictEqual(no.reason, "coin");
+  assert.strictEqual(state.coins, 1);
+});
+
+test("吃太饱会被拒绝，但不会扣钱", () => {
+  const state = G.hydrate({ coins: 100, satiety: 100 }, NOW);
+  const result = G.feed(state, NOW);
+  assert.strictEqual(result.ok, false);
+  assert.strictEqual(state.coins, 100);
+});
+
+test("陪玩加心情、升等级越升越贵", () => {
+  const state = G.hydrate({ coins: 1e6, mood: 10, satiety: 90 }, NOW);
+  const play = G.play(state, NOW);
+  assert.strictEqual(play.ok, true);
+  assert.strictEqual(state.mood, 10 + G.BALANCE.playValue);
+
+  const first = G.upgradeCost(state);
+  G.upgrade(state, NOW);
+  assert.strictEqual(state.level, 2);
+  assert.ok(G.upgradeCost(state) > first);
+});
+
+test("摸头加心情并且掉 1~3 金币", () => {
+  for (const roll of [0, 0.5, 0.999]) {
+    const state = G.hydrate({ mood: 50 }, NOW);
+    const result = G.pet(state, NOW, () => roll);
+    assert.ok(result.bonus >= 1 && result.bonus <= 3);
+    assert.strictEqual(state.coins, result.bonus);
+    assert.strictEqual(state.mood, 51.2);
+    assert.strictEqual(state.stats.pets, 1);
+  }
+});
+
+test("心情好时更爱演开心的动作，饿的时候只演惨的", () => {
+  const actions = [
+    { name: "idle", kind: "idle" },
+    { name: "love", kind: "happy" },
+    { name: "cry", kind: "sad" },
+    { name: "truck", kind: "fun" },
+  ];
+  const happy = G.hydrate({ mood: 95, satiety: 90 }, NOW);
+  const sad = G.hydrate({ mood: 5, satiety: 5 }, NOW);
+
+  let happyHappy = 0;
+  let sadSad = 0;
+  for (let i = 0; i < 1000; i += 1) {
+    if (G.pickAmbientAction(actions, happy).kind === "happy") happyHappy += 1;
+    if (G.pickAmbientAction(actions, sad).kind === "sad") sadSad += 1;
+  }
+  assert.ok(happyHappy > 450, `心情好时 happy 动作占比偏低: ${happyHappy}`);
+  assert.ok(sadSad > 500, `饿的时候 sad 动作占比偏低: ${sadSad}`);
+});
+
+test("金币数字会缩写显示", () => {
+  assert.strictEqual(G.formatCoins(999), "999");
+  assert.strictEqual(G.formatCoins(12345), "12.3K");
+  assert.strictEqual(G.formatCoins(2_500_000), "2.50M");
+});
+
+test("没有版本号的老存档会迁移到当前版本", () => {
+  const migrated = G.migrate({ coins: 42, stats: { pets: 3 } });
+  assert.strictEqual(migrated.version, G.SAVE_VERSION);
+  assert.strictEqual(migrated.coins, 42);
+  assert.strictEqual(migrated.stats.pets, 3);
+  assert.strictEqual(migrated.stats.sessions, 0);
+});
+
+test("迁移后的老存档能被 hydrate 正常使用", () => {
+  const state = G.hydrate({ coins: 42, level: 3, satiety: 60, mood: 70 }, NOW);
+  assert.strictEqual(state.coins, 42);
+  assert.strictEqual(state.level, 3);
+  assert.strictEqual(state.version, G.SAVE_VERSION);
+});
+
+test("存档白名单拒绝非法输入", () => {
+  assert.strictEqual(sanitizeSave(null), null);
+  assert.strictEqual(sanitizeSave([]), null);
+  assert.strictEqual(sanitizeSave("x"), null);
+  assert.strictEqual(sanitizeSave({ coins: "abc" }), null);
+  assert.strictEqual(sanitizeSave({ coins: 1, junk: "x".repeat(200 * 1024) }), null);
+});
+
+test("存档白名单会丢弃多余字段并夹住超范围数值", () => {
+  const clean = sanitizeSave({
+    coins: 100,
+    level: 9999,
+    satiety: 500,
+    mood: -20,
+    stats: { pets: -3, feeds: 2 },
+    settings: { baseAction: "sit", scale: 99, showBubble: false },
+    window: { x: 12.4, y: "abc" },
+    hacked: { __proto__: { polluted: true } },
+  });
+  assert.strictEqual(clean.coins, 100);
+  assert.strictEqual(clean.level, 999);
+  assert.strictEqual(clean.satiety, 100);
+  assert.strictEqual(clean.mood, 0);
+  assert.strictEqual(clean.stats.pets, 0);
+  assert.strictEqual(clean.stats.feeds, 2);
+  assert.strictEqual(clean.settings.baseAction, "sit");
+  assert.strictEqual(clean.settings.scale, 1.8);
+  assert.strictEqual(clean.settings.showBubble, false);
+  assert.strictEqual(clean.window.x, 12);
+  assert.strictEqual(clean.window.y, null);
+  assert.strictEqual(clean.hacked, undefined);
+});
+
+test("商城：买食物扣钱入背包，使用时恢复状态", () => {
+  const state = G.hydrate({ coins: 100, satiety: 40, mood: 40 }, NOW);
+  const fish = G.SHOP_ITEMS.fish;
+  const bought = G.purchase(state, fish, NOW);
+  assert.strictEqual(bought.ok, true);
+  assert.strictEqual(state.coins, 85);
+  assert.strictEqual(state.inventory.fish, 1);
+  assert.strictEqual(state.shopStats.spent, 15);
+
+  const used = G.useItem(state, fish, NOW);
+  assert.strictEqual(used.ok, true);
+  assert.strictEqual(state.satiety, 55);
+  assert.strictEqual(state.inventory.fish, 0);
+  assert.strictEqual(G.useItem(state, fish, NOW).reason, "empty");
+});
+
+test("商城：金币不足时买不了", () => {
+  const state = G.hydrate({ coins: 5 }, NOW);
+  const result = G.purchase(state, G.SHOP_ITEMS.cake, NOW);
+  assert.strictEqual(result.ok, false);
+  assert.strictEqual(result.reason, "coin");
+  assert.strictEqual(state.coins, 5);
+});
+
+test("商城：装扮购买后解锁", () => {
+  const state = G.hydrate({ coins: 1000 }, NOW);
+  const action = { category: "dress", name: "dress_santa" };
+  assert.strictEqual(G.isUnlocked(state, action), false);
+  const bought = G.purchase(
+    state,
+    { id: "dress:dress_santa", type: "dress", price: 60, action: "dress_santa" },
+    NOW
+  );
+  assert.strictEqual(bought.ok, true);
+  assert.strictEqual(G.isUnlocked(state, action), true);
+  assert.strictEqual(state.coins, 940);
+});
+
+test("咖啡让产出翻倍，招财猫永久 +10%", () => {
+  const state = G.hydrate({ coins: 1000, mood: 50, satiety: 80 }, NOW);
+  const base = G.incomePerSecond(state);
+  G.purchase(state, G.SHOP_ITEMS.coffee, Date.now());
+  assert.ok(G.incomePerSecond(state) >= base * 1.99);
+  G.purchase(state, G.SHOP_ITEMS.lucky_cat, NOW);
+  assert.ok(G.incomePerSecond(state) >= base * 2 * 1.09);
+});
+
+test("日程：添加、到期、提醒、完成、删除", () => {
+  const state = G.hydrate({}, NOW);
+  const added = G.addScheduleItem(state, { time: "09:00", text: "喝一杯水" }, NOW);
+  assert.strictEqual(added.ok, true);
+  assert.strictEqual(state.schedule.length, 1);
+  assert.strictEqual(G.addScheduleItem(state, { time: "25:00", text: "x" }, NOW).reason, "time");
+  assert.strictEqual(G.addScheduleItem(state, { time: "10:00", text: "  " }, NOW).reason, "text");
+
+  const dueAt = G.scheduleTimestamp(state.schedule[0], NOW) + 60000;
+  const due = G.dueScheduleItems(state, dueAt);
+  assert.strictEqual(due.length, 1);
+  G.markScheduleNotified(state, due[0].id, dueAt);
+  assert.strictEqual(G.dueScheduleItems(state, dueAt + 60000).length, 0);
+
+  assert.strictEqual(G.toggleScheduleItem(state, added.item.id, dueAt), true);
+  assert.ok(state.schedule[0].doneDate);
+  assert.strictEqual(G.removeScheduleItem(state, added.item.id), true);
+  assert.strictEqual(state.schedule.length, 0);
+});
+
+test("v1 老存档迁移后带上商城与日程字段", () => {
+  const state = G.hydrate({ version: 1, coins: 10 }, NOW);
+  assert.deepStrictEqual(state.inventory, {});
+  assert.deepStrictEqual(state.schedule, []);
+  assert.strictEqual(state.version, G.SAVE_VERSION);
+});
+
+test("存档白名单保留商城 / 日程字段并过滤非法项", () => {
+  const clean = sanitizeSave({
+    coins: 10,
+    settings: { baseAction: "idle_stand", theme: "night", analytics: true },
+    daily: { date: "2026-10-19", progress: { feeds: 2 }, claimed: ["feed1"] },
+    achievements: ["first_pet"],
+    metrics: { days: { "2026-10-19": 120 } },
+    inventory: { fish: 2, "bad-key": 3 },
+    buffs: { double_income: 12345 },
+    perks: { lucky_cat: true },
+    unlocked: ["dress_santa", "dress_santa3", 5],
+    favorites: ["idle_stand", "bad name"],
+    recent: ["idle_stand"],
+    schedule: [{ id: "a", time: "09:00", text: "喝水", doneDate: "", notifiedDate: "" }],
+    shopStats: { purchases: 2, spent: 40 },
+  });
+  assert.strictEqual(clean.version, 2);
+  assert.strictEqual(clean.inventory.fish, 2);
+  assert.strictEqual(clean.inventory["bad-key"], undefined);
+  assert.strictEqual(clean.perks.lucky_cat, true);
+  assert.strictEqual(clean.buffs.double_income, 12345);
+  assert.strictEqual(clean.unlocked.length, 2);
+  assert.deepStrictEqual(clean.favorites, ["idle_stand"]);
+  assert.deepStrictEqual(clean.recent, ["idle_stand"]);
+  assert.strictEqual(clean.schedule.length, 1);
+  assert.strictEqual(clean.shopStats.spent, 40);
+  assert.strictEqual(clean.settings.baseAction, "idle_stand");
+  assert.strictEqual(clean.settings.theme, "night");
+  assert.strictEqual(clean.settings.analytics, true);
+  assert.strictEqual(clean.daily.progress.feeds, 2);
+  assert.deepStrictEqual(clean.daily.claimed, ["feed1"]);
+  assert.deepStrictEqual(clean.achievements, ["first_pet"]);
+  assert.strictEqual(clean.metrics.days["2026-10-19"], 120);
+});
+
+test("动作间隔按配置秒数浮动，默认会兜底", () => {
+  assert.strictEqual(
+    G.nextActionDelay(() => 0, 60),
+    45000
+  );
+  assert.strictEqual(
+    G.nextActionDelay(() => 0.5, 60),
+    60000
+  );
+  assert.strictEqual(
+    G.nextActionDelay(() => 0.999, 60),
+    74970
+  );
+  assert.strictEqual(
+    G.nextActionDelay(() => 0.5, undefined),
+    60000
+  );
+});
+
+test("动作频率配置会被夹到合法区间", () => {
+  const state = G.hydrate({ settings: { ambientIntervalSec: 9999, autoWalkIntervalSec: 1 } }, NOW);
+  assert.strictEqual(state.settings.ambientIntervalSec, 600);
+  assert.strictEqual(state.settings.autoWalkIntervalSec, 10);
+  const fallback = G.hydrate({ settings: {} }, NOW);
+  assert.strictEqual(fallback.settings.ambientIntervalSec, 60);
+});
+
+test("安全模式排除表情包和标记内容，blocked 永不随机", () => {
+  const actions = [
+    { name: "safe", kind: "idle", group: "日常", size: [200, 200] },
+    { name: "meme", kind: "idle", group: "表情包", size: [200, 200] },
+    { name: "blocked", kind: "idle", group: "日常", size: [200, 200], blocked: true },
+  ];
+  const state = G.hydrate({ settings: { safeMode: true } }, NOW);
+  for (let i = 0; i < 60; i += 1) {
+    assert.strictEqual(G.pickAmbientAction(actions, state).name, "safe");
+  }
+  state.settings.safeMode = false;
+  const seen = new Set();
+  for (let i = 0; i < 120; i += 1) seen.add(G.pickAmbientAction(actions, state).name);
+  assert.ok(seen.has("meme"));
+  assert.ok(!seen.has("blocked"));
+});
+
+test("仅一次的日程完成后第二天不会重复提醒", () => {
+  const state = G.hydrate({}, NOW);
+  G.addScheduleItem(state, { time: "09:00", text: "交报告", repeat: "once" }, NOW);
+  const day1 = G.scheduleTimestamp(state.schedule[0], NOW) + 60000;
+  const due1 = G.dueScheduleItems(state, day1);
+  assert.strictEqual(due1.length, 1);
+  G.toggleScheduleItem(state, state.schedule[0].id, day1);
+  const nextDay = day1 + 86400000;
+  const due2 = G.dueScheduleItems(state, G.scheduleTimestamp(state.schedule[0], nextDay) + 60000);
+  assert.strictEqual(due2.length, 0);
+});
+
+test("每日任务：进度、领取、跨天重置", () => {
+  const state = G.hydrate({}, NOW);
+  G.bumpDaily(state, "feeds", 1, NOW);
+  const feed = G.dailyTasks(state, NOW).find((task) => task.id === "feed1");
+  assert.strictEqual(feed.ready, true);
+  assert.strictEqual(G.claimDaily(state, "feed1", NOW).ok, true);
+  assert.strictEqual(state.coins, 20);
+  assert.strictEqual(G.claimDaily(state, "feed1", NOW).ok, false);
+  const nextDay = NOW + 86400000;
+  assert.strictEqual(G.dailyTasks(state, nextDay).find((task) => task.id === "feed1").claimed, false);
+});
+
+test("成就：达成后只能领取一次", () => {
+  const state = G.hydrate({}, NOW);
+  state.stats.pets = 1;
+  assert.strictEqual(G.claimAchievement(state, "first_pet").ok, true);
+  assert.strictEqual(state.coins, 20);
+  assert.strictEqual(G.claimAchievement(state, "first_pet").ok, false);
+});
+
+test("日程支持工作日 / 周末过滤，并能延后", () => {
+  const monday = new Date(2026, 9, 19, 10, 0, 0).getTime();
+  const saturday = new Date(2026, 9, 17, 10, 0, 0).getTime();
+  const state = G.hydrate({}, monday);
+  const added = G.addScheduleItem(state, { time: "09:00", text: "上班", repeat: "weekdays" }, monday);
+  assert.strictEqual(G.dueScheduleItems(state, monday).length, 1);
+  state.schedule[0].notifiedDate = "";
+  assert.strictEqual(G.dueScheduleItems(state, saturday).length, 0);
+
+  assert.strictEqual(G.snoozeScheduleItem(state, added.item.id, 10, monday), true);
+  assert.strictEqual(state.schedule[0].time, "10:10");
+});
+
+test("主题购买后立即应用，且不能重复购买", () => {
+  const state = G.hydrate({ coins: 2000 }, NOW);
+  assert.strictEqual(G.purchase(state, G.SHOP_ITEMS.theme_night, NOW).ok, true);
+  assert.strictEqual(state.settings.theme, "night");
+  assert.strictEqual(state.perks.theme_night, true);
+  assert.strictEqual(G.purchase(state, G.SHOP_ITEMS.theme_night, NOW).reason, "owned");
+});
+
+console.log(`\n通过 ${passed} / ${passed + failures.length}`);
+if (failures.length) process.exit(1);

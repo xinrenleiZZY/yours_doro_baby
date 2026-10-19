@@ -1,0 +1,9 @@
+node_modules/
+assets/pet/
+assets/icons/
+doro_dz/
+*.webp
+*.gif
+*.png
+*.ico
+package-lock.json

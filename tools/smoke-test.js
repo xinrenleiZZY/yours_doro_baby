@@ -1,0 +1,696 @@
+/*
+ * 界面冒烟测试：真的把 renderer 跑起来，用合成事件点一遍。
+ *
+ * 设计要点（对应 docs/优化路线图.md P0-2）：
+ * - 渲染页带 ?test=1，关掉每秒产币 / 随机动作等计时器，断言只看"操作带来的相对变化"；
+ * - 不依赖 requestAnimationFrame（隐藏窗口里 rAF 会被节流），全部用轮询等待；
+ * - 每个用例先取操作前状态，再断言差值，避免顺序耦合；
+ * - 结果写进 _smoke-report.txt，GUI 进程的 stdout 不可靠。
+ *
+ * 运行：npm run test:smoke
+ */
+const { app, BrowserWindow, ipcMain } = require("electron");
+const fs = require("fs");
+const path = require("path");
+
+const ROOT = path.join(__dirname, "..");
+const REPORT = path.join(ROOT, "_smoke-report.txt");
+
+// 测试专用 profile，不污染真实存档
+app.setPath("userData", path.join(ROOT, ".tmp-smoke-userdata"));
+
+const BASE_SAVE = {
+  version: 1,
+  coins: 500,
+  totalEarned: 900,
+  level: 1,
+  satiety: 50,
+  mood: 50,
+  lastTick: Date.now() - 5000,
+  createdAt: Date.now() - 86400000,
+  stats: { pets: 0, feeds: 0, plays: 0, upgrades: 0, sessions: 1 },
+  window: { x: 100, y: 100 },
+  settings: {
+    alwaysOnTop: true,
+    clickThrough: true,
+    autoLaunch: false,
+    showBubble: true,
+    autoWalk: false,
+    scale: 1,
+  },
+};
+
+let seed = JSON.parse(JSON.stringify(BASE_SAVE));
+let lastSaved = null;
+let lastHitboxes = [];
+const calls = { setPosition: [], clickThrough: [], save: [], logs: [], notifications: [], quit: 0 };
+const results = [];
+const lines = [];
+let crashed = false;
+
+// Electron 在最后一个窗口关闭时默认会退出应用；测试里要保留进程跑重启场景
+app.on("window-all-closed", () => {});
+
+function say(line) {
+  lines.push(line);
+  try {
+    fs.writeFileSync(REPORT, `${lines.join("\n")}\n`, "utf8");
+  } catch (err) {
+    /* 忽略 */
+  }
+}
+
+function check(name, ok, detail) {
+  results.push({ name, ok: Boolean(ok), detail });
+  say(`${ok ? "  ok  " : "FAIL  "}${name}${detail ? `  (${detail})` : ""}`);
+}
+
+function registerStubs() {
+  ipcMain.handle("pet:load", () => ({
+    save: seed,
+    now: Date.now(),
+    autoLaunch: false,
+    savePath: path.join(ROOT, "save.json"),
+    logPath: path.join(ROOT, "main.log"),
+    crashedLastTime: false,
+  }));
+  ipcMain.handle("pet:save", (_event, state) => {
+    lastSaved = state;
+    calls.save.push(state);
+    return { ok: true };
+  });
+  ipcMain.handle("pet:actions", () =>
+    JSON.parse(fs.readFileSync(path.join(ROOT, "assets", "actions.json"), "utf8"))
+  );
+  ipcMain.handle("win:get-bounds", () => ({ x: 100, y: 100, width: 320, height: 360 }));
+  ipcMain.handle("pet:hitboxes", (_event, boxes) => {
+    lastHitboxes = boxes;
+    return true;
+  });
+  ipcMain.handle("win:set-position", (_event, pos) => {
+    calls.setPosition.push(pos);
+    return pos;
+  });
+  ipcMain.handle("win:set-ui-size", (_event, size) => size);
+  ipcMain.handle("win:set-click-through", (_event, value) => {
+    calls.clickThrough.push(value);
+    return value;
+  });
+  ipcMain.handle("win:set-always-on-top", (_event, value) => value);
+  ipcMain.handle("win:set-auto-launch", (_event, value) => Boolean(value));
+  ipcMain.handle("app:open-save-folder", () => true);
+  ipcMain.handle("app:open-log", () => true);
+  ipcMain.handle("app:reset-position", () => ({ x: 0, y: 0 }));
+  ipcMain.handle("app:log", (_event, entry) => {
+    calls.logs.push(entry);
+    return true;
+  });
+  ipcMain.handle("app:notify", (_event, payload) => {
+    calls.notifications.push(payload);
+    return true;
+  });
+  ipcMain.handle("app:quit", () => {
+    calls.quit += 1;
+    return true;
+  });
+}
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function openWindow() {
+  const win = new BrowserWindow({
+    width: 320,
+    height: 360,
+    show: false,
+    frame: false,
+    webPreferences: {
+      preload: path.join(ROOT, "preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      backgroundThrottling: false,
+    },
+  });
+  await win.loadFile(path.join(ROOT, "renderer", "index.html"), { query: { test: "1" } });
+  await waitFor(win, `document.documentElement.dataset.doroReady === "1"`, 5000, "renderer 初始化");
+  await waitFor(win, `Boolean(document.querySelector(".pet-layer.in"))`, 5000, "宠物动画加载");
+  return win;
+}
+
+async function js(win, code) {
+  return win.webContents.executeJavaScript(code, true);
+}
+
+async function waitFor(win, expression, timeout, label) {
+  const deadline = Date.now() + (timeout || 3000);
+  while (Date.now() < deadline) {
+    const ok = await js(win, `Boolean(${expression})`).catch(() => false);
+    if (ok) return true;
+    await wait(40);
+  }
+  throw new Error(`等待超时：${label || expression}`);
+}
+
+function pointer(type, x, y, id) {
+  return `(() => {
+    const el = document.getElementById("pet-wrap");
+    el.dispatchEvent(new PointerEvent("${type}", {
+      bubbles: true, pointerId: ${id}, button: 0, buttons: ${type === "pointerup" ? 0 : 1},
+      clientX: ${x - 100}, clientY: ${y - 100}, screenX: ${x}, screenY: ${y}
+    }));
+    return true;
+  })()`;
+}
+
+const getState = (win) => js(win, `window.__doroTest.getState()`);
+
+async function runScenarios(win) {
+  // 1. 启动状态
+  const boot = await js(
+    win,
+    `(() => {
+      const layers = [...document.querySelectorAll(".pet-layer")];
+      const visible = layers.filter((n) => n.classList.contains("in"));
+      return {
+        layers: layers.length,
+        visible: visible.length,
+        src: visible[0] ? visible[0].getAttribute("src") : null,
+        width: visible[0] ? parseFloat(visible[0].style.width) : 0,
+        label: document.getElementById("pet-label").textContent,
+        libButton: Boolean(document.querySelector('[data-cmd="library"]')),
+        actionCount: window.__doroTest.actionCount(),
+        coin: document.getElementById("coin-value").textContent,
+        rate: document.getElementById("coin-rate").textContent,
+      };
+    })()`
+  );
+  check(
+    "待机动画已显示且只有一层可见",
+    boot.visible === 1 && /idle_stand\.webp$/.test(boot.src || ""),
+    boot.src
+  );
+  check("宠物尺寸按内容裁边计算", boot.width > 100, `${boot.width}px`);
+  check("动作库已载入", boot.libButton && boot.actionCount >= 280, `${boot.actionCount} 个动作`);
+  check(
+    "金币 / 产出显示",
+    boot.coin === "500" && /^\+1\.[0-9]\/s$/.test(boot.rate),
+    `${boot.coin} ${boot.rate}`
+  );
+
+  // 2. 账本面板 + 喂饭
+  await js(win, `document.getElementById("coin-pill").click()`);
+  check(
+    "点金币胶囊打开账本面板",
+    await js(win, `document.getElementById("panel").classList.contains("show")`)
+  );
+
+  const beforeFeed = await getState(win);
+  await js(win, `document.getElementById("btn-feed").click()`);
+  await wait(80);
+  const afterFeed = await getState(win);
+  check(
+    "喂饭：扣 20 金币、回 30 饱食度",
+    Math.abs(beforeFeed.coins - afterFeed.coins - 20) < 0.01 &&
+      Math.abs(afterFeed.satiety - Math.min(100, beforeFeed.satiety + 30)) < 0.01 &&
+      afterFeed.stats.feeds === beforeFeed.stats.feeds + 1,
+    `${beforeFeed.coins.toFixed(0)}→${afterFeed.coins.toFixed(0)}，饱食 ${beforeFeed.satiety}→${afterFeed.satiety}`
+  );
+
+  // 3. 陪玩
+  const beforePlay = await getState(win);
+  await js(win, `document.getElementById("btn-play").click()`);
+  await wait(80);
+  const afterPlay = await getState(win);
+  check(
+    "陪玩：扣 30 金币、心情上涨",
+    Math.abs(beforePlay.coins - afterPlay.coins - 30) < 0.01 &&
+      afterPlay.mood >= Math.min(100, beforePlay.mood + 25) - 0.01 &&
+      afterPlay.stats.plays === beforePlay.stats.plays + 1,
+    `${beforePlay.coins.toFixed(0)}→${afterPlay.coins.toFixed(0)}，心情 ${beforePlay.mood.toFixed(0)}→${afterPlay.mood.toFixed(0)}`
+  );
+
+  // 4. 升级
+  const beforeUpgrade = await getState(win);
+  const upgradeCost = await js(win, `Number(document.getElementById("upgrade-cost").textContent)`);
+  await js(win, `document.getElementById("btn-upgrade").click()`);
+  await wait(80);
+  const afterUpgrade = await getState(win);
+  check(
+    "升级：等级 +1、按标价扣费",
+    afterUpgrade.level === beforeUpgrade.level + 1 &&
+      Math.abs(beforeUpgrade.coins - afterUpgrade.coins - upgradeCost) < 0.01,
+    `Lv.${beforeUpgrade.level}→Lv.${afterUpgrade.level}，花费 ${upgradeCost}`
+  );
+  check("升级后标签同步", /Lv\.2/.test(await js(win, `document.getElementById("pet-label").textContent`)));
+
+  // 5. 点一下 = 摸头
+  const beforePet = await getState(win);
+  await js(win, pointer("pointerdown", 300, 300, 7));
+  await js(win, pointer("pointerup", 300, 300, 7));
+  await wait(120);
+  const afterPet = await getState(win);
+  check(
+    "点一下 doro：摸头次数 +1、掉 1~3 金币",
+    afterPet.stats.pets === beforePet.stats.pets + 1 &&
+      afterPet.coins - beforePet.coins >= 1 &&
+      afterPet.coins - beforePet.coins <= 3.01,
+    `+${(afterPet.coins - beforePet.coins).toFixed(0)} 金币`
+  );
+  check("摸头会冒出气泡", await js(win, `document.getElementById("bubble").classList.contains("show")`));
+
+  // 6. 拖拽
+  const beforeDrag = calls.setPosition.length;
+  await js(win, pointer("pointerdown", 400, 400, 9));
+  await wait(120);
+  await js(win, pointer("pointermove", 470, 430, 9));
+  await wait(80);
+  check("拖拽时播放走路动画", (await js(win, `window.__doroTest.currentAction()`)) === "walk_bag");
+  await js(win, pointer("pointerup", 470, 430, 9));
+  await wait(120);
+  const moved = calls.setPosition.slice(beforeDrag);
+  check(
+    "拖拽会移动窗口",
+    moved.length > 0 && moved.some((p) => p.x === 170 && p.y === 130),
+    JSON.stringify(moved.slice(-1))
+  );
+  check("松手后回到常驻动作", (await js(win, `window.__doroTest.currentAction()`)) === "idle_stand");
+
+  // 7. 右键菜单 + 动作库
+  await js(
+    win,
+    `document.getElementById("pet-wrap").dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 60, clientY: 60 }))`
+  );
+  check("右键打开菜单", await js(win, `document.getElementById("menu").classList.contains("show")`));
+  await js(win, `document.querySelector('[data-cmd="library"]').click()`);
+  await wait(150);
+  const library = await js(
+    win,
+    `({
+      open: document.getElementById("library").classList.contains("show"),
+      items: document.querySelectorAll(".lib-item").length,
+      tabs: document.querySelectorAll(".lib-tabs button").length,
+      menuOpen: document.getElementById("menu").classList.contains("show")
+    })`
+  );
+  check("动作库能打开并分页展示", library.open && library.items === 12, `${library.items} 个/页`);
+  check("动作库有分类标签", library.tabs >= 5, `${library.tabs} 个`);
+
+  await js(
+    win,
+    `(() => {
+      const input = document.getElementById("library-search");
+      input.value = "猫";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      return true;
+    })()`
+  );
+  await wait(120);
+  const searchHits = await js(win, `document.querySelectorAll(".lib-item").length`);
+  check("动作库支持搜索", searchHits >= 1 && searchHits < 12, `搜到 ${searchHits} 个`);
+
+  await js(win, `document.querySelector(".lib-item").click()`);
+  await wait(150);
+  const picked = await js(
+    win,
+    `({
+      base: window.__doroTest.baseAction(),
+      current: window.__doroTest.currentAction(),
+      label: document.getElementById("pet-label").textContent
+    })`
+  );
+  check(
+    "能从动作库切换常驻动作",
+    picked.base === picked.current && /猫|宠物/.test(picked.label),
+    picked.label
+  );
+  const chosenAction = picked.base;
+
+  await js(win, `document.getElementById("library-close").click()`);
+  await wait(80);
+  check(
+    "动作库能关闭",
+    (await js(win, `document.getElementById("library").classList.contains("show")`)) === false
+  );
+
+  // 7a. 收藏 + 装扮锁
+  await js(win, `window.__doroTest.openLibrary()`);
+  await wait(120);
+  await js(win, `document.querySelector(".lib-item .lib-star").click()`);
+  await wait(120);
+  check("动作库能收藏", (await getState(win)).favorites.length === 1, "1 个收藏");
+  await js(
+    win,
+    `[...document.querySelectorAll("#library-tabs button")].find((b) => b.textContent === "收藏").click()`
+  );
+  await wait(120);
+  check("收藏标签能筛选", (await js(win, `document.querySelectorAll(".lib-item").length`)) === 1);
+
+  await js(
+    win,
+    `(() => {
+      const input = document.getElementById("library-search");
+      input.value = "";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      return true;
+    })()`
+  );
+  await wait(80);
+  await js(
+    win,
+    `[...document.querySelectorAll("#library-tabs button")].find((b) => b.textContent === "换装").click()`
+  );
+  await wait(120);
+  const libDebug = await js(
+    win,
+    `({
+      tabs: [...document.querySelectorAll("#library-tabs button")].map((b) => b.textContent),
+      active: document.querySelector("#library-tabs button.active")?.textContent,
+      items: document.querySelectorAll(".lib-item").length,
+      first: document.querySelector(".lib-item")?.className
+    })`
+  );
+  check("动作库分类切换", libDebug.active === "换装" && libDebug.items > 0, JSON.stringify(libDebug));
+  const locked = await js(win, `document.querySelectorAll(".lib-item.locked").length`);
+  check("未解锁装扮显示为锁定", locked === 12, `${locked} 个`);
+  await js(win, `document.querySelector(".lib-item.locked").click()`);
+  await wait(150);
+  const jumped = await js(
+    win,
+    `({
+      shop: document.getElementById("shop").classList.contains("show"),
+      tab: document.querySelector("#shop-tabs button.active")?.textContent
+    })`
+  );
+  check("点锁定装扮会跳到商城", jumped.shop && jumped.tab === "装扮", JSON.stringify(jumped));
+  await js(win, `window.__doroTest.closePanels()`);
+
+  // 7b. 商城
+  await js(win, `window.__doroTest.openShop()`);
+  await wait(150);
+  await js(win, `document.querySelectorAll("#shop-tabs button")[0].click()`);
+  await wait(80);
+  const shop = await js(
+    win,
+    `({
+      open: document.getElementById("shop").classList.contains("show"),
+      items: document.querySelectorAll(".shop-item").length,
+      tabs: document.querySelectorAll("#shop-tabs button").length,
+      balance: document.getElementById("shop-balance").textContent
+    })`
+  );
+  check("商城能打开并列出货物", shop.open && shop.items >= 4 && shop.tabs === 5, JSON.stringify(shop));
+
+  const beforeBuy = await getState(win);
+  await js(win, `document.querySelector(".shop-item button").click()`);
+  await wait(150);
+  const afterBuy = await getState(win);
+  check(
+    "购买会扣金币并入背包",
+    Math.abs(beforeBuy.coins - afterBuy.coins - 15) < 0.01 &&
+      (afterBuy.inventory.fish || 0) === (beforeBuy.inventory.fish || 0) + 1,
+    `${beforeBuy.coins.toFixed(0)}→${afterBuy.coins.toFixed(0)}，鱼干 ×${afterBuy.inventory.fish}`
+  );
+
+  const beforeUse = await getState(win);
+  await js(
+    win,
+    `[...document.querySelectorAll(".shop-item")]
+      .find((row) => row.textContent.includes("小鱼干"))
+      .querySelector("button.use").click()`
+  );
+  await wait(150);
+  const afterUse = await getState(win);
+  check(
+    "使用食物恢复饱食度",
+    afterUse.satiety > beforeUse.satiety &&
+      (afterUse.inventory.fish || 0) === (beforeUse.inventory.fish || 0) - 1,
+    `${beforeUse.satiety.toFixed(0)}→${afterUse.satiety.toFixed(0)}`
+  );
+
+  await js(
+    win,
+    `[...document.querySelectorAll("#shop-tabs button")].find((b) => b.textContent === "装扮").click()`
+  );
+  await wait(120);
+  const dressCount = await js(win, `document.querySelectorAll(".shop-item").length`);
+  check("商城有装扮分类", dressCount > 5, `${dressCount} 件`);
+  await js(
+    win,
+    `[...document.querySelectorAll("#shop-tabs button")].find((b) => b.textContent === "主题").click()`
+  );
+  await wait(120);
+  const themeCount = await js(win, `document.querySelectorAll(".shop-item").length`);
+  check("商城有主题分类", themeCount === 3, `${themeCount} 个`);
+
+  // 7c. 日程
+  await js(win, `window.__doroTest.openSchedule()`);
+  await wait(150);
+  await js(
+    win,
+    `(() => {
+      document.getElementById("sched-time").value = "23:59";
+      document.getElementById("sched-text").value = "喝一杯水";
+      document.getElementById("sched-repeat").value = "once";
+      document.getElementById("sched-add").click();
+      return true;
+    })()`
+  );
+  await wait(150);
+  const sched = await getState(win);
+  check(
+    "能添加日程",
+    sched.schedule.length === 1 &&
+      sched.schedule[0].text === "喝一杯水" &&
+      sched.schedule[0].repeat === "once",
+    JSON.stringify(sched.schedule[0] || null)
+  );
+
+  const beforeSnooze = sched.schedule[0].time;
+  await js(win, `document.querySelector(".sched-snooze").click()`);
+  await wait(150);
+  const schedSnoozed = await getState(win);
+  check("日程能延后 10 分钟", schedSnoozed.schedule[0].time !== beforeSnooze, schedSnoozed.schedule[0].time);
+
+  await js(win, `document.querySelector('.sched-item input[type="checkbox"]').click()`);
+  await wait(150);
+  const schedDone = await getState(win);
+  check("日程能勾选完成", Boolean(schedDone.schedule[0].doneDate), schedDone.schedule[0].doneDate);
+
+  await js(win, `document.querySelector(".sched-remove").click()`);
+  await wait(150);
+  const schedRemoved = await getState(win);
+  check("日程能删除", schedRemoved.schedule.length === 0, `${schedRemoved.schedule.length} 条`);
+
+  // 7d. 配置中心
+  await js(win, `window.__doroTest.openConfig()`);
+  await wait(150);
+  const config = await js(
+    win,
+    `({
+      open: document.getElementById("config").classList.contains("show"),
+      ambient: document.getElementById("cfg-ambient").value,
+      toggles: document.querySelectorAll("#config [data-toggle]").length
+    })`
+  );
+  check(
+    "配置中心能打开",
+    config.open && config.toggles === 7 && config.ambient === "60",
+    JSON.stringify(config)
+  );
+
+  await js(
+    win,
+    `(() => {
+      const slider = document.getElementById("cfg-ambient");
+      slider.value = "120";
+      slider.dispatchEvent(new Event("input", { bubbles: true }));
+      return true;
+    })()`
+  );
+  await wait(120);
+  check("动作频率可调", (await getState(win)).settings.ambientIntervalSec === 120, "120 秒");
+
+  await js(
+    win,
+    `[...document.querySelectorAll("#config [data-ambient]")].find((b) => b.textContent.includes("快")).click()`
+  );
+  await wait(120);
+  check("频率预设生效", (await getState(win)).settings.ambientIntervalSec === 25, "25 秒");
+
+  await js(
+    win,
+    `(() => {
+      const slider = document.getElementById("cfg-scale");
+      slider.value = "120";
+      slider.dispatchEvent(new Event("input", { bubbles: true }));
+      return true;
+    })()`
+  );
+  await wait(150);
+  check("宠物大小可调", Math.abs((await getState(win)).settings.scale - 1.2) < 0.001, "120%");
+
+  await js(win, `document.getElementById("cfg-reset").click()`);
+  await wait(150);
+  const resetCfg = await getState(win);
+  check(
+    "配置能恢复默认",
+    resetCfg.settings.ambientIntervalSec === 60 && Math.abs(resetCfg.settings.scale - 1) < 0.001,
+    `${resetCfg.settings.ambientIntervalSec}s / ${Math.round(resetCfg.settings.scale * 100)}%`
+  );
+
+  await js(win, `document.getElementById("config-close").click()`);
+  await wait(80);
+  check(
+    "配置中心能关闭",
+    (await js(win, `document.getElementById("config").classList.contains("show")`)) === false
+  );
+
+  // 7e. 任务与成就
+  await js(win, `window.__doroTest.openGrowth()`);
+  await wait(150);
+  const growth = await js(
+    win,
+    `({
+      open: document.getElementById("growth").classList.contains("show"),
+      daily: document.querySelectorAll("#growth-daily .growth-item").length,
+      ach: document.querySelectorAll("#growth-achievements .growth-item").length
+    })`
+  );
+  check(
+    "任务与成就面板能打开",
+    growth.open && growth.daily === 4 && growth.ach === 8,
+    JSON.stringify(growth)
+  );
+
+  const beforeClaim = await getState(win);
+  await js(win, `document.querySelector("#growth-daily .growth-item:nth-child(2) button").click()`);
+  await wait(150);
+  const afterClaim = await getState(win);
+  check(
+    "能领取每日任务奖励",
+    afterClaim.coins > beforeClaim.coins && afterClaim.daily.claimed.includes("feed1"),
+    `${beforeClaim.coins.toFixed(0)}→${afterClaim.coins.toFixed(0)}`
+  );
+  await js(win, `document.getElementById("growth-close").click()`);
+
+  // 8. 设置开关
+  const beforeToggle = await getState(win);
+  await js(win, `document.querySelector('[data-toggle="clickThrough"]').click()`);
+  await wait(100);
+  const afterToggle = await getState(win);
+  check(
+    "点击穿透开关能切换",
+    afterToggle.settings.clickThrough === !beforeToggle.settings.clickThrough,
+    `${beforeToggle.settings.clickThrough} → ${afterToggle.settings.clickThrough}`
+  );
+  check("开关状态同步给主进程", calls.clickThrough.length > 0, `${calls.clickThrough.length} 次`);
+  check("切换后有提示", /点击穿透/.test(await js(win, `document.getElementById("toast").textContent`)));
+
+  // 8b. 回归：命中区域上报 + 从菜单打开穿透时必须收起菜单（防止"卡死"）
+  await js(win, `window.__doroTest.closePanels()`);
+  await js(win, `document.getElementById("panel-close").click()`);
+  await wait(120);
+  const baseBoxes = lastHitboxes.length;
+  await js(win, `window.__doroTest.openMenu(10, 10)`);
+  await wait(120);
+  const menuBoxes = lastHitboxes.length;
+  check("菜单展开时命中区域会扩大", menuBoxes === baseBoxes + 1, `${baseBoxes} → ${menuBoxes}`);
+
+  await js(win, `document.querySelector('[data-toggle="clickThrough"]').click()`);
+  await wait(150);
+  const menuHidden = await js(win, `!document.getElementById("menu").classList.contains("show")`);
+  check(
+    "打开穿透时菜单自动收起（防止卡死）",
+    menuHidden === true && calls.clickThrough[calls.clickThrough.length - 1] === true,
+    `menuHidden=${menuHidden} last=${calls.clickThrough[calls.clickThrough.length - 1]}`
+  );
+  check("穿透模式下仍保留宠物命中区域", lastHitboxes.length === baseBoxes, `${lastHitboxes.length} 个区域`);
+
+  const petCenter = await js(
+    win,
+    `(() => {
+      const r = document.getElementById("pet-stack").getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    })()`
+  );
+  const covered = lastHitboxes.some(
+    (box) =>
+      petCenter.x >= box.x &&
+      petCenter.x <= box.x + box.w &&
+      petCenter.y >= box.y &&
+      petCenter.y <= box.y + box.h
+  );
+  check("宠物中心落在命中区域内", covered === true, `${Math.round(petCenter.x)},${Math.round(petCenter.y)}`);
+
+  // 9. 存档
+  await js(win, `window.__doroTest.saveNow()`);
+  await wait(120);
+  check("存档能写回", lastSaved && lastSaved.level === 2, lastSaved ? `Lv.${lastSaved.level}` : "null");
+  check(
+    "存档包含完整字段",
+    Boolean(lastSaved && lastSaved.stats && lastSaved.settings && lastSaved.window),
+    lastSaved ? Object.keys(lastSaved).join(",") : "null"
+  );
+
+  // 10. 渲染进程异常会上报主进程日志
+  await js(win, `setTimeout(() => { throw new Error("smoke-boom"); }, 0); true`);
+  await wait(300);
+  check(
+    "渲染进程异常写入日志",
+    calls.logs.some((entry) => String(entry.message).includes("smoke-boom")),
+    `${calls.logs.length} 条日志`
+  );
+  return chosenAction;
+}
+
+async function runRestartScenario(chosenAction) {
+  // 用上一次存档重新开一个窗口，验证"重启后进度还在"
+  seed = lastSaved;
+  const win = await openWindow();
+  const restored = await getState(win);
+  check(
+    "重启后金币 / 等级 / 常驻动作都还在",
+    Math.abs(restored.coins - lastSaved.coins) < 0.01 &&
+      restored.level === lastSaved.level &&
+      restored.settings.baseAction === chosenAction,
+    `Lv.${restored.level} · ${restored.coins.toFixed(0)} 金币 · ${restored.settings.baseAction}`
+  );
+  check("重启后仍是所选动作", (await js(win, `window.__doroTest.currentAction()`)) === chosenAction);
+
+  // 退出按钮
+  await js(win, `window.__doroTest.openMenu(10, 10)`);
+  await js(win, `document.querySelector('[data-cmd="quit"]').click()`);
+  await wait(500);
+  check("退出按钮会通知主进程", calls.quit > 0, `${calls.quit}`);
+  win.destroy();
+}
+
+async function main() {
+  registerStubs();
+  const win = await openWindow();
+  let chosenAction = null;
+  try {
+    chosenAction = await runScenarios(win);
+  } finally {
+    win.destroy();
+  }
+  await runRestartScenario(chosenAction);
+
+  const failed = results.filter((r) => !r.ok);
+  say(`\n通过 ${results.length - failed.length} / ${results.length}`);
+  if (failed.length) say(`失败项：\n${failed.map((r) => ` - ${r.name}`).join("\n")}`);
+  app.exit(failed.length ? 1 : 0);
+}
+
+process.on("uncaughtException", (err) => {
+  if (crashed) return;
+  crashed = true;
+  say(`冒烟测试崩溃：${err && err.stack ? err.stack : err}`);
+  app.exit(2);
+});
+
+app.whenReady().then(() =>
+  main().catch((err) => {
+    say(`冒烟测试失败：${err && err.stack ? err.stack : err}`);
+    app.exit(2);
+  })
+);
