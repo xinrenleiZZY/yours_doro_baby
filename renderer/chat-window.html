@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'none'; style-src 'self'; script-src 'self';"
+      content="default-src 'none'; img-src 'self' data: file:; style-src 'self'; script-src 'self';"
     />
     <title>和 doro 聊天</title>
     <link rel="stylesheet" href="chat-window.css" />
@@ -13,10 +13,13 @@
     <main class="app">
       <header class="titlebar">
         <div class="identity">
-          <span class="avatar" aria-hidden="true">D</span>
-          <div>
+          <span class="avatar-shell" aria-hidden="true">
+            <img class="avatar" src="../assets/pet/closeup_soft.webp" alt="" />
+            <i class="online-dot"></i>
+          </span>
+          <div class="identity-copy">
             <strong>和 doro 聊天</strong>
-            <span id="status" class="status">正在读取配置…</span>
+            <span id="status" class="status"><i></i><span id="status-text">正在读取配置…</span></span>
           </div>
         </div>
         <div class="window-actions">
@@ -26,6 +29,13 @@
       </header>
 
       <section id="settings" class="settings" hidden>
+        <div class="settings-heading">
+          <div>
+            <strong>AI 连接设置</strong>
+            <span>配置只保存在这台电脑</span>
+          </div>
+          <em>OpenAI Compatible</em>
+        </div>
         <div class="preset-row" aria-label="服务预设">
           <button
             type="button"
@@ -70,10 +80,12 @@
       <section id="history" class="history" aria-live="polite"></section>
 
       <footer class="composer">
-        <textarea id="message" rows="2" maxlength="2000" placeholder="跟 doro 说点什么…"></textarea>
-        <button id="send" type="button">发送</button>
+        <div class="composer-box">
+          <textarea id="message" rows="2" maxlength="2000" placeholder="跟 doro 说点什么…"></textarea>
+          <button id="send" type="button"><span>发送</span><i>↑</i></button>
+        </div>
         <div class="composer-meta">
-          <span>Enter 发送 · Shift+Enter 换行</span>
+          <span>Enter 发送 · Shift+Enter 换行 · AI 可能会犯错</span>
           <button id="clear-history" type="button">清空对话</button>
         </div>
       </footer>

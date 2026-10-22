@@ -6,6 +6,7 @@
   const $ = (id) => document.getElementById(id);
   const el = {
     status: $("status"),
+    statusText: $("status-text"),
     settings: $("settings"),
     settingsToggle: $("settings-toggle"),
     close: $("close"),
@@ -27,11 +28,13 @@
   let sending = false;
 
   function setStatus(text, kind) {
-    el.status.textContent = text;
+    el.statusText.textContent = text;
     el.status.className = `status${kind ? ` ${kind}` : ""}`;
   }
 
   function addMessage(role, content, extraClass) {
+    const empty = el.history.querySelector(".empty");
+    if (empty) empty.remove();
     const row = document.createElement("div");
     row.className = `message ${role}${extraClass ? ` ${extraClass}` : ""}`;
     const bubble = document.createElement("div");
@@ -47,11 +50,29 @@
     if (!messages.length) {
       const empty = document.createElement("div");
       empty.className = "empty";
+      const visual = document.createElement("div");
+      visual.className = "empty-visual";
+      const avatar = document.createElement("img");
+      avatar.src = "../assets/pet/closeup_soft.webp";
+      avatar.alt = "";
+      visual.appendChild(avatar);
       const title = document.createElement("strong");
       title.textContent = "我在这里。";
       const hint = document.createElement("span");
       hint.textContent = "可以聊今天发生了什么，也可以让我陪你歇一会儿。配置一次 AI 接口就能开始。";
-      empty.append(title, hint);
+      const prompts = document.createElement("div");
+      prompts.className = "quick-prompts";
+      ["陪我歇一会儿", "今天有点累", "讲个冷笑话"].forEach((text) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.textContent = text;
+        button.addEventListener("click", () => {
+          el.message.value = text;
+          sendMessage();
+        });
+        prompts.appendChild(button);
+      });
+      empty.append(visual, title, hint, prompts);
       el.history.appendChild(empty);
       return;
     }
@@ -162,7 +183,9 @@
     }
 
     sending = true;
+    el.settings.hidden = true;
     el.send.disabled = true;
+    el.send.querySelector("span").textContent = "发送中";
     el.message.disabled = true;
     el.message.value = "";
     addMessage("user", text);
@@ -186,6 +209,7 @@
     } finally {
       sending = false;
       el.send.disabled = false;
+      el.send.querySelector("span").textContent = "发送";
       el.message.disabled = false;
       el.message.focus();
       if (config) applyStatus(await api.aiStatus());

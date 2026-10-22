@@ -1610,12 +1610,20 @@ async function runChatWindowScenario() {
     `({
       settingsOpen: !document.getElementById("settings").hidden,
       status: document.getElementById("status").textContent,
-      messages: document.querySelectorAll(".message").length
+      messages: document.querySelectorAll(".message").length,
+      prompts: document.querySelectorAll(".quick-prompts button").length,
+      avatarLoaded: document.querySelector(".avatar").naturalWidth > 0,
+      composerHeight: document.querySelector(".composer").getBoundingClientRect().height
     })`
   );
   check(
     "未配置时聊天窗口会引导填写接口",
-    initial.settingsOpen && /还没配置/.test(initial.status) && initial.messages === 0,
+    initial.settingsOpen &&
+      /还没配置/.test(initial.status) &&
+      initial.messages === 0 &&
+      initial.prompts === 3 &&
+      initial.avatarLoaded &&
+      initial.composerHeight < 150,
     JSON.stringify(initial)
   );
 
@@ -1659,6 +1667,8 @@ async function runChatWindowScenario() {
     `({
       assistant: [...document.querySelectorAll(".message.assistant .bubble")].map((node) => node.textContent),
       error: document.querySelectorAll(".message.error").length,
+      empty: document.querySelectorAll(".empty").length,
+      settingsOpen: !document.getElementById("settings").hidden,
       status: document.getElementById("status").textContent
     })`
   );
@@ -1666,6 +1676,8 @@ async function runChatWindowScenario() {
     "聊天回复会显示并写入短期历史",
     chatResult.assistant.some((text) => text.includes("歇十分钟")) &&
       chatResult.error === 0 &&
+      chatResult.empty === 0 &&
+      !chatResult.settingsOpen &&
       aiHistoryState.length === 2 &&
       calls.aiChats[0].message === "写代码写累了",
     JSON.stringify(chatResult)
