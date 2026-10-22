@@ -1,7 +1,7 @@
 {
   "name": "yours-doro-baby",
   "productName": "doro_dz 桌面宠物",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "一只住在桌面上的 doro：会自己演各种小动作，还会每秒给你产金币。",
   "main": "main.js",
   "scripts": {

@@ -1150,6 +1150,12 @@
     document.body.dataset.theme = state.settings.theme || "default";
   }
 
+  function applyVisualScale() {
+    // 宠物缩小时状态区一起缩小；放大时 HUD 保持原尺寸，避免占满桌宠窗口。
+    const scale = Math.min(1, Math.max(0.6, Number(state.settings.scale) || 1));
+    el.stage.style.setProperty("--pet-ui-scale", scale.toFixed(2));
+  }
+
   function equipTheme(theme) {
     state.settings.theme = theme;
     applyTheme();
@@ -2194,6 +2200,7 @@
     el.cfgScale.addEventListener("input", () => {
       state.settings.scale = Number(el.cfgScale.value) / 100;
       el.cfgScaleVal.textContent = `${el.cfgScale.value}%`;
+      applyVisualScale();
       setAction(currentAction, { force: true });
       reportHitboxes();
       scheduleSave(500);
@@ -2265,6 +2272,7 @@
       state.settings.scale = 1;
       state.settings.safeMode = true;
       state.settings.sound = true;
+      applyVisualScale();
       renderConfig();
       setAction(currentAction, { force: true });
       if (!TEST_MODE) {
@@ -2354,6 +2362,7 @@
     const loaded = await api.load();
     state = G.hydrate(loaded.save, loaded.now);
     applyTheme();
+    applyVisualScale();
     if (loaded.crashedLastTime) {
       api.log("warn", "上次没有正常退出，已从最近的存档继续");
     }

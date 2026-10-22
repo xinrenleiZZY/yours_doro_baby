@@ -616,6 +616,59 @@ async function runScenarios(win) {
   await wait(120);
   check("频率预设生效", (await getState(win)).settings.ambientIntervalSec === 25, "25 秒");
 
+  const uiScaleBaseline = await js(
+    win,
+    `(() => {
+      const hud = document.getElementById("hud").getBoundingClientRect();
+      const label = document.getElementById("pet-label").getBoundingClientRect();
+      return {
+        hud: { left: hud.left, top: hud.top, width: hud.width, height: hud.height },
+        label: {
+          center: label.left + label.width / 2,
+          bottom: label.bottom,
+          width: label.width,
+          height: label.height
+        }
+      };
+    })()`
+  );
+  await js(
+    win,
+    `(() => {
+      const slider = document.getElementById("cfg-scale");
+      slider.value = "70";
+      slider.dispatchEvent(new Event("input", { bubbles: true }));
+      return true;
+    })()`
+  );
+  await wait(220);
+  const uiScaleSmall = await js(
+    win,
+    `(() => {
+      const hud = document.getElementById("hud").getBoundingClientRect();
+      const label = document.getElementById("pet-label").getBoundingClientRect();
+      return {
+        hud: { left: hud.left, top: hud.top, width: hud.width, height: hud.height },
+        label: {
+          center: label.left + label.width / 2,
+          bottom: label.bottom,
+          width: label.width,
+          height: label.height
+        }
+      };
+    })()`
+  );
+  check(
+    "状态区随宠物缩小并保持锚点距离",
+    uiScaleSmall.hud.width < uiScaleBaseline.hud.width * 0.8 &&
+      uiScaleSmall.label.width < uiScaleBaseline.label.width * 0.8 &&
+      Math.abs(uiScaleSmall.hud.left - uiScaleBaseline.hud.left) < 1.5 &&
+      Math.abs(uiScaleSmall.hud.top - uiScaleBaseline.hud.top) < 1.5 &&
+      Math.abs(uiScaleSmall.label.center - uiScaleBaseline.label.center) < 1.5 &&
+      Math.abs(uiScaleSmall.label.bottom - uiScaleBaseline.label.bottom) < 1.5,
+    `HUD ${uiScaleBaseline.hud.width.toFixed(0)}→${uiScaleSmall.hud.width.toFixed(0)} @${uiScaleBaseline.hud.left.toFixed(1)},${uiScaleBaseline.hud.top.toFixed(1)}→${uiScaleSmall.hud.left.toFixed(1)},${uiScaleSmall.hud.top.toFixed(1)}；标签 ${uiScaleBaseline.label.width.toFixed(0)}→${uiScaleSmall.label.width.toFixed(0)} C${uiScaleBaseline.label.center.toFixed(1)}→${uiScaleSmall.label.center.toFixed(1)} B${uiScaleBaseline.label.bottom.toFixed(1)}→${uiScaleSmall.label.bottom.toFixed(1)}`
+  );
+
   await js(
     win,
     `(() => {
