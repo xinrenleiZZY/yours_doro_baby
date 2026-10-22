@@ -11,7 +11,7 @@
 })(typeof self !== "undefined" ? self : this, function () {
   "use strict";
 
-  const SAVE_VERSION = 11;
+  const SAVE_VERSION = 12;
 
   // ---- 经济数值 -------------------------------------------------------------
   const BALANCE = {
@@ -57,6 +57,7 @@
     recent: [],
     stickerRandom: {},
     stickerLabels: {},
+    stickerHidden: [],
     schedule: [],
     shopStats: { purchases: 0, spent: 0 },
     daily: {
@@ -804,6 +805,13 @@
         diary: raw.diary && typeof raw.diary === "object" ? raw.diary : DEFAULT_STATE.diary,
       });
     },
+    // 11 -> 12：内置表情包可隐藏 / 恢复
+    11: (raw) => {
+      return Object.assign({}, raw, {
+        version: 12,
+        stickerHidden: Array.isArray(raw.stickerHidden) ? raw.stickerHidden : [],
+      });
+    },
   };
 
   function migrate(raw) {
@@ -863,6 +871,13 @@
           if (label) state.stickerLabels[name] = label;
         });
     }
+    state.stickerHidden = Array.isArray(raw.stickerHidden)
+      ? [
+          ...new Set(
+            raw.stickerHidden.filter((name) => typeof name === "string" && /^[a-z0-9_]{1,40}$/.test(name))
+          ),
+        ]
+      : [];
     state.schedule = Array.isArray(raw.schedule)
       ? raw.schedule
           .filter((item) => item && typeof item === "object" && typeof item.time === "string")
@@ -1372,6 +1387,28 @@
     return Boolean(action && action.group === "表情包");
   }
 
+  function isStickerHidden(state, action) {
+    return Boolean(action && state.stickerHidden && state.stickerHidden.includes(action.name));
+  }
+
+  function hideBuiltInSticker(state, action) {
+    if (!isStickerAction(action) || action.user) return { ok: false, reason: "not-built-in" };
+    if (!state.stickerHidden) state.stickerHidden = [];
+    if (!state.stickerHidden.includes(action.name)) state.stickerHidden.push(action.name);
+    return { ok: true, name: action.name };
+  }
+
+  function restoreBuiltInStickers(state, actions) {
+    const builtInNames = new Set(
+      (Array.isArray(actions) ? actions : [])
+        .filter((action) => isStickerAction(action) && !action.user)
+        .map((action) => action.name)
+    );
+    const previous = state.stickerHidden ? state.stickerHidden.length : 0;
+    state.stickerHidden = (state.stickerHidden || []).filter((name) => !builtInNames.has(name));
+    return { ok: true, restored: previous - state.stickerHidden.length };
+  }
+
   function effectiveLabel(state, action) {
     if (!action) return "";
     const custom = state.stickerLabels && state.stickerLabels[action.name];
@@ -1386,6 +1423,7 @@
    */
   function stickerRandomAllowed(state, action) {
     if (!action) return false;
+    if (isStickerHidden(state, action)) return false;
     const override = state.stickerRandom && state.stickerRandom[action.name];
     if (override === true) return true;
     if (override === false) return false;
@@ -2227,6 +2265,9 @@
     completeQuiz,
     isUnlocked,
     isStickerAction,
+    isStickerHidden,
+    hideBuiltInSticker,
+    restoreBuiltInStickers,
     personalityOf,
     preferenceFor,
     profileDetails,

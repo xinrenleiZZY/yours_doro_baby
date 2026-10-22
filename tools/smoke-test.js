@@ -25,7 +25,7 @@ const ACTION_NAMES = JSON.parse(fs.readFileSync(path.join(ROOT, "assets", "actio
 app.setPath("userData", path.join(ROOT, ".tmp-smoke-userdata"));
 
 const BASE_SAVE = {
-  version: 11,
+  version: 12,
   coins: 500,
   totalEarned: 900,
   level: 1,
@@ -55,6 +55,7 @@ const BASE_SAVE = {
   diary: {
     entries: [{ date: "2026-10-21", text: "今天赚了 3.2K 金币，看了 7 个动作，接待了 1 位访客。" }],
   },
+  stickerHidden: [],
 };
 
 let seed = JSON.parse(JSON.stringify(BASE_SAVE));
@@ -825,8 +826,10 @@ async function runScenarios(win) {
     `(() => {
       const hud = document.getElementById("hud").getBoundingClientRect();
       const label = document.getElementById("pet-label").getBoundingClientRect();
+      const pet = document.getElementById("pet-stack").getBoundingClientRect();
       return {
         hud: { left: hud.left, top: hud.top, width: hud.width, height: hud.height },
+        petTop: pet.top,
         label: {
           center: label.left + label.width / 2,
           bottom: label.bottom,
@@ -845,14 +848,16 @@ async function runScenarios(win) {
       return true;
     })()`
   );
-  await wait(220);
+  await wait(320);
   const uiScaleSmall = await js(
     win,
     `(() => {
       const hud = document.getElementById("hud").getBoundingClientRect();
       const label = document.getElementById("pet-label").getBoundingClientRect();
+      const pet = document.getElementById("pet-stack").getBoundingClientRect();
       return {
         hud: { left: hud.left, top: hud.top, width: hud.width, height: hud.height },
+        petTop: pet.top,
         label: {
           center: label.left + label.width / 2,
           bottom: label.bottom,
@@ -863,14 +868,15 @@ async function runScenarios(win) {
     })()`
   );
   check(
-    "状态区随宠物缩小并保持锚点距离",
+    "状态区随宠物缩小并贴近宠物上方",
     uiScaleSmall.hud.width < uiScaleBaseline.hud.width * 0.8 &&
       uiScaleSmall.label.width < uiScaleBaseline.label.width * 0.8 &&
       Math.abs(uiScaleSmall.hud.left - uiScaleBaseline.hud.left) < 1.5 &&
-      Math.abs(uiScaleSmall.hud.top - uiScaleBaseline.hud.top) < 1.5 &&
+      uiScaleSmall.hud.top > uiScaleBaseline.hud.top + 20 &&
+      Math.abs(uiScaleSmall.petTop - (uiScaleSmall.hud.top + uiScaleSmall.hud.height) - 12 * 0.7) < 2 &&
       Math.abs(uiScaleSmall.label.center - uiScaleBaseline.label.center) < 1.5 &&
       Math.abs(uiScaleSmall.label.bottom - uiScaleBaseline.label.bottom) < 1.5,
-    `HUD ${uiScaleBaseline.hud.width.toFixed(0)}→${uiScaleSmall.hud.width.toFixed(0)} @${uiScaleBaseline.hud.left.toFixed(1)},${uiScaleBaseline.hud.top.toFixed(1)}→${uiScaleSmall.hud.left.toFixed(1)},${uiScaleSmall.hud.top.toFixed(1)}；标签 ${uiScaleBaseline.label.width.toFixed(0)}→${uiScaleSmall.label.width.toFixed(0)} C${uiScaleBaseline.label.center.toFixed(1)}→${uiScaleSmall.label.center.toFixed(1)} B${uiScaleBaseline.label.bottom.toFixed(1)}→${uiScaleSmall.label.bottom.toFixed(1)}`
+    `HUD ${uiScaleBaseline.hud.width.toFixed(0)}→${uiScaleSmall.hud.width.toFixed(0)} top ${uiScaleBaseline.hud.top.toFixed(1)}→${uiScaleSmall.hud.top.toFixed(1)}，间距 ${(uiScaleSmall.petTop - uiScaleSmall.hud.top - uiScaleSmall.hud.height).toFixed(1)}；标签 ${uiScaleBaseline.label.width.toFixed(0)}→${uiScaleSmall.label.width.toFixed(0)}`
   );
 
   await js(
@@ -1462,6 +1468,24 @@ async function runToolWindowScenarios() {
       wideSticker.overflow &&
       narrowSticker.overflow,
     `宽${wideSticker.columns}列/${wideSticker.height.toFixed(0)}px，窄${narrowSticker.columns}列/${narrowSticker.height.toFixed(0)}px`
+  );
+  await js(sticker, `document.querySelector(".sticker-item").click()`);
+  await js(sticker, `document.getElementById("sticker-delete").click()`);
+  await js(sticker, `document.getElementById("sticker-delete").click()`);
+  await wait(200);
+  check(
+    "内置表情删除后只隐藏",
+    toolState.stickerHidden.length === 1 &&
+      /\/ 50 参与随机/.test(await js(sticker, `document.getElementById("sticker-count").textContent`)),
+    JSON.stringify(toolState.stickerHidden)
+  );
+  await js(sticker, `document.getElementById("sticker-download").click()`);
+  await wait(200);
+  check(
+    "下载内置按钮能恢复隐藏表情",
+    toolState.stickerHidden.length === 0 &&
+      /\/ 51 参与随机/.test(await js(sticker, `document.getElementById("sticker-count").textContent`)),
+    `hidden=${toolState.stickerHidden.length}`
   );
   const randomBefore = JSON.stringify(toolState.stickerRandom);
   await js(sticker, `document.getElementById("sticker-preview-random").click()`);

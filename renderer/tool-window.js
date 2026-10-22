@@ -324,6 +324,7 @@
     const query = stickerQuery.trim().toLowerCase();
     return actions
       .filter((action) => G.isStickerAction(action))
+      .filter((action) => !G.isStickerHidden(state, action))
       .filter((action) => {
         if (!query) return true;
         return G.effectiveLabel(state, action).toLowerCase().includes(query) || action.name.includes(query);
@@ -331,7 +332,7 @@
   }
 
   function renderSticker() {
-    const all = actions.filter((action) => G.isStickerAction(action));
+    const all = actions.filter((action) => G.isStickerAction(action) && !G.isStickerHidden(state, action));
     const items = stickerItems();
     const pages = Math.max(1, Math.ceil(items.length / STICKER_PAGE_SIZE));
     stickerPage = Math.min(Math.max(0, stickerPage), pages - 1);
@@ -364,7 +365,8 @@
     $("sticker-preview-random").textContent = G.stickerRandomAllowed(state, selected)
       ? "随机：开"
       : "随机：关";
-    $("sticker-delete").disabled = !selected.user;
+    $("sticker-delete").disabled = false;
+    $("sticker-delete").title = selected.user ? "删除这个自定义表情包" : "隐藏这个内置表情包";
     $("sticker-delete").textContent = "删除";
     pendingDelete = null;
 
@@ -503,10 +505,18 @@
         }
         renderSticker();
       });
+      $("sticker-download").addEventListener("click", async () => {
+        const response = await runCommand({ type: "restore" });
+        if (response && response.result) {
+          showToast(
+            response.result.restored ? `已恢复 ${response.result.restored} 个内置表情包` : "内置表情包都在"
+          );
+        }
+      });
       $("sticker-reveal").addEventListener("click", () => api.stickerReveal());
       $("sticker-delete").addEventListener("click", async () => {
         const action = actions.find((item) => item.name === stickerName);
-        if (!action || !action.user) return;
+        if (!action) return;
         if (pendingDelete !== action.name) {
           pendingDelete = action.name;
           $("sticker-delete").textContent = "再点一次确认";
@@ -519,7 +529,10 @@
           return;
         }
         pendingDelete = null;
-        const response = await runCommand({ type: "delete", name: action.name });
+        const response = await runCommand({
+          type: action.user ? "delete" : "hide",
+          name: action.name,
+        });
         if (response) stickerName = null;
       });
     }

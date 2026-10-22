@@ -272,6 +272,7 @@ test("存档白名单保留商城 / 日程字段并过滤非法项", () => {
     metrics: { days: { "2026-10-19": 120 } },
     stickerRandom: { meme_test: true, bad: "x" },
     stickerLabels: { meme_test: "新名称", bad: 3 },
+    stickerHidden: ["closeup_soft", "bad name"],
     inventory: { fish: 2, "bad-key": 3 },
     buffs: { double_income: 12345 },
     perks: { lucky_cat: true, luxury_hourglass: true },
@@ -312,7 +313,7 @@ test("存档白名单保留商城 / 日程字段并过滤非法项", () => {
     schedule: [{ id: "a", time: "09:00", text: "喝水", doneDate: "", notifiedDate: "" }],
     shopStats: { purchases: 2, spent: 40 },
   });
-  assert.strictEqual(clean.version, 11);
+  assert.strictEqual(clean.version, 12);
   assert.strictEqual(clean.inventory.fish, 2);
   assert.strictEqual(clean.inventory["bad-key"], undefined);
   assert.strictEqual(clean.perks.lucky_cat, true);
@@ -344,6 +345,7 @@ test("存档白名单保留商城 / 日程字段并过滤非法项", () => {
   assert.strictEqual(clean.stickerRandom.bad, undefined);
   assert.strictEqual(clean.stickerLabels.meme_test, "新名称");
   assert.strictEqual(clean.stickerLabels.bad, undefined);
+  assert.deepStrictEqual(clean.stickerHidden, ["closeup_soft"]);
 });
 
 test("动作间隔按配置秒数浮动，默认会兜底", () => {
@@ -585,6 +587,19 @@ test("表情包可以改自定义名称，清空后回退原名称", () => {
   assert.strictEqual(G.effectiveLabel(state, action), "新名称");
   G.setStickerLabel(state, action.name, "   ");
   assert.strictEqual(G.effectiveLabel(state, action), "原名称");
+});
+
+test("内置表情包删除只隐藏并可批量恢复", () => {
+  const state = G.hydrate({ version: 12 }, NOW);
+  const builtIn = { name: "closeup_soft", label: "柔和特写", category: "special", group: "表情包" };
+  const custom = { name: "user_test", label: "自定义", category: "meme", group: "表情包", user: true };
+  assert.strictEqual(G.hideBuiltInSticker(state, builtIn).ok, true);
+  assert.strictEqual(G.isStickerHidden(state, builtIn), true);
+  assert.strictEqual(G.stickerRandomAllowed(state, builtIn), false);
+  assert.strictEqual(G.hideBuiltInSticker(state, custom).ok, false);
+  const restored = G.restoreBuiltInStickers(state, [builtIn, custom]);
+  assert.strictEqual(restored.restored, 1);
+  assert.strictEqual(G.isStickerHidden(state, builtIn), false);
 });
 
 test("心愿只会选择当前可完成且未屏蔽的动作分类", () => {

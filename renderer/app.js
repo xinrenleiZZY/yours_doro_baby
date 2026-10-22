@@ -111,6 +111,7 @@
     stickerPreviewRandom: $("sticker-preview-random"),
     stickerDelete: $("sticker-delete"),
     stickerImport: $("sticker-import"),
+    stickerDownload: $("sticker-download"),
     stickerReveal: $("sticker-reveal"),
     stickerBulk: $("sticker-bulk"),
     stickerGrid: $("sticker-grid"),
@@ -360,6 +361,7 @@
         el.quizChip.classList.remove("show");
       }
     }
+    syncHudPosition();
   }
 
   function noteAction(action) {
@@ -486,6 +488,7 @@
     currentAction = action.name;
     activeLayer = next;
     el.petLabel.textContent = `Lv.${state.level} ${G.titleForState(state)} · ${G.effectiveLabel(state, action)}`;
+    syncHudPosition();
     reportHitboxes();
 
     let revealed = false;
@@ -647,6 +650,7 @@
       items = actions.filter((action) => libState.group === "全部" || action.group === libState.group);
     }
     return items.filter((action) => {
+      if (G.isStickerHidden(state, action)) return false;
       if (!query) return true;
       return (
         G.effectiveLabel(state, action).toLowerCase().includes(query) ||
@@ -1162,6 +1166,7 @@
     const query = stickerState.query.trim().toLowerCase();
     return actions
       .filter((action) => G.isStickerAction(action))
+      .filter((action) => !G.isStickerHidden(state, action))
       .filter((action) => {
         if (!query) return true;
         return G.effectiveLabel(state, action).toLowerCase().includes(query) || action.name.includes(query);
@@ -1169,7 +1174,7 @@
   }
 
   function renderSticker() {
-    const all = actions.filter((action) => G.isStickerAction(action));
+    const all = actions.filter((action) => G.isStickerAction(action) && !G.isStickerHidden(state, action));
     const items = stickerItems();
     const pages = Math.max(1, Math.ceil(items.length / STICKER_PAGE_SIZE));
     stickerState.page = Math.min(Math.max(0, stickerState.page), pages - 1);
@@ -1205,8 +1210,8 @@
     const allowed = G.stickerRandomAllowed(state, selected);
     el.stickerPreviewRandom.classList.toggle("on", allowed);
     el.stickerPreviewRandom.textContent = allowed ? "随机：开" : "随机：关";
-    el.stickerDelete.disabled = !selected.user;
-    el.stickerDelete.title = selected.user ? "删除这个自定义表情包" : "内置表情包不能删除";
+    el.stickerDelete.disabled = false;
+    el.stickerDelete.title = selected.user ? "删除这个自定义表情包" : "隐藏这个内置表情包";
     el.stickerDelete.textContent = "删除";
     stickerPendingDelete = null;
 
@@ -1337,6 +1342,7 @@
     if (minigameOpen) renderMinigame();
     if (stickerOpen) renderSticker();
     if (libraryOpen) setTimeout(() => el.librarySearch.focus(), 60);
+    setTimeout(syncHudPosition, 60);
     reportHitboxes();
   }
 
@@ -1370,6 +1376,7 @@
     el.gacha.classList.remove("show");
     el.minigame.classList.remove("show");
     el.sticker.classList.remove("show");
+    setTimeout(syncHudPosition, 60);
     reportHitboxes();
   }
 
@@ -1401,8 +1408,10 @@
     updateMenu();
     updateEventChips();
     if (growthOpen) renderGrowth();
-    if (!byName.has(currentAction)) setAction(baseAction, { force: true });
-    else {
+    if (G.isStickerHidden(state, byName.get(baseAction))) baseAction = IDLE_ACTION;
+    if (!byName.has(currentAction) || G.isStickerHidden(state, byName.get(currentAction))) {
+      setAction(baseAction, { force: true });
+    } else {
       const action = byName.get(currentAction);
       if (action) {
         el.petLabel.textContent = `Lv.${state.level} ${G.titleForState(state)} · ${G.effectiveLabel(
@@ -1485,6 +1494,16 @@
     // 宠物缩小时状态区一起缩小；放大时 HUD 保持原尺寸，避免占满桌宠窗口。
     const scale = Math.min(1, Math.max(0.6, Number(state.settings.scale) || 1));
     el.stage.style.setProperty("--pet-ui-scale", scale.toFixed(2));
+  }
+
+  function syncHudPosition() {
+    if (!state || !el.hud || !el.petStack) return;
+    const scale = Math.min(1, Math.max(0.6, Number(state.settings.scale) || 1));
+    const petRect = el.petStack.getBoundingClientRect();
+    const hudHeight = el.hud.offsetHeight * scale;
+    const gap = 12 * scale;
+    const top = Math.max(8, Math.round(petRect.top - hudHeight - gap));
+    el.stage.style.setProperty("--hud-top", `${top}px`);
   }
 
   function equipTheme(theme) {
@@ -2525,7 +2544,7 @@
       if (!button) return;
       const mode = button.dataset.bulk;
       actions
-        .filter((action) => G.isStickerAction(action))
+        .filter((action) => G.isStickerAction(action) && !G.isStickerHidden(state, action))
         .forEach((action) => {
           if (mode === "all") G.setStickerRandom(state, action.name, true);
           else if (mode === "none") G.setStickerRandom(state, action.name, false);
@@ -2567,10 +2586,18 @@
     });
 
     el.stickerReveal.addEventListener("click", () => api.stickerReveal());
+    el.stickerDownload.addEventListener("click", () => {
+      const result = G.restoreBuiltInStickers(state, actions);
+      renderSticker();
+      renderLibrary();
+      updateMenu();
+      scheduleSave(500);
+      toast(result.restored ? `已恢复 ${result.restored} 个内置表情包` : "内置表情包都在");
+    });
 
     el.stickerDelete.addEventListener("click", async () => {
       const action = byName.get(stickerState.name);
-      if (!action || !action.user) return;
+      if (!action) return;
       if (stickerPendingDelete !== action.name) {
         stickerPendingDelete = action.name;
         el.stickerDelete.textContent = "再点一次确认";
@@ -2583,12 +2610,25 @@
         return;
       }
       stickerPendingDelete = null;
+      const deletedLabel = G.effectiveLabel(state, action);
+      if (!action.user) {
+        const result = G.hideBuiltInSticker(state, action);
+        if (!result.ok) return;
+        if (baseAction === action.name) baseAction = IDLE_ACTION;
+        if (currentAction === action.name) setAction(baseAction, { force: true });
+        stickerState.name = null;
+        renderSticker();
+        renderLibrary();
+        updateMenu();
+        scheduleSave(500);
+        toast(`已隐藏「${deletedLabel}」，可用「下载内置」恢复`);
+        return;
+      }
       const result = await api.stickerDelete(action.name);
       if (!result || !result.ok) {
         toast("删除失败");
         return;
       }
-      const deletedLabel = G.effectiveLabel(state, action);
       actions = actions.filter((item) => item.name !== action.name);
       byName.delete(action.name);
       state.favorites = state.favorites.filter((name) => name !== action.name);
@@ -2621,6 +2661,7 @@
       el.cfgScaleVal.textContent = `${el.cfgScale.value}%`;
       applyVisualScale();
       setAction(currentAction, { force: true });
+      setTimeout(syncHudPosition, 260);
       reportHitboxes();
       scheduleSave(500);
     });

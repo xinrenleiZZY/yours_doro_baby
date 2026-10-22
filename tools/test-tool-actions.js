@@ -174,5 +174,25 @@ test("独立商城可以重塑性格并返回新档案", () => {
   assert.ok(result.speech.includes("型"));
 });
 
+test("独立表情窗口可以隐藏并恢复内置表情", () => {
+  const builtInActions = [
+    { name: "closeup_soft", label: "柔和特写", category: "special", group: "表情包", file: "pet/a.webp" },
+  ];
+  const state = G.hydrate({ version: 12 }, NOW);
+  const hidden = applyToolCommand(
+    state,
+    builtInActions,
+    "sticker",
+    { type: "hide", name: "closeup_soft" },
+    NOW
+  );
+  assert.strictEqual(hidden.ok, true);
+  assert.deepStrictEqual(hidden.state.stickerHidden, ["closeup_soft"]);
+  const restored = applyToolCommand(hidden.state, builtInActions, "sticker", { type: "restore" }, NOW);
+  assert.strictEqual(restored.ok, true);
+  assert.strictEqual(restored.result.restored, 1);
+  assert.deepStrictEqual(restored.state.stickerHidden, []);
+});
+
 console.log(`\n通过 ${passed} / ${passed + failures.length}`);
 if (failures.length) process.exit(1);
