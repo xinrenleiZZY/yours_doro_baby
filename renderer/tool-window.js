@@ -263,6 +263,37 @@
   function renderGacha() {
     $("gacha-coins").textContent = `${G.formatCoins(state.coins)} 金币`;
     $("gacha-pull").disabled = state.coins < G.GACHA_PRICE;
+    $("gacha-ten").disabled = state.coins < G.GACHA_TEN_PRICE;
+    const pulls = state.gacha.pulls || 0;
+    $("gacha-pulls").textContent = String(pulls);
+    $("gacha-pity").textContent = String(G.GACHA_PITY_PULLS - (pulls % G.GACHA_PITY_PULLS));
+  }
+
+  function showGachaResults(results) {
+    const output = $("gacha-result");
+    const machine = $("gacha-machine");
+    output.innerHTML = "";
+    results.forEach((result) => {
+      const row = document.createElement("div");
+      row.className = "gacha-reward";
+      row.dataset.tier = result.tier || "common";
+      row.textContent = result.label;
+      output.appendChild(row);
+    });
+    const order = { common: 0, rare: 1, jackpot: 2, super: 3, legendary: 4, mythic: 5 };
+    const best = results.reduce(
+      (top, result) => ((order[result.tier] || 0) > (order[top.tier] || 0) ? result : top),
+      results[0]
+    );
+    machine.classList.remove("spinning", "jackpot");
+    void machine.offsetWidth;
+    machine.classList.add("spinning");
+    if (["jackpot", "super", "legendary", "mythic"].includes(best.tier)) {
+      machine.classList.add("jackpot");
+      beep("coin");
+    }
+    setTimeout(() => machine.classList.remove("spinning"), 500);
+    setTimeout(() => machine.classList.remove("jackpot"), 2200);
   }
 
   // ------------------------------------------------------------- 接金币
@@ -424,7 +455,13 @@
     if (tool === "gacha") {
       $("gacha-pull").addEventListener("click", async () => {
         const response = await runCommand({ type: "pull" }, "buy");
-        if (response && response.result) $("gacha-result").textContent = response.result.label;
+        if (response && response.result) showGachaResults([response.result]);
+      });
+      $("gacha-ten").addEventListener("click", async () => {
+        const response = await runCommand({ type: "pull-ten" }, "buy");
+        if (response && response.result && response.result.results) {
+          showGachaResults(response.result.results);
+        }
       });
       return;
     }

@@ -98,9 +98,10 @@ body.tool-window #gacha .gacha-machine {
   font-size: 64px;
 }
 
-body.tool-window #gacha-pull {
-  padding: 10px 44px;
-  font-size: 14px;
+body.tool-window #gacha-pull,
+body.tool-window #gacha-ten {
+  padding: 10px 28px;
+  font-size: 13px;
 }
 
 body.tool-window #minigame-area {
@@ -156,9 +157,10 @@ body.tool-window #minigame-area {
     font-size: 44px;
   }
 
-  body.tool-window #gacha-pull {
-    padding: 8px 30px;
-    font-size: 12px;
+  body.tool-window #gacha-pull,
+  body.tool-window #gacha-ten {
+    padding: 8px 20px;
+    font-size: 11px;
   }
 }
 

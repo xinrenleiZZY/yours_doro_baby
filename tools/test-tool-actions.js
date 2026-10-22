@@ -88,6 +88,15 @@ test("扭蛋由主进程统一扣费并返回结果", () => {
   assert.ok(result.result && result.result.label);
 });
 
+test("独立扭蛋窗支持十连抽", () => {
+  const state = G.hydrate({ coins: 10000 }, NOW);
+  const result = applyToolCommand(state, actions, "gacha", { type: "pull-ten" }, NOW);
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(result.result.cost, G.GACHA_TEN_PRICE);
+  assert.strictEqual(result.result.results.length, 10);
+  assert.strictEqual(result.state.gacha.pulls, 10);
+});
+
 test("小游戏结算有冷却和分数上限", () => {
   const state = G.hydrate({ coins: 0 }, NOW);
   const result = applyToolCommand(state, actions, "minigame", { type: "finish", score: 9999 }, NOW);

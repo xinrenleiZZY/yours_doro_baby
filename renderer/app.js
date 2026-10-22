@@ -149,6 +149,10 @@
     gacha: $("gacha"),
     gachaCoins: $("gacha-coins"),
     gachaPull: $("gacha-pull"),
+    gachaTen: $("gacha-ten"),
+    gachaPulls: $("gacha-pulls"),
+    gachaPity: $("gacha-pity"),
+    gachaMachine: $("gacha-machine"),
     gachaResult: $("gacha-result"),
     minigame: $("minigame"),
     minigameStatus: $("minigame-status"),
@@ -1197,6 +1201,34 @@
   function renderGacha() {
     el.gachaCoins.textContent = `${G.formatCoins(state.coins)} 金币`;
     el.gachaPull.disabled = state.coins < G.GACHA_PRICE;
+    el.gachaTen.disabled = state.coins < G.GACHA_TEN_PRICE;
+    const pulls = state.gacha.pulls || 0;
+    el.gachaPulls.textContent = String(pulls);
+    el.gachaPity.textContent = String(G.GACHA_PITY_PULLS - (pulls % G.GACHA_PITY_PULLS));
+  }
+
+  function showGachaResults(results) {
+    el.gachaResult.innerHTML = "";
+    results.forEach((result) => {
+      const row = document.createElement("div");
+      row.className = "gacha-reward";
+      row.dataset.tier = result.tier || "common";
+      row.textContent = result.label;
+      el.gachaResult.appendChild(row);
+    });
+    const best = results.reduce((top, result) => {
+      const order = { common: 0, rare: 1, jackpot: 2, super: 3, legendary: 4, mythic: 5 };
+      return (order[result.tier] || 0) > (order[top.tier] || 0) ? result : top;
+    }, results[0]);
+    el.gachaMachine.classList.remove("spinning", "jackpot");
+    void el.gachaMachine.offsetWidth;
+    el.gachaMachine.classList.add("spinning");
+    if (best && ["jackpot", "super", "legendary", "mythic"].includes(best.tier)) {
+      el.gachaMachine.classList.add("jackpot");
+      playSound("upgrade");
+    }
+    setTimeout(() => el.gachaMachine.classList.remove("spinning"), 500);
+    setTimeout(() => el.gachaMachine.classList.remove("jackpot"), 2200);
   }
 
   const mini = { running: false, score: 0, spawnTimer: null, endTimer: null };
@@ -2474,22 +2506,36 @@
       stopMinigame(true);
       closeSidePanels();
     });
+    const finishGacha = (results) => {
+      showGachaResults(results);
+      const high = results.find((result) =>
+        ["jackpot", "super", "legendary", "mythic"].includes(result.tier)
+      );
+      toast(high ? `${high.tierLabel}：${high.label}` : `扭蛋：${results[0].label}`, high ? 4000 : 1800);
+      playSound("buy");
+      if (results.some((result) => result.type === "theme")) applyTheme();
+      if (results.some((result) => result.type === "dress")) renderLibrary();
+      updateHud(0);
+      renderGacha();
+      renderShop();
+      updateMenu();
+      scheduleSave(600);
+    };
     el.gachaPull.addEventListener("click", () => {
       const result = G.pullGacha(state, actions, Date.now());
       if (!result.ok) {
         toast("金币不够，先搬会儿砖吧");
         return;
       }
-      el.gachaResult.textContent = result.label;
-      toast(`扭蛋：${result.label}`);
-      playSound("buy");
-      if (result.type === "theme") applyTheme();
-      if (result.type === "dress") renderLibrary();
-      updateHud(0);
-      renderGacha();
-      renderShop();
-      updateMenu();
-      scheduleSave(600);
+      finishGacha([result]);
+    });
+    el.gachaTen.addEventListener("click", () => {
+      const result = G.pullGachaMany(state, actions, 10, Date.now());
+      if (!result.ok) {
+        toast(`十连抽需要 ${result.cost} 金币`);
+        return;
+      }
+      finishGacha(result.results);
     });
     el.minigameStart.addEventListener("click", startMinigame);
     $("panel-close").addEventListener("click", () => {

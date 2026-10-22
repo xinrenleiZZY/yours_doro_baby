@@ -271,10 +271,17 @@
         <button id="gacha-close" title="收起">✕</button>
       </header>
       <div class="gacha-body">
-        <div class="gacha-machine">🎰</div>
-        <p class="gacha-desc">500 金币一次：金币 / 食物玩具 / 未解锁装扮 / 主题</p>
-        <button id="gacha-pull">抽一次</button>
-        <p id="gacha-result" class="gacha-result"></p>
+        <div id="gacha-machine" class="gacha-machine"><span>🎰</span></div>
+        <p class="gacha-desc">500 / 次 · 十连 4500 · 最高 1 千万金币</p>
+        <div class="gacha-stats">
+          <span>已抽 <b id="gacha-pulls">0</b></span>
+          <span>距保底 <b id="gacha-pity">80</b></span>
+        </div>
+        <div class="gacha-actions">
+          <button id="gacha-pull">抽一次</button>
+          <button id="gacha-ten">十连抽 <em>4500</em></button>
+        </div>
+        <div id="gacha-result" class="gacha-result" aria-live="polite"></div>
       </div>
     </div>
 

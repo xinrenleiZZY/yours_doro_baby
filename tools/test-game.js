@@ -516,6 +516,32 @@ test("扭蛋扣 500 金币并返回结果", () => {
   assert.strictEqual(state.gacha.pulls, 1);
 });
 
+test("扭蛋包含四档金币大奖并提供 80 抽保底", () => {
+  const top = G.hydrate({ coins: 500 }, NOW);
+  const topResult = G.pullGacha(top, [], NOW, () => 0);
+  assert.strictEqual(topResult.amount, 10000000);
+  assert.strictEqual(topResult.tier, "mythic");
+
+  const guaranteed = G.hydrate({ coins: 500, gacha: { pulls: 79 } }, NOW);
+  const guaranteeResult = G.pullGacha(guaranteed, [], NOW, () => 0.5);
+  assert.strictEqual(guaranteeResult.amount, 5000);
+  assert.strictEqual(guaranteeResult.guaranteed, true);
+  assert.deepStrictEqual(
+    G.GACHA_TOP_PRIZES.map((prize) => prize.amount),
+    [10000000, 500000, 50000, 5000]
+  );
+});
+
+test("十连抽按优惠价格执行十次并计入保底", () => {
+  const state = G.hydrate({ coins: 10000 }, NOW);
+  const result = G.pullGachaMany(state, [], 10, NOW, () => 0);
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(result.cost, 4500);
+  assert.strictEqual(result.results.length, 10);
+  assert.strictEqual(state.gacha.pulls, 10);
+  assert.ok(result.results.every((entry) => entry.amount === 10000000));
+});
+
 test("小游戏结算金币并进入冷却", () => {
   const state = G.hydrate({}, NOW);
   const reward = G.finishMinigame(state, 10, NOW);

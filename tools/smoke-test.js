@@ -63,6 +63,7 @@ let lastSaved = null;
 let lastHitboxes = [];
 let toolState = null;
 let toolRevision = 0;
+let toolScenariosActive = false;
 let aiConfigState = {
   baseUrl: "https://api.deepseek.com/v1",
   model: "deepseek-chat",
@@ -136,7 +137,7 @@ function registerStubs() {
   }));
   ipcMain.handle("pet:save", (_event, state) => {
     lastSaved = state;
-    toolState = G.hydrate(state, Date.now());
+    if (!toolScenariosActive) toolState = G.hydrate(state, Date.now());
     calls.save.push(state);
     return { ok: true };
   });
@@ -1416,7 +1417,7 @@ async function runScenarios(win) {
 }
 
 async function runToolWindowScenarios() {
-  toolState = G.hydrate({ coins: 2000, satiety: 80, mood: 80 }, Date.now());
+  toolState = G.hydrate({ coins: 20000, satiety: 80, mood: 80 }, Date.now());
   toolRevision += 1;
 
   const shop = await openToolWindowPage("shop");
@@ -1472,7 +1473,7 @@ async function runToolWindowScenarios() {
   shop.close();
   await wait(120);
 
-  toolState = G.hydrate({ coins: 2000, satiety: 80, mood: 80 }, Date.now());
+  toolState = G.hydrate({ coins: 20000, satiety: 80, mood: 80 }, Date.now());
   toolRevision += 1;
   const gacha = await openToolWindowPage("gacha");
   const pullsBefore = toolState.gacha.pulls;
@@ -1489,6 +1490,28 @@ async function runToolWindowScenarios() {
     "独立扭蛋机抽奖会写入共享状态",
     toolState.gacha.pulls === pullsBefore + 1 &&
       Boolean(await js(gacha, `document.getElementById("gacha-result").textContent`)),
+    `pulls=${toolState.gacha.pulls}`
+  );
+  const gachaTenDebug = await js(
+    gacha,
+    `({
+      disabled: document.getElementById("gacha-ten").disabled,
+      price: window.DoroGame.GACHA_TEN_PRICE,
+      coins: window.__toolTest.getState().coins
+    })`
+  );
+  await waitFor(
+    gacha,
+    `!document.getElementById("gacha-ten").disabled`,
+    2000,
+    `十连按钮启用 ${JSON.stringify(gachaTenDebug)}`
+  );
+  await js(gacha, `document.getElementById("gacha-ten").click()`);
+  await wait(240);
+  check(
+    "独立扭蛋机支持十连并展示十份奖励",
+    toolState.gacha.pulls === pullsBefore + 11 &&
+      (await js(gacha, `document.querySelectorAll(".gacha-reward").length`)) === 10,
     `pulls=${toolState.gacha.pulls}`
   );
   gacha.close();
@@ -1721,6 +1744,7 @@ async function main() {
   try {
     chosenAction = await runScenarios(win);
     win.destroy();
+    toolScenariosActive = true;
     await runToolWindowScenarios();
     await runChatWindowScenario();
   } finally {

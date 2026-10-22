@@ -497,6 +497,34 @@
   ];
 
   const GACHA_PRICE = 500;
+  const GACHA_TEN_PRICE = 4500;
+  const GACHA_PITY_PULLS = 80;
+  const GACHA_TOP_PRIZES = [
+    {
+      amount: 10000000,
+      tier: "mythic",
+      tierLabel: "摸鱼神话",
+      until: 1,
+    },
+    {
+      amount: 500000,
+      tier: "legendary",
+      tierLabel: "传说大奖",
+      until: 6,
+    },
+    {
+      amount: 50000,
+      tier: "super",
+      tierLabel: "超级大奖",
+      until: 606,
+    },
+    {
+      amount: 5000,
+      tier: "jackpot",
+      tierLabel: "大奖",
+      until: 8606,
+    },
+  ];
   const BANK_HOURS = 8;
   const BANK_RATE = 0.15;
   const MINIGAME_COOLDOWN_MS = 5 * 60000;
@@ -2004,12 +2032,28 @@
     return { ok: true, payout: status.payout };
   }
 
-  /** 扭蛋：金币 / 食物玩具 / 未解锁装扮 / 未拥有主题。 */
-  function pullGacha(state, actions, now) {
-    if (state.coins < GACHA_PRICE) return { ok: false, reason: "coin" };
-    state.coins -= GACHA_PRICE;
-    state.gacha.pulls = (state.gacha.pulls || 0) + 1;
-    const roll = Math.random();
+  function rollGachaReward(state, actions, random) {
+    const rng = typeof random === "function" ? random : Math.random;
+    const pullNumber = (state.gacha.pulls || 0) + 1;
+    state.gacha.pulls = pullNumber;
+    const pity = pullNumber % GACHA_PITY_PULLS === 0;
+    const topRoll = pity ? 8605 : Math.floor(rng() * 1000000);
+    const top = GACHA_TOP_PRIZES.find((entry) => topRoll < entry.until);
+    if (top) {
+      state.coins += top.amount;
+      state.totalEarned += top.amount;
+      return {
+        ok: true,
+        type: "coins",
+        label: `${top.tierLabel} · 金币 +${top.amount.toLocaleString("zh-CN")}`,
+        amount: top.amount,
+        tier: top.tier,
+        tierLabel: top.tierLabel,
+        guaranteed: pity,
+      };
+    }
+
+    const roll = rng();
     const items = Object.values(SHOP_ITEMS).filter((item) => item.type === "food" || item.type === "toy");
     const lockedDress = (actions || []).filter(
       (a) => a.category === "dress" && !state.unlocked.includes(a.name)
@@ -2019,31 +2063,62 @@
     );
 
     if (roll < 0.45) {
-      const amount = 100 + Math.floor(Math.random() * 401);
+      const amount = 100 + Math.floor(rng() * 401);
       state.coins += amount;
       state.totalEarned += amount;
-      return { ok: true, type: "coins", label: `金币 +${amount}`, amount };
+      return { ok: true, type: "coins", label: `金币 +${amount}`, amount, tier: "common" };
     }
     if (roll < 0.72 && items.length) {
-      const item = items[Math.floor(Math.random() * items.length)];
+      const item = items[Math.floor(rng() * items.length) % items.length];
       state.inventory[item.id] = (state.inventory[item.id] || 0) + 1;
-      return { ok: true, type: "item", label: `${item.icon} ${item.name}` };
+      return { ok: true, type: "item", label: `${item.icon} ${item.name}`, tier: "common" };
     }
     if (roll < 0.9 && lockedDress.length) {
-      const action = lockedDress[Math.floor(Math.random() * lockedDress.length)];
+      const action = lockedDress[Math.floor(rng() * lockedDress.length) % lockedDress.length];
       state.unlocked.push(action.name);
-      return { ok: true, type: "dress", label: `解锁「${action.label}」`, action: action.name };
+      return {
+        ok: true,
+        type: "dress",
+        label: `解锁「${action.label}」`,
+        action: action.name,
+        tier: "rare",
+      };
     }
     if (themes.length) {
-      const theme = themes[Math.floor(Math.random() * themes.length)];
+      const theme = themes[Math.floor(rng() * themes.length) % themes.length];
       state.perks[`theme_${theme.theme}`] = true;
       state.settings.theme = theme.theme;
-      return { ok: true, type: "theme", label: `${theme.icon} ${theme.name}`, theme: theme.theme };
+      return {
+        ok: true,
+        type: "theme",
+        label: `${theme.icon} ${theme.name}`,
+        theme: theme.theme,
+        tier: "rare",
+      };
     }
     const amount = 300;
     state.coins += amount;
     state.totalEarned += amount;
-    return { ok: true, type: "coins", label: `金币 +${amount}`, amount };
+    return { ok: true, type: "coins", label: `金币 +${amount}`, amount, tier: "common" };
+  }
+
+  /** 扭蛋：普通奖 + 四档金币大奖；每 80 抽至少获得 5000 金币。 */
+  function pullGacha(state, actions, now, random) {
+    if (state.coins < GACHA_PRICE) return { ok: false, reason: "coin" };
+    state.coins -= GACHA_PRICE;
+    return rollGachaReward(state, actions, random);
+  }
+
+  function pullGachaMany(state, actions, count, now, random) {
+    const draws = Math.max(1, Math.min(10, Math.round(Number(count) || 1)));
+    const cost = draws === 10 ? GACHA_TEN_PRICE : draws * GACHA_PRICE;
+    if (state.coins < cost) return { ok: false, reason: "coin", cost };
+    state.coins -= cost;
+    const results = [];
+    for (let index = 0; index < draws; index += 1) {
+      results.push(rollGachaReward(state, actions, random));
+    }
+    return { ok: true, cost, count: draws, results };
   }
 
   function minigameStatus(state, now) {
@@ -2249,6 +2324,9 @@
     INTIMACY_LEVELS,
     INTIMACY_ACTIONS,
     GACHA_PRICE,
+    GACHA_TEN_PRICE,
+    GACHA_PITY_PULLS,
+    GACHA_TOP_PRIZES,
     BANK_HOURS,
     BANK_RATE,
     MINIGAME_COOLDOWN_MS,
@@ -2323,6 +2401,7 @@
     bankDeposit,
     bankWithdraw,
     pullGacha,
+    pullGachaMany,
     minigameStatus,
     minigameTrainingGain,
     finishMinigame,
