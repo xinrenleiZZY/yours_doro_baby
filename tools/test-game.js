@@ -274,17 +274,26 @@ test("存档白名单保留商城 / 日程字段并过滤非法项", () => {
     stickerLabels: { meme_test: "新名称", bad: 3 },
     inventory: { fish: 2, "bad-key": 3 },
     buffs: { double_income: 12345 },
-    perks: { lucky_cat: true },
+    perks: { lucky_cat: true, luxury_hourglass: true },
+    profile: {
+      personality: "playful",
+      likes: ["cake", "gameboy"],
+      dislikes: ["fish"],
+      reshapes: 3,
+    },
     unlocked: ["dress_santa", "dress_santa3", 5],
     favorites: ["idle_stand", "bad name"],
     recent: ["idle_stand"],
     schedule: [{ id: "a", time: "09:00", text: "喝水", doneDate: "", notifiedDate: "" }],
     shopStats: { purchases: 2, spent: 40 },
   });
-  assert.strictEqual(clean.version, 6);
+  assert.strictEqual(clean.version, 7);
   assert.strictEqual(clean.inventory.fish, 2);
   assert.strictEqual(clean.inventory["bad-key"], undefined);
   assert.strictEqual(clean.perks.lucky_cat, true);
+  assert.strictEqual(clean.perks.luxury_hourglass, true);
+  assert.deepStrictEqual(clean.profile.likes, ["cake", "gameboy"]);
+  assert.strictEqual(clean.profile.personality, "playful");
   assert.strictEqual(clean.buffs.double_income, 12345);
   assert.strictEqual(clean.unlocked.length, 2);
   assert.deepStrictEqual(clean.favorites, ["idle_stand"]);
@@ -562,6 +571,55 @@ test("心愿只会选择当前可完成且未屏蔽的动作分类", () => {
     G.availableWishActions(actions, state, "scene").map((action) => action.name),
     ["usable_scene"]
   );
+});
+
+test("v6 存档迁移后补齐性格与偏好", () => {
+  const state = G.hydrate({ version: 6, coins: 50 }, NOW);
+  assert.strictEqual(state.version, G.SAVE_VERSION);
+  assert.strictEqual(state.profile.personality, "gentle");
+  assert.strictEqual(state.profile.likes.length, 2);
+  assert.strictEqual(state.profile.dislikes.length, 1);
+});
+
+test("性格会影响产出与互动心情", () => {
+  const gentle = G.hydrate({ level: 5, mood: 50, satiety: 80 }, NOW);
+  const diligent = G.hydrate({ level: 5, mood: 50, satiety: 80 }, NOW);
+  diligent.profile = { personality: "diligent", likes: ["cake"], dislikes: ["fish"], reshapes: 0 };
+  assert.ok(G.incomePerSecond(diligent) > G.incomePerSecond(gentle) * 1.1);
+
+  diligent.mood = 40;
+  G.pet(diligent, NOW, () => 0);
+  assert.ok(Math.abs(diligent.mood - 40.7) < 1e-9);
+
+  const gourmet = G.hydrate({ coins: 100, mood: 20, satiety: 20 }, NOW);
+  gourmet.profile = { personality: "gourmet", likes: ["cake"], dislikes: ["fish"], reshapes: 0 };
+  G.feed(gourmet, NOW);
+  assert.ok(Math.abs(gourmet.mood - 27.2) < 1e-9);
+});
+
+test("偏好会放大喜欢物品的心情收益", () => {
+  const state = G.hydrate({ mood: 20, inventory: { cake: 1 } }, NOW);
+  state.profile = { personality: "gentle", likes: ["cake"], dislikes: ["fish"], reshapes: 0 };
+  const result = G.useItem(state, G.SHOP_ITEMS.cake, NOW);
+  assert.strictEqual(result.preference, "like");
+  assert.ok(Math.abs(state.mood - 42.5) < 1e-9);
+});
+
+test("典藏商品提供永久产出加成且只能购买一次", () => {
+  const state = G.hydrate({ coins: 100000, mood: 100, satiety: 80 }, NOW);
+  const before = G.incomePerSecond(state);
+  assert.strictEqual(G.purchase(state, G.SHOP_ITEMS.luxury_cushion, NOW).ok, true);
+  assert.ok(G.incomePerSecond(state) > before);
+  assert.strictEqual(G.purchase(state, G.SHOP_ITEMS.luxury_cushion, NOW).reason, "owned");
+});
+
+test("性格重塑卡会更换性格并重新抽取偏好", () => {
+  const state = G.hydrate({ coins: 100000 }, NOW);
+  const result = G.purchase(state, G.SHOP_ITEMS.profile_personality, NOW);
+  assert.strictEqual(result.ok, true);
+  assert.notStrictEqual(state.profile.personality, "gentle");
+  assert.strictEqual(state.profile.reshapes, 1);
+  assert.ok(result.profile && result.profile.personality.name);
 });
 
 console.log(`\n通过 ${passed} / ${passed + failures.length}`);

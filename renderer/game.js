@@ -11,7 +11,7 @@
 })(typeof self !== "undefined" ? self : this, function () {
   "use strict";
 
-  const SAVE_VERSION = 6;
+  const SAVE_VERSION = 7;
 
   // ---- 经济数值 -------------------------------------------------------------
   const BALANCE = {
@@ -72,6 +72,12 @@
     nextVisitorAt: 0,
     room: { furniture: [] },
     companion: { adopted: false },
+    profile: {
+      personality: "gentle",
+      likes: ["milk_tea", "wand"],
+      dislikes: ["bubble"],
+      reshapes: 0,
+    },
     quiz: {
       examCode: "architect",
       dailyDate: "",
@@ -114,6 +120,64 @@
     play: ["传给我传给我", "好玩！", "不要停～"],
     coin: ["金币 +1", "搬砖中", "攒钱养老", "离买房又近一步"],
     offline: ["你回来啦", "我帮你看了会儿家", "等你很久了"],
+  };
+
+  const PERSONALITIES = {
+    gentle: {
+      id: "gentle",
+      name: "温柔",
+      icon: "🌷",
+      desc: "温和稳定的基准性格，互动与产出没有额外修正",
+      income: 1,
+      petMood: 1,
+      feedMood: 1,
+      playMood: 1,
+      actionWeights: { love: 1.2, happy: 1.1 },
+    },
+    clever: {
+      id: "clever",
+      name: "机灵",
+      icon: "✨",
+      desc: "更爱小剧场和表情包，永久 +6% 产出",
+      income: 1.06,
+      petMood: 0.9,
+      feedMood: 1,
+      playMood: 1.05,
+      actionWeights: { scene: 1.5, meme: 1.35 },
+    },
+    diligent: {
+      id: "diligent",
+      name: "勤勉",
+      icon: "💼",
+      desc: "更爱打工动作，永久 +12% 产出，摸头心情较低",
+      income: 1.12,
+      petMood: 0.7,
+      feedMood: 1,
+      playMood: 0.9,
+      actionWeights: { work: 1.7, idle: 1.1 },
+    },
+    gourmet: {
+      id: "gourmet",
+      name: "贪吃",
+      icon: "🍰",
+      desc: "更爱吃睡动作，喂饭心情 +80%，永久 -3% 产出",
+      income: 0.97,
+      petMood: 1,
+      feedMood: 1.8,
+      playMood: 1,
+      actionWeights: { eat: 1.65 },
+    },
+    playful: {
+      id: "playful",
+      name: "活泼",
+      icon: "🎈",
+      desc: "更爱玩乐动作，陪玩心情 +45%，永久 -2% 产出",
+      income: 0.98,
+      petMood: 1.1,
+      feedMood: 1,
+      playMood: 1.45,
+      actionWeights: { play: 1.7, music: 1.35 },
+    },
   };
 
   // ---- 商城 ---------------------------------------------------------------
@@ -225,7 +289,72 @@
       icon: "🌸",
       desc: "更浓的樱花粉面板",
     },
+    luxury_cushion: {
+      id: "luxury_cushion",
+      name: "鎏金软垫",
+      type: "luxury",
+      price: 66000,
+      bonus: 0.08,
+      icon: "🛋️",
+      desc: "永久 +8% 产出，典藏级舒适",
+    },
+    luxury_crystal: {
+      id: "luxury_crystal",
+      name: "星辉水晶灯",
+      type: "luxury",
+      price: 188000,
+      bonus: 0.12,
+      icon: "🔮",
+      desc: "永久 +12% 产出，房间里会发光",
+    },
+    luxury_office: {
+      id: "luxury_office",
+      name: "私人摸鱼办公室",
+      type: "luxury",
+      price: 520000,
+      bonus: 0.18,
+      icon: "🏢",
+      desc: "永久 +18% 产出，带门禁的那种",
+    },
+    luxury_estate: {
+      id: "luxury_estate",
+      name: "doro 小庄园",
+      type: "luxury",
+      price: 1280000,
+      bonus: 0.3,
+      icon: "🏡",
+      desc: "永久 +30% 产出，从桌宠升级为地主",
+    },
+    luxury_hourglass: {
+      id: "luxury_hourglass",
+      name: "时间沙漏",
+      type: "luxury",
+      price: 2500000,
+      bonus: 0.45,
+      icon: "⏳",
+      desc: "永久 +45% 产出，摸鱼时间也是资产",
+    },
+    profile_personality: {
+      id: "profile_personality",
+      name: "性格重塑卡",
+      type: "profile",
+      profileAction: "personality",
+      price: 88000,
+      icon: "🎭",
+      desc: "随机重塑性格，并重新抽取偏好",
+    },
+    profile_preferences: {
+      id: "profile_preferences",
+      name: "偏好重置券",
+      type: "profile",
+      profileAction: "preferences",
+      price: 24000,
+      icon: "💡",
+      desc: "保留性格，重新抽取喜欢与不喜欢",
+    },
   };
+
+  const PREFERENCE_ITEM_IDS = ["fish", "milk_tea", "cake", "hotpot", "wand", "bubble", "gameboy"];
 
   const DAILY_TASKS = [
     { id: "pet5", label: "摸头 5 次", goal: 5, key: "pets", reward: 30 },
@@ -372,6 +501,102 @@
     return clamp(parsed, lo, hi);
   }
 
+  function seededRandom(seed) {
+    let value = Number(seed) >>> 0;
+    return function () {
+      value = (value * 1664525 + 1013904223) >>> 0;
+      return value / 4294967296;
+    };
+  }
+
+  function shuffle(list, random) {
+    const result = list.slice();
+    for (let index = result.length - 1; index > 0; index -= 1) {
+      const swap = Math.floor(random() * (index + 1));
+      [result[index], result[swap]] = [result[swap], result[index]];
+    }
+    return result;
+  }
+
+  function createProfile(personalityId, random) {
+    const personality = PERSONALITIES[personalityId] ? personalityId : "gentle";
+    const rng = typeof random === "function" ? random : Math.random;
+    const shuffled = shuffle(PREFERENCE_ITEM_IDS, rng);
+    return {
+      personality,
+      likes: shuffled.slice(0, 2),
+      dislikes: shuffled.slice(2, 3),
+      reshapes: 0,
+    };
+  }
+
+  function normalizeProfile(raw, seed) {
+    const source = raw && typeof raw === "object" ? raw : {};
+    const personality = PERSONALITIES[source.personality] ? source.personality : "gentle";
+    const generated = createProfile(personality, seededRandom(seed || Date.now()));
+    const validIds = new Set(PREFERENCE_ITEM_IDS);
+    const likes = Array.isArray(source.likes)
+      ? [...new Set(source.likes.filter((id) => validIds.has(id)))].slice(0, 2)
+      : [];
+    while (likes.length < 2) {
+      const next = generated.likes.find((id) => !likes.includes(id));
+      if (!next) break;
+      likes.push(next);
+    }
+    const dislikes = Array.isArray(source.dislikes)
+      ? [...new Set(source.dislikes.filter((id) => validIds.has(id) && !likes.includes(id)))].slice(0, 1)
+      : [];
+    if (!dislikes.length) {
+      const next = generated.dislikes.find((id) => !likes.includes(id));
+      if (next) dislikes.push(next);
+    }
+    return {
+      personality,
+      likes,
+      dislikes,
+      reshapes: num(source.reshapes, 0, 0, 1e9),
+    };
+  }
+
+  function personalityOf(state) {
+    const profile = state && state.profile ? state.profile : DEFAULT_STATE.profile;
+    return PERSONALITIES[profile.personality] || PERSONALITIES.gentle;
+  }
+
+  function preferenceFor(state, itemId) {
+    const profile = state && state.profile ? state.profile : DEFAULT_STATE.profile;
+    if (profile.likes.includes(itemId)) return "like";
+    if (profile.dislikes.includes(itemId)) return "dislike";
+    return "neutral";
+  }
+
+  function profileDetails(state) {
+    const profile = normalizeProfile(state.profile, state.createdAt);
+    const personality = personalityOf({ profile });
+    const itemDetails = (ids) => ids.map((id) => SHOP_ITEMS[id]).filter(Boolean);
+    return {
+      personality,
+      likes: itemDetails(profile.likes),
+      dislikes: itemDetails(profile.dislikes),
+      reshapes: profile.reshapes,
+    };
+  }
+
+  function reshapeProfile(state, mode, random) {
+    const rng = typeof random === "function" ? random : Math.random;
+    const current = normalizeProfile(state.profile, state.createdAt);
+    let personality = current.personality;
+    if (mode === "personality") {
+      const choices = Object.keys(PERSONALITIES).filter((id) => id !== personality);
+      personality = choices[Math.floor(rng() * choices.length) % choices.length];
+    }
+    const next = createProfile(personality, rng);
+    next.reshapes = current.reshapes + 1;
+    if (mode !== "personality" && mode !== "preferences") return current;
+    state.profile = next;
+    return next;
+  }
+
   function freshState(now) {
     const state = JSON.parse(JSON.stringify(DEFAULT_STATE));
     state.lastTick = now;
@@ -466,6 +691,13 @@
         version: 6,
         stickerRandom: raw.stickerRandom && typeof raw.stickerRandom === "object" ? raw.stickerRandom : {},
         stickerLabels: raw.stickerLabels && typeof raw.stickerLabels === "object" ? raw.stickerLabels : {},
+      });
+    },
+    // 6 -> 7：性格、偏好与典藏商品
+    6: (raw) => {
+      return Object.assign({}, raw, {
+        version: 7,
+        profile: raw.profile && typeof raw.profile === "object" ? raw.profile : DEFAULT_STATE.profile,
       });
     },
   };
@@ -578,6 +810,7 @@
       raw.companion && typeof raw.companion === "object"
         ? { adopted: raw.companion.adopted === true }
         : { adopted: false };
+    state.profile = normalizeProfile(raw.profile, state.createdAt);
     state.quiz = normalizeQuiz(raw.quiz);
     state.quiz.eventReadyAt = num(state.quiz.eventReadyAt, 0, 0);
     if (!state.quiz.eventReadyAt) state.quiz.eventReadyAt = now + QUIZ_EVENT_COOLDOWN_MS;
@@ -602,11 +835,18 @@
     return state;
   }
 
-  /** 当前每秒实际产出的金币（含等级、心情、饱食度影响）。 */
+  function luxuryIncomeBonus(state) {
+    return Object.values(SHOP_ITEMS)
+      .filter((item) => item.type === "luxury" && state.perks && state.perks[item.id])
+      .reduce((sum, item) => sum + (Number(item.bonus) || 0), 0);
+  }
+
+  /** 当前每秒实际产出的金币（含等级、心情、饱食度、性格与典藏影响）。 */
   function incomePerSecond(state) {
     const base = state.level * BALANCE.baseIncomePerLevel;
     const moodFactor = 1 + BALANCE.moodBonus * (state.mood / 100);
     const perkFactor = state.perks && state.perks.lucky_cat ? 1.1 : 1;
+    const personalityFactor = personalityOf(state).income;
     const buffUntil = (state.buffs && state.buffs.double_income) || 0;
     const buffFactor = buffUntil > Date.now() ? 1.5 : 1;
     const feedFactor =
@@ -617,7 +857,16 @@
         : 1;
     const roomBonus = roomBonusValue(state);
     const companionBonus = state.companion && state.companion.adopted ? FURNITURE.companion.bonus : 0;
-    return base * moodFactor * feedFactor * perkFactor * buffFactor * (1 + roomBonus + companionBonus);
+    const luxuryBonus = luxuryIncomeBonus(state);
+    return (
+      base *
+      moodFactor *
+      feedFactor *
+      perkFactor *
+      buffFactor *
+      personalityFactor *
+      (1 + roomBonus + companionBonus + luxuryBonus)
+    );
   }
 
   function incomeBreakdown(state) {
@@ -625,6 +874,8 @@
       perSecond: incomePerSecond(state),
       base: state.level * BALANCE.baseIncomePerLevel,
       moodFactor: 1 + BALANCE.moodBonus * (state.mood / 100),
+      personalityFactor: personalityOf(state).income,
+      luxuryBonus: luxuryIncomeBonus(state),
       hungry: state.satiety < BALANCE.hungryThreshold,
       starving: state.satiety <= BALANCE.emptyThreshold,
     };
@@ -691,7 +942,7 @@
     }
     state.coins -= BALANCE.feedCost;
     state.satiety = clamp(state.satiety + BALANCE.feedValue, 0, 100);
-    state.mood = clamp(state.mood + 4, 0, 100);
+    state.mood = clamp(state.mood + 4 * personalityOf(state).feedMood, 0, 100);
     state.stats.feeds += 1;
     bumpDaily(state, "feeds");
     state.lastTick = now || Date.now();
@@ -706,7 +957,7 @@
       return { ok: false, reason: "happy", dialogue: "我已经很开心啦" };
     }
     state.coins -= BALANCE.playCost;
-    state.mood = clamp(state.mood + BALANCE.playValue, 0, 100);
+    state.mood = clamp(state.mood + BALANCE.playValue * personalityOf(state).playMood, 0, 100);
     state.satiety = clamp(state.satiety - 3, 0, 100);
     state.stats.plays += 1;
     bumpDaily(state, "plays");
@@ -735,7 +986,7 @@
     const random = rng || Math.random;
     state.stats.pets += 1;
     bumpDaily(state, "pets");
-    state.mood = clamp(state.mood + BALANCE.petMoodGain, 0, 100);
+    state.mood = clamp(state.mood + BALANCE.petMoodGain * personalityOf(state).petMood, 0, 100);
     const [lo, hi] = BALANCE.petCoinBonus;
     const bonus = lo + Math.floor(random() * (hi - lo + 1));
     state.coins += bonus;
@@ -783,9 +1034,11 @@
       return true;
     });
     const source = usable.length ? usable : actions;
+    const personality = personalityOf(state);
     const weights = source.map((action) => {
       const kind = actionKind(action);
       let weight = GROUP_WEIGHT[action.group] || 1;
+      weight *= personality.actionWeights[action.category] || personality.actionWeights[action.group] || 1;
       if (kind === "fun") weight *= 0.8;
       if (kind === "idle" && action.category === "walk") weight *= 0.6;
       if (face === "sad") {
@@ -887,6 +1140,7 @@
     if (item.type === "companion" && state.companion && state.companion.adopted) {
       return { ok: false, reason: "owned" };
     }
+    if (item.type === "luxury" && state.perks[item.id]) return { ok: false, reason: "owned" };
     if (!canAfford(state, item.price)) return { ok: false, reason: "coin" };
 
     const ts = now || Date.now();
@@ -911,9 +1165,17 @@
       state.companion.adopted = true;
     } else if (item.type === "dress") {
       if (!state.unlocked.includes(item.action)) state.unlocked.push(item.action);
+    } else if (item.type === "luxury") {
+      state.perks[item.id] = true;
+    } else if (item.type === "profile") {
+      reshapeProfile(state, item.profileAction);
     }
     state.lastTick = ts;
-    return { ok: true, item };
+    return {
+      ok: true,
+      item,
+      profile: item.type === "profile" ? profileDetails(state) : undefined,
+    };
   }
 
   function useItem(state, item, now) {
@@ -924,9 +1186,11 @@
     if (count <= 0) return { ok: false, reason: "empty" };
     state.inventory[item.id] = count - 1;
     if (item.satiety) state.satiety = clamp(state.satiety + item.satiety, 0, 100);
-    if (item.mood) state.mood = clamp(state.mood + item.mood, 0, 100);
+    const preference = preferenceFor(state, item.id);
+    const moodMultiplier = preference === "like" ? 1.5 : preference === "dislike" ? 0.5 : 1;
+    if (item.mood) state.mood = clamp(state.mood + item.mood * moodMultiplier, 0, 100);
     state.lastTick = now || Date.now();
-    return { ok: true, item };
+    return { ok: true, item, preference };
   }
 
   // ---- 日程 ---------------------------------------------------------------
@@ -1464,8 +1728,10 @@
     DEFAULT_STATE,
     DIALOGUE,
     GROUP_WEIGHT,
+    PERSONALITIES,
     actionKind,
     SHOP_ITEMS,
+    PREFERENCE_ITEM_IDS,
     DAILY_TASKS,
     ACHIEVEMENTS,
     WISH_CATEGORIES,
@@ -1487,6 +1753,10 @@
     completeQuiz,
     isUnlocked,
     isStickerAction,
+    personalityOf,
+    preferenceFor,
+    profileDetails,
+    reshapeProfile,
     effectiveLabel,
     stickerRandomAllowed,
     setStickerRandom,
@@ -1537,6 +1807,7 @@
     freshState,
     incomePerSecond,
     incomeBreakdown,
+    luxuryIncomeBonus,
     tick,
     settleOffline,
     feed,

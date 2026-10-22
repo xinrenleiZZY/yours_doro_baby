@@ -145,5 +145,34 @@ test("未知工具命令被拒绝", () => {
   assert.strictEqual(applyToolCommand(state, actions, "shop", { type: "give-coins" }, NOW).ok, false);
 });
 
+test("独立商城可以购买高价典藏并提升产出", () => {
+  const state = G.hydrate({ coins: 100000 }, NOW);
+  const before = G.incomePerSecond(state);
+  const result = applyToolCommand(
+    state,
+    actions,
+    "shop",
+    { type: "buy", item: { kind: "catalog", id: "luxury_cushion" } },
+    NOW
+  );
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(result.state.perks.luxury_cushion, true);
+  assert.ok(G.incomePerSecond(result.state) > before);
+});
+
+test("独立商城可以重塑性格并返回新档案", () => {
+  const state = G.hydrate({ coins: 100000 }, NOW);
+  const result = applyToolCommand(
+    state,
+    actions,
+    "shop",
+    { type: "buy", item: { kind: "catalog", id: "profile_personality" } },
+    NOW
+  );
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(result.state.profile.reshapes, 1);
+  assert.ok(result.speech.includes("型"));
+});
+
 console.log(`\n通过 ${passed} / ${passed + failures.length}`);
 if (failures.length) process.exit(1);

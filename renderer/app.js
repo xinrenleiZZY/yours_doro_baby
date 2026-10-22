@@ -116,6 +116,8 @@
     growthCoins: $("growth-coins"),
     growthDaily: $("growth-daily"),
     growthDailyDate: $("growth-daily-date"),
+    growthProfileTitle: $("growth-profile-title"),
+    growthProfile: $("growth-profile"),
     growthAchievements: $("growth-achievements"),
     growthAchCount: $("growth-ach-count"),
     growthStats: $("growth-stats"),
@@ -805,6 +807,12 @@
       );
     });
 
+    const profile = G.profileDetails(state);
+    el.growthProfileTitle.textContent = `${profile.personality.icon} ${profile.personality.name}`;
+    el.growthProfile.textContent = `${profile.personality.desc} · 喜欢：${profile.likes
+      .map((item) => `${item.icon}${item.name}`)
+      .join("、")} · 不喜欢：${profile.dislikes.map((item) => `${item.icon}${item.name}`).join("、")}`;
+
     const codex = G.codexSummary(state, actions);
     el.growthCodex.textContent = `${codex.seen} / ${codex.total}`;
     el.growthCodexList.textContent = Object.entries(codex.groups)
@@ -1129,6 +1137,7 @@
     updateHud(0);
     updateMenu();
     updateEventChips();
+    if (growthOpen) renderGrowth();
     if (!byName.has(currentAction)) setAction(baseAction, { force: true });
     else {
       const action = byName.get(currentAction);
@@ -1154,7 +1163,7 @@
   }
 
   // ------------------------------------------------------------- 商城
-  const SHOP_TABS = ["食物", "玩具", "增益", "主题", "家具", "装扮"];
+  const SHOP_TABS = ["食物", "玩具", "增益", "主题", "家具", "装扮", "典藏"];
 
   function dressShopItems() {
     return actions
@@ -1188,6 +1197,7 @@
       玩具: ["toy"],
       增益: ["buff", "permanent"],
       主题: ["theme"],
+      典藏: ["luxury", "profile"],
     };
     return Object.values(G.SHOP_ITEMS).filter((item) => (map[tab] || []).includes(item.type));
   }
@@ -1195,6 +1205,7 @@
   function shopOwned(item) {
     if (item.type === "dress") return G.isUnlocked(state, { category: "dress", name: item.action }) ? 1 : 0;
     if (item.type === "permanent") return state.perks[item.id] ? 1 : 0;
+    if (item.type === "luxury") return state.perks[item.id] ? 1 : 0;
     if (item.type === "theme") return state.perks[`theme_${item.theme}`] ? 1 : 0;
     if (item.type === "furniture") {
       return state.room && state.room.furniture.includes(item.furnitureId) ? 1 : 0;
@@ -1266,11 +1277,12 @@
 
       const price = document.createElement("span");
       price.className = "shop-price";
-      price.textContent = `${item.price} 币`;
+      price.textContent = `${G.formatCoins(item.price)} 币`;
 
       const ownedPermanently =
         item.type === "dress" ||
         item.type === "permanent" ||
+        item.type === "luxury" ||
         item.type === "furniture" ||
         item.type === "companion";
       const buy = document.createElement("button");
@@ -1316,6 +1328,12 @@
     } else if (item.type === "theme") {
       applyTheme();
       speak(`${item.name} 已启用`, 2200);
+    } else if (item.type === "profile") {
+      const profile = G.profileDetails(state);
+      toast(`性格变为「${profile.personality.name}」，偏好已更新`);
+      speak(`现在的我是${profile.personality.name}型啦`, 2400);
+    } else if (item.type === "luxury") {
+      speak(`${item.name} 到手，产出又提高了`, 2400);
     } else if (item.type === "permanent") {
       speak("招财猫会带来好运的", 2200);
     } else {
@@ -1337,7 +1355,14 @@
     }
     const action = item.type === "food" ? pickByCategory("eat") : pickByCategory("play", "music");
     if (action) playReaction(action.name, 2400);
-    speak(`用掉了${item.name}`, 1800);
+    speak(
+      result.preference === "like"
+        ? `最喜欢${item.name}了！`
+        : result.preference === "dislike"
+          ? `${item.name}……不太喜欢`
+          : `用掉了${item.name}`,
+      1800
+    );
     floatText(`${item.icon} ✓`, { x: rand(120, 200), y: rand(180, 210) });
     playSound(item.type === "food" ? "feed" : "play");
     updateHud(0);

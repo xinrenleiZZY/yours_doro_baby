@@ -556,7 +556,7 @@ async function runScenarios(win) {
       balance: document.getElementById("shop-balance").textContent
     })`
   );
-  check("商城能打开并列出货物", shop.open && shop.items >= 4 && shop.tabs === 6, JSON.stringify(shop));
+  check("商城能打开并列出货物", shop.open && shop.items >= 4 && shop.tabs === 7, JSON.stringify(shop));
 
   const beforeBuy = await getState(win);
   await js(win, `document.querySelector(".shop-item button").click()`);
@@ -599,6 +599,25 @@ async function runScenarios(win) {
   await wait(120);
   const themeCount = await js(win, `document.querySelectorAll(".shop-item").length`);
   check("商城有主题分类", themeCount === 3, `${themeCount} 个`);
+
+  await js(
+    win,
+    `[...document.querySelectorAll("#shop-tabs button")].find((b) => b.textContent === "典藏").click()`
+  );
+  await wait(120);
+  const luxury = await js(
+    win,
+    `({
+      items: document.querySelectorAll(".shop-item").length,
+      hasReshape: [...document.querySelectorAll(".shop-name")].some((n) => n.textContent.includes("性格重塑卡")),
+      hasMillionItem: [...document.querySelectorAll(".shop-price")].some((n) => /M/.test(n.textContent))
+    })`
+  );
+  check(
+    "典藏分类包含性格重塑与百万级商品",
+    luxury.items === 7 && luxury.hasReshape && luxury.hasMillionItem,
+    JSON.stringify(luxury)
+  );
 
   // 7c. 日程
   await js(win, `window.__doroTest.openSchedule()`);
@@ -797,6 +816,18 @@ async function runScenarios(win) {
     "任务与成就面板能打开",
     growth.open && growth.daily === 4 && growth.ach === 12,
     JSON.stringify(growth)
+  );
+  const profilePanel = await js(
+    win,
+    `({
+      title: document.getElementById("growth-profile-title").textContent,
+      detail: document.getElementById("growth-profile").textContent
+    })`
+  );
+  check(
+    "成长面板展示性格与偏好",
+    Boolean(profilePanel.title) && /喜欢/.test(profilePanel.detail),
+    JSON.stringify(profilePanel)
   );
 
   const beforeClaim = await getState(win);
@@ -1107,12 +1138,17 @@ async function runToolWindowScenarios() {
       tool: document.body.dataset.tool,
       open: document.getElementById("shop").classList.contains("show"),
       balance: document.getElementById("shop-balance").textContent,
-      items: document.querySelectorAll(".shop-item").length
+      items: document.querySelectorAll(".shop-item").length,
+      tabs: document.querySelectorAll("#shop-tabs button").length
     })`
   );
   check(
     "商城以独立窗口打开",
-    shopInfo.tool === "shop" && shopInfo.open && shopInfo.items > 0 && /金币/.test(shopInfo.balance),
+    shopInfo.tool === "shop" &&
+      shopInfo.open &&
+      shopInfo.items > 0 &&
+      shopInfo.tabs === 7 &&
+      /金币/.test(shopInfo.balance),
     JSON.stringify(shopInfo)
   );
   const shopBefore = toolState;

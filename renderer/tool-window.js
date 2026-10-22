@@ -13,7 +13,7 @@
     sticker: document.getElementById("sticker"),
   };
   const $ = (id) => document.getElementById(id);
-  const SHOP_TABS = ["食物", "玩具", "增益", "主题", "家具", "装扮"];
+  const SHOP_TABS = ["食物", "玩具", "增益", "主题", "家具", "装扮", "典藏"];
   const STICKER_PAGE_SIZE = 8;
   const TOOL_TITLES = {
     shop: "doro 商城",
@@ -153,6 +153,7 @@
       玩具: ["toy"],
       增益: ["buff", "permanent"],
       主题: ["theme"],
+      典藏: ["luxury", "profile"],
     };
     return Object.values(G.SHOP_ITEMS)
       .filter((item) => (typeMap[tab] || []).includes(item.type))
@@ -162,6 +163,7 @@
   function shopOwned(item) {
     if (item.type === "dress") return state.unlocked.includes(item.action);
     if (item.type === "permanent") return Boolean(state.perks[item.id]);
+    if (item.type === "luxury") return Boolean(state.perks[item.id]);
     if (item.type === "theme") return Boolean(state.perks[`theme_${item.theme}`]);
     if (item.type === "furniture") return state.room.furniture.includes(item.id);
     if (item.type === "companion") return Boolean(state.companion.adopted);
@@ -221,12 +223,13 @@
 
       const price = document.createElement("span");
       price.className = "shop-price";
-      price.textContent = `${item.price} 币`;
+      price.textContent = `${G.formatCoins(item.price)} 币`;
 
       const buy = document.createElement("button");
       const permanent =
         item.type === "dress" ||
         item.type === "permanent" ||
+        item.type === "luxury" ||
         item.type === "furniture" ||
         item.type === "companion";
       if (item.type === "theme") {
