@@ -11,7 +11,7 @@
 })(typeof self !== "undefined" ? self : this, function () {
   "use strict";
 
-  const SAVE_VERSION = 9;
+  const SAVE_VERSION = 10;
 
   // ---- 经济数值 -------------------------------------------------------------
   const BALANCE = {
@@ -88,6 +88,10 @@
       jobs: [],
       fragments: 0,
       completed: 0,
+    },
+    prestige: {
+      count: 0,
+      legacyLevel: 0,
     },
     quiz: {
       examCode: "architect",
@@ -452,6 +456,14 @@
     { level: 5, name: "摸鱼专员" },
     { level: 1, name: "摸鱼实习生" },
   ];
+  const PRESTIGE_LEVEL = 50;
+  const PRESTIGE_BONUS = 0.15;
+  const PRESTIGE_TITLES = [
+    { count: 5, name: "摸鱼守护神" },
+    { count: 3, name: "传奇摸鱼王" },
+    { count: 2, name: "摸鱼传说" },
+    { count: 1, name: "摸鱼新生" },
+  ];
 
   const GACHA_PRICE = 500;
   const BANK_HOURS = 8;
@@ -747,6 +759,13 @@
         work: raw.work && typeof raw.work === "object" ? raw.work : DEFAULT_STATE.work,
       });
     },
+    // 9 -> 10：转生 / 摸鱼传奇
+    9: (raw) => {
+      return Object.assign({}, raw, {
+        version: 10,
+        prestige: raw.prestige && typeof raw.prestige === "object" ? raw.prestige : DEFAULT_STATE.prestige,
+      });
+    },
   };
 
   function migrate(raw) {
@@ -889,6 +908,10 @@
             completed: num(raw.work.completed, 0, 0, 1e9),
           }
         : { jobs: [], fragments: 0, completed: 0 };
+    state.prestige = {
+      count: Math.round(num(raw.prestige && raw.prestige.count, 0, 0, 9999)),
+      legacyLevel: num(raw.prestige && raw.prestige.legacyLevel, 0, 0, 1e9),
+    };
     state.profile = normalizeProfile(raw.profile, state.createdAt);
     const learned = Array.isArray(raw.training && raw.training.learned)
       ? raw.training.learned.filter((name) => typeof name === "string").slice(0, 500)
@@ -935,6 +958,7 @@
     const moodFactor = 1 + BALANCE.moodBonus * (state.mood / 100);
     const perkFactor = state.perks && state.perks.lucky_cat ? 1.1 : 1;
     const personalityFactor = personalityOf(state).income;
+    const prestigeFactor = 1 + (state.prestige ? state.prestige.count : 0) * PRESTIGE_BONUS;
     const buffUntil = (state.buffs && state.buffs.double_income) || 0;
     const buffFactor = buffUntil > Date.now() ? 1.5 : 1;
     const feedFactor =
@@ -956,6 +980,7 @@
       perkFactor *
       buffFactor *
       personalityFactor *
+      prestigeFactor *
       (1 + roomBonus + companionBonus + luxuryBonus)
     );
   }
@@ -966,6 +991,7 @@
       base: state.level * BALANCE.baseIncomePerLevel,
       moodFactor: 1 + BALANCE.moodBonus * (state.mood / 100),
       personalityFactor: personalityOf(state).income,
+      prestigeFactor: 1 + (state.prestige ? state.prestige.count : 0) * PRESTIGE_BONUS,
       luxuryBonus: luxuryIncomeBonus(state),
       hungry: state.satiety < BALANCE.hungryThreshold,
       starving: state.satiety <= BALANCE.emptyThreshold,
@@ -1072,6 +1098,51 @@
     state.stats.upgrades += 1;
     state.lastTick = now || Date.now();
     return { ok: true, cost, dialogue: `摸鱼等级 Lv.${state.level}！` };
+  }
+
+  function prestigeTitle(count) {
+    const entry = PRESTIGE_TITLES.find((item) => count >= item.count);
+    return entry ? entry.name : "";
+  }
+
+  function prestigeStatus(state) {
+    const count = state.prestige ? state.prestige.count : 0;
+    return {
+      requiredLevel: PRESTIGE_LEVEL,
+      level: state.level,
+      eligible: state.level >= PRESTIGE_LEVEL,
+      count,
+      multiplier: 1 + count * PRESTIGE_BONUS,
+      nextMultiplier: 1 + (count + 1) * PRESTIGE_BONUS,
+      title: prestigeTitle(count),
+      nextTitle: prestigeTitle(count + 1),
+      legacyLevel: state.prestige ? state.prestige.legacyLevel : 0,
+    };
+  }
+
+  function prestige(state, now) {
+    if (state.level < PRESTIGE_LEVEL) {
+      return { ok: false, reason: "level", requiredLevel: PRESTIGE_LEVEL, level: state.level };
+    }
+    if (!state.prestige) state.prestige = { count: 0, legacyLevel: 0 };
+    const previousLevel = state.level;
+    state.prestige.legacyLevel += previousLevel;
+    state.prestige.count += 1;
+    state.level = 1;
+    state.lastTick = now || Date.now();
+    const status = prestigeStatus(state);
+    return {
+      ok: true,
+      previousLevel,
+      count: status.count,
+      multiplier: status.multiplier,
+      title: status.title,
+    };
+  }
+
+  function titleForState(state) {
+    const title = prestigeTitle(state.prestige ? state.prestige.count : 0);
+    return title || titleForLevel(state.level);
   }
 
   /** 摸头：加心情 + 偶尔掉金币。 */
@@ -1997,6 +2068,9 @@
     ACHIEVEMENTS,
     WISH_CATEGORIES,
     TITLES,
+    PRESTIGE_LEVEL,
+    PRESTIGE_BONUS,
+    PRESTIGE_TITLES,
     GACHA_PRICE,
     BANK_HOURS,
     BANK_RATE,
@@ -2051,6 +2125,10 @@
     markSeen,
     codexSummary,
     titleForLevel,
+    prestigeTitle,
+    prestigeStatus,
+    prestige,
+    titleForState,
     wishStatus,
     createWish,
     completeWish,

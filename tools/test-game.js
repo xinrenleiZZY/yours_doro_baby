@@ -303,13 +303,14 @@ test("存档白名单保留商城 / 日程字段并过滤非法项", () => {
         },
       ],
     },
+    prestige: { count: 2, legacyLevel: 109 },
     unlocked: ["dress_santa", "dress_santa3", 5],
     favorites: ["idle_stand", "bad name"],
     recent: ["idle_stand"],
     schedule: [{ id: "a", time: "09:00", text: "喝水", doneDate: "", notifiedDate: "" }],
     shopStats: { purchases: 2, spent: 40 },
   });
-  assert.strictEqual(clean.version, 9);
+  assert.strictEqual(clean.version, 10);
   assert.strictEqual(clean.inventory.fish, 2);
   assert.strictEqual(clean.inventory["bad-key"], undefined);
   assert.strictEqual(clean.perks.lucky_cat, true);
@@ -320,6 +321,8 @@ test("存档白名单保留商城 / 日程字段并过滤非法项", () => {
   assert.deepStrictEqual(clean.training.learned, ["idle_stand", "scene_cat"]);
   assert.strictEqual(clean.work.fragments, 4);
   assert.strictEqual(clean.work.jobs[0].reward.amount, 500);
+  assert.strictEqual(clean.prestige.count, 2);
+  assert.strictEqual(clean.prestige.legacyLevel, 109);
   assert.strictEqual(clean.buffs.double_income, 12345);
   assert.strictEqual(clean.unlocked.length, 2);
   assert.deepStrictEqual(clean.favorites, ["idle_stand"]);
@@ -749,6 +752,52 @@ test("访客可以被请走，碎片可以兑换装扮", () => {
   assert.strictEqual(result.type, "dress");
   assert.ok(state.unlocked.includes(dress.name));
   assert.strictEqual(state.work.fragments, 0);
+});
+
+test("Lv.50 才能转生，转生后等级归一并保留长期资产", () => {
+  const low = G.hydrate({ level: 49 }, NOW);
+  assert.strictEqual(G.prestige(low, NOW).ok, false);
+
+  const state = G.hydrate(
+    {
+      version: 10,
+      level: 50,
+      coins: 123456,
+      unlocked: ["dress_santa"],
+      seenActions: ["scene_cat"],
+      companion: { adopted: true },
+      room: { furniture: ["rug"] },
+    },
+    NOW
+  );
+  const result = G.prestige(state, NOW);
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(state.level, 1);
+  assert.strictEqual(state.prestige.count, 1);
+  assert.strictEqual(state.prestige.legacyLevel, 50);
+  assert.strictEqual(state.coins, 123456);
+  assert.ok(state.unlocked.includes("dress_santa"));
+  assert.ok(state.seenActions.includes("scene_cat"));
+  assert.strictEqual(state.companion.adopted, true);
+  assert.strictEqual(G.titleForState(state), "摸鱼新生");
+});
+
+test("转生倍率永久提升产出，并累积限定称号", () => {
+  const state = G.hydrate({ level: 50, prestige: { count: 2, legacyLevel: 100 } }, NOW);
+  const before = G.incomePerSecond(state);
+  assert.ok(Math.abs(before - 50 * 1.4 * 1.3) < 1e-9);
+  assert.strictEqual(G.titleForState(state), "摸鱼传说");
+  G.prestige(state, NOW);
+  assert.strictEqual(state.prestige.count, 3);
+  assert.strictEqual(G.prestigeStatus(state).multiplier, 1.45);
+  assert.strictEqual(G.titleForState(state), "传奇摸鱼王");
+});
+
+test("v9 老存档迁移后补齐转生字段", () => {
+  const state = G.hydrate({ version: 9, level: 20 }, NOW);
+  assert.strictEqual(state.version, G.SAVE_VERSION);
+  assert.strictEqual(state.prestige.count, 0);
+  assert.strictEqual(state.prestige.legacyLevel, 0);
 });
 
 console.log(`\n通过 ${passed} / ${passed + failures.length}`);

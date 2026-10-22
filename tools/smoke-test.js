@@ -1186,6 +1186,28 @@ async function runScenarios(win) {
     lastSaved ? Object.keys(lastSaved).join(",") : "null"
   );
 
+  await js(win, `window.__doroTest.setLevel(50)`);
+  await js(win, `window.__doroTest.openGrowth()`);
+  await wait(120);
+  const prestigeBefore = await getState(win);
+  await js(win, `document.getElementById("btn-prestige").click()`);
+  await wait(80);
+  await js(win, `document.getElementById("btn-prestige").click()`);
+  await wait(160);
+  const prestigeAfter = await getState(win);
+  check(
+    "Lv.50 可以通过二次确认转生",
+    prestigeBefore.level === 50 && prestigeAfter.level === 1 && prestigeAfter.prestige.count === 1,
+    `Lv.${prestigeBefore.level}→Lv.${prestigeAfter.level}，转生 ${prestigeAfter.prestige.count}`
+  );
+  check(
+    "转生显示永久倍率与限定称号",
+    (await js(win, `document.getElementById("growth-prestige-title").textContent`)).includes("摸鱼新生") &&
+      (await js(win, `document.getElementById("growth-prestige").textContent`)).includes("×1.15"),
+    await js(win, `document.getElementById("growth-prestige").textContent`)
+  );
+  await js(win, `document.getElementById("growth-close").click()`);
+
   // 10. 渲染进程异常会上报主进程日志
   await js(win, `setTimeout(() => { throw new Error("smoke-boom"); }, 0); true`);
   await wait(300);

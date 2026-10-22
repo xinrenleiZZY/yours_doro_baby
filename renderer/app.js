@@ -119,6 +119,9 @@
     growthDailyDate: $("growth-daily-date"),
     growthProfileTitle: $("growth-profile-title"),
     growthProfile: $("growth-profile"),
+    growthPrestigeTitle: $("growth-prestige-title"),
+    growthPrestige: $("growth-prestige"),
+    btnPrestige: $("btn-prestige"),
     growthAchievements: $("growth-achievements"),
     growthAchCount: $("growth-ach-count"),
     growthStats: $("growth-stats"),
@@ -164,6 +167,7 @@
   let stickerOpen = false;
   const stickerState = { name: null, query: "", page: 0 };
   let stickerPendingDelete = null;
+  let prestigePending = null;
   let quizOpen = false;
   let toolOpen = false;
   let toolStateRevision = 0;
@@ -469,7 +473,7 @@
     el.petStack.appendChild(next);
     currentAction = action.name;
     activeLayer = next;
-    el.petLabel.textContent = `Lv.${state.level} ${G.titleForLevel(state.level)} · ${G.effectiveLabel(state, action)}`;
+    el.petLabel.textContent = `Lv.${state.level} ${G.titleForState(state)} · ${G.effectiveLabel(state, action)}`;
     reportHitboxes();
 
     let revealed = false;
@@ -918,6 +922,26 @@
       .map((item) => `${item.icon}${item.name}`)
       .join("、")} · 招式 ${training.learned}/${training.total} · ${training.points} 训练点`;
 
+    const prestige = G.prestigeStatus(state);
+    el.growthPrestigeTitle.textContent = prestige.count
+      ? `${prestige.title} · ${prestige.count} 转`
+      : `Lv.${prestige.requiredLevel} 解锁`;
+    el.growthPrestige.textContent = prestige.count
+      ? `永久产出 ×${prestige.multiplier.toFixed(2)} · 累计重置等级 ${prestige.legacyLevel} · 下次转生 ×${prestige.nextMultiplier.toFixed(
+          2
+        )}${prestige.nextTitle ? ` · 下一称号「${prestige.nextTitle}」` : ""}`
+      : `达到 Lv.${prestige.requiredLevel} 后可重置等级，获得永久产出 ×${prestige.nextMultiplier.toFixed(
+          2
+        )} 和限定称号。图鉴、招式、装扮、伙伴与金币全部保留。`;
+    el.btnPrestige.disabled = !prestige.eligible;
+    el.btnPrestige.textContent = !prestige.eligible
+      ? `Lv.${prestige.requiredLevel} 解锁转生`
+      : prestigePending === "confirm"
+        ? "再次点击确认转生"
+        : prestige.count
+          ? "再次转生"
+          : "转生";
+
     const codex = G.codexSummary(state, actions);
     el.growthCodex.textContent = `${codex.seen} / ${codex.total}`;
     el.growthCodexList.textContent = Object.entries(codex.groups)
@@ -1326,7 +1350,7 @@
     else {
       const action = byName.get(currentAction);
       if (action) {
-        el.petLabel.textContent = `Lv.${state.level} ${G.titleForLevel(state.level)} · ${G.effectiveLabel(
+        el.petLabel.textContent = `Lv.${state.level} ${G.titleForState(state)} · ${G.effectiveLabel(
           state,
           action
         )}`;
@@ -2247,6 +2271,32 @@
       scheduleSave(600);
     });
 
+    el.btnPrestige.addEventListener("click", () => {
+      const status = G.prestigeStatus(state);
+      if (!status.eligible) return;
+      if (prestigePending !== "confirm") {
+        prestigePending = "confirm";
+        el.btnPrestige.textContent = "再次点击确认转生";
+        setTimeout(() => {
+          if (prestigePending !== "confirm") return;
+          prestigePending = null;
+          el.btnPrestige.textContent = state.prestige.count ? "再次转生" : "转生";
+        }, 4000);
+        return;
+      }
+      prestigePending = null;
+      const result = G.prestige(state, Date.now());
+      if (!result.ok) return;
+      toast(`转生成功：${result.title} · 永久产出 ×${result.multiplier.toFixed(2)}`, 4200);
+      speak(`摸鱼传奇，从现在开始！我是${result.title}`, 3600);
+      playSound("upgrade");
+      setAction(currentAction, { force: true });
+      updateHud(0);
+      updateMenu();
+      renderGrowth();
+      scheduleSave(500);
+    });
+
     const deposit = (amount) => {
       const result = G.bankDeposit(state, amount, Date.now());
       if (!result.ok) {
@@ -2798,6 +2848,12 @@
             job.endsAt = 0;
           });
           return collectWork(false);
+        },
+        setLevel: (level) => {
+          state.level = Math.max(1, Math.round(Number(level) || 1));
+          updateHud(0);
+          updateMenu();
+          if (growthOpen) renderGrowth();
         },
         closePanels: () => {
           closeQuizPanel();
