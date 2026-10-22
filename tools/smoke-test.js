@@ -1275,6 +1275,25 @@ async function runToolWindowScenarios() {
       /金币/.test(shopInfo.balance),
     JSON.stringify(shopInfo)
   );
+  shop.setSize(460, 600);
+  await wait(150);
+  const narrowShop = await js(
+    shop,
+    `(() => {
+      const list = document.getElementById("shop-list");
+      const item = document.querySelector(".shop-item");
+      return {
+        noOverflow: list.scrollWidth <= list.clientWidth + 1,
+        itemWidth: item.getBoundingClientRect().width,
+        listWidth: list.getBoundingClientRect().width
+      };
+    })()`
+  );
+  check(
+    "商城在窄窗口自动收缩且不横向溢出",
+    narrowShop.noOverflow && narrowShop.itemWidth <= narrowShop.listWidth + 1,
+    JSON.stringify(narrowShop)
+  );
   const shopBefore = toolState;
   await js(shop, `document.querySelector(".shop-item button:not(.use)").click()`);
   await wait(220);
@@ -1353,6 +1372,43 @@ async function runToolWindowScenarios() {
       /51/.test(stickerInfo.count),
     JSON.stringify(stickerInfo)
   );
+  sticker.setSize(900, 720);
+  await wait(150);
+  const wideSticker = await js(
+    sticker,
+    `(() => {
+      const grid = document.getElementById("sticker-grid");
+      const item = document.querySelector(".sticker-item");
+      return {
+        columns: getComputedStyle(grid).gridTemplateColumns.split(" ").length,
+        height: item.getBoundingClientRect().height,
+        overflow: grid.scrollWidth <= grid.clientWidth + 1
+      };
+    })()`
+  );
+  sticker.setSize(460, 600);
+  await wait(150);
+  const narrowSticker = await js(
+    sticker,
+    `(() => {
+      const grid = document.getElementById("sticker-grid");
+      const item = document.querySelector(".sticker-item");
+      return {
+        columns: getComputedStyle(grid).gridTemplateColumns.split(" ").length,
+        height: item.getBoundingClientRect().height,
+        overflow: grid.scrollWidth <= grid.clientWidth + 1
+      };
+    })()`
+  );
+  check(
+    "表情管理会随窗口宽度自动换列且不再拉伸空行",
+    wideSticker.columns > narrowSticker.columns &&
+      wideSticker.height <= 100 &&
+      narrowSticker.height <= 90 &&
+      wideSticker.overflow &&
+      narrowSticker.overflow,
+    `宽${wideSticker.columns}列/${wideSticker.height.toFixed(0)}px，窄${narrowSticker.columns}列/${narrowSticker.height.toFixed(0)}px`
+  );
   const randomBefore = JSON.stringify(toolState.stickerRandom);
   await js(sticker, `document.getElementById("sticker-preview-random").click()`);
   await wait(220);
@@ -1393,9 +1449,10 @@ async function main() {
   let chosenAction = null;
   try {
     chosenAction = await runScenarios(win);
+    win.destroy();
     await runToolWindowScenarios();
   } finally {
-    win.destroy();
+    if (!win.isDestroyed()) win.destroy();
   }
   await runRestartScenario(chosenAction);
 
