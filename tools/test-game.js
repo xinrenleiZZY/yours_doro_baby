@@ -304,13 +304,15 @@ test("存档白名单保留商城 / 日程字段并过滤非法项", () => {
       ],
     },
     prestige: { count: 2, legacyLevel: 109 },
+    intimacy: { points: 130, dailyDate: "2026-10-22", dailyPoints: 12 },
+    diary: { entries: [{ date: "2026-10-21", text: "昨天赚了 100 金币。" }] },
     unlocked: ["dress_santa", "dress_santa3", 5],
     favorites: ["idle_stand", "bad name"],
     recent: ["idle_stand"],
     schedule: [{ id: "a", time: "09:00", text: "喝水", doneDate: "", notifiedDate: "" }],
     shopStats: { purchases: 2, spent: 40 },
   });
-  assert.strictEqual(clean.version, 10);
+  assert.strictEqual(clean.version, 11);
   assert.strictEqual(clean.inventory.fish, 2);
   assert.strictEqual(clean.inventory["bad-key"], undefined);
   assert.strictEqual(clean.perks.lucky_cat, true);
@@ -323,6 +325,8 @@ test("存档白名单保留商城 / 日程字段并过滤非法项", () => {
   assert.strictEqual(clean.work.jobs[0].reward.amount, 500);
   assert.strictEqual(clean.prestige.count, 2);
   assert.strictEqual(clean.prestige.legacyLevel, 109);
+  assert.strictEqual(clean.intimacy.points, 130);
+  assert.strictEqual(clean.diary.entries[0].date, "2026-10-21");
   assert.strictEqual(clean.buffs.double_income, 12345);
   assert.strictEqual(clean.unlocked.length, 2);
   assert.deepStrictEqual(clean.favorites, ["idle_stand"]);
@@ -798,6 +802,58 @@ test("v9 老存档迁移后补齐转生字段", () => {
   assert.strictEqual(state.version, G.SAVE_VERSION);
   assert.strictEqual(state.prestige.count, 0);
   assert.strictEqual(state.prestige.legacyLevel, 0);
+});
+
+test("亲密度由互动、心愿和访客增长并独立于心情", () => {
+  const state = G.hydrate({ version: 11, coins: 100, satiety: 20, mood: 20 }, NOW);
+  G.pet(state, NOW, () => 0);
+  G.feed(state, NOW);
+  G.play(state, NOW);
+  assert.strictEqual(state.intimacy.points, 5);
+  assert.notStrictEqual(state.intimacy.points, state.mood);
+  state.visitor = { kind: "cat", label: "猫猫", icon: "🐈", reward: 80, expiresAt: NOW + 60000 };
+  G.acceptVisitor(state, NOW);
+  assert.strictEqual(state.intimacy.points, 13);
+});
+
+test("亲密度等级解锁专属动作和装扮", () => {
+  const state = G.hydrate({ version: 11, intimacy: { points: 130 } }, NOW);
+  assert.strictEqual(G.intimacyStatus(state).level, 3);
+  assert.strictEqual(
+    G.isUnlocked(state, { name: "scene_cat", category: "scene", file: "pet/scene_cat.webp" }),
+    true
+  );
+  state.intimacy.points = 600;
+  G.addIntimacy(state, 0, NOW);
+  assert.ok(state.unlocked.includes("dress_bow"));
+  assert.strictEqual(G.intimacyStatus(state).level, 5);
+});
+
+test("跨天自动生成桌面日记并汇总当天数据", () => {
+  const yesterday = NOW - 86400000;
+  const state = G.hydrate(
+    {
+      version: 11,
+      daily: {
+        date: G.dayKey(yesterday),
+        progress: { pets: 2, feeds: 1, plays: 1, actionsViewed: 7, coinsEarned: 3200, visitors: 1 },
+        claimed: [],
+      },
+    },
+    NOW
+  );
+  G.ensureDaily(state, NOW);
+  assert.strictEqual(state.diary.entries.length, 1);
+  assert.ok(state.diary.entries[0].text.includes("3200"));
+  assert.ok(state.diary.entries[0].text.includes("7 个动作"));
+  assert.ok(state.diary.entries[0].text.includes("1 位访客"));
+});
+
+test("v10 老存档迁移后补齐亲密度与日记", () => {
+  const state = G.hydrate({ version: 10 }, NOW);
+  assert.strictEqual(state.version, G.SAVE_VERSION);
+  assert.strictEqual(state.intimacy.points, 0);
+  assert.deepStrictEqual(state.diary.entries, []);
 });
 
 console.log(`\n通过 ${passed} / ${passed + failures.length}`);

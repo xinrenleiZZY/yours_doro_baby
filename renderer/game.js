@@ -11,7 +11,7 @@
 })(typeof self !== "undefined" ? self : this, function () {
   "use strict";
 
-  const SAVE_VERSION = 10;
+  const SAVE_VERSION = 11;
 
   // ---- 经济数值 -------------------------------------------------------------
   const BALANCE = {
@@ -59,7 +59,11 @@
     stickerLabels: {},
     schedule: [],
     shopStats: { purchases: 0, spent: 0 },
-    daily: { date: "", progress: { pets: 0, feeds: 0, plays: 0, actionsViewed: 0 }, claimed: [] },
+    daily: {
+      date: "",
+      progress: { pets: 0, feeds: 0, plays: 0, actionsViewed: 0, coinsEarned: 0, visitors: 0 },
+      claimed: [],
+    },
     achievements: [],
     metrics: { days: {} },
     seenActions: [],
@@ -92,6 +96,14 @@
     prestige: {
       count: 0,
       legacyLevel: 0,
+    },
+    intimacy: {
+      points: 0,
+      dailyDate: "",
+      dailyPoints: 0,
+    },
+    diary: {
+      entries: [],
     },
     quiz: {
       examCode: "architect",
@@ -464,6 +476,24 @@
     { count: 2, name: "摸鱼传说" },
     { count: 1, name: "摸鱼新生" },
   ];
+  const INTIMACY_LEVELS = [
+    { level: 5, min: 600, name: "灵魂挚友" },
+    { level: 4, min: 280, name: "知心伙伴" },
+    { level: 3, min: 120, name: "默契搭档" },
+    { level: 2, min: 40, name: "逐渐熟悉" },
+    { level: 1, min: 0, name: "初次见面" },
+  ];
+  const INTIMACY_ACTIONS = {
+    2: "scene_cat",
+    3: "sleep_hug_pillow",
+    4: "scene_flower",
+  };
+  const INTIMACY_DIALOGUE = [
+    "和你待在一起，比赚金币还开心",
+    "今天也想多陪你一会儿",
+    "你一回来，我就安心了",
+    "我们已经是老朋友了吧？",
+  ];
 
   const GACHA_PRICE = 500;
   const BANK_HOURS = 8;
@@ -766,6 +796,14 @@
         prestige: raw.prestige && typeof raw.prestige === "object" ? raw.prestige : DEFAULT_STATE.prestige,
       });
     },
+    // 10 -> 11：亲密度与桌面日记
+    10: (raw) => {
+      return Object.assign({}, raw, {
+        version: 11,
+        intimacy: raw.intimacy && typeof raw.intimacy === "object" ? raw.intimacy : DEFAULT_STATE.intimacy,
+        diary: raw.diary && typeof raw.diary === "object" ? raw.diary : DEFAULT_STATE.diary,
+      });
+    },
   };
 
   function migrate(raw) {
@@ -836,10 +874,17 @@
       raw.daily && typeof raw.daily === "object" && raw.daily.progress
         ? {
             date: typeof raw.daily.date === "string" ? raw.daily.date : "",
-            progress: Object.assign({ pets: 0, feeds: 0, plays: 0, actionsViewed: 0 }, raw.daily.progress),
+            progress: Object.assign(
+              { pets: 0, feeds: 0, plays: 0, actionsViewed: 0, coinsEarned: 0, visitors: 0 },
+              raw.daily.progress
+            ),
             claimed: Array.isArray(raw.daily.claimed) ? raw.daily.claimed : [],
           }
-        : { date: "", progress: { pets: 0, feeds: 0, plays: 0, actionsViewed: 0 }, claimed: [] };
+        : {
+            date: "",
+            progress: { pets: 0, feeds: 0, plays: 0, actionsViewed: 0, coinsEarned: 0, visitors: 0 },
+            claimed: [],
+          };
     state.achievements = Array.isArray(raw.achievements)
       ? raw.achievements.filter((id) => typeof id === "string")
       : [];
@@ -911,6 +956,22 @@
     state.prestige = {
       count: Math.round(num(raw.prestige && raw.prestige.count, 0, 0, 9999)),
       legacyLevel: num(raw.prestige && raw.prestige.legacyLevel, 0, 0, 1e9),
+    };
+    state.intimacy = {
+      points: num(raw.intimacy && raw.intimacy.points, 0, 0, 1e9),
+      dailyDate: typeof (raw.intimacy && raw.intimacy.dailyDate) === "string" ? raw.intimacy.dailyDate : "",
+      dailyPoints: num(raw.intimacy && raw.intimacy.dailyPoints, 0, 0, 1e9),
+    };
+    state.diary = {
+      entries: Array.isArray(raw.diary && raw.diary.entries)
+        ? raw.diary.entries
+            .filter((entry) => entry && typeof entry === "object" && typeof entry.text === "string")
+            .slice(-30)
+            .map((entry) => ({
+              date: String(entry.date || "").slice(0, 10),
+              text: entry.text.slice(0, 500),
+            }))
+        : [],
     };
     state.profile = normalizeProfile(raw.profile, state.createdAt);
     const learned = Array.isArray(raw.training && raw.training.learned)
@@ -1012,6 +1073,7 @@
 
     state.coins += earned;
     state.totalEarned += earned;
+    ensureDaily(state, Date.now()).progress.coinsEarned += earned;
     state.satiety = clamp(state.satiety - (BALANCE.satietyDecayPerMinute * seconds) / 60, 0, 100);
     state.mood = clamp(state.mood - (BALANCE.moodDecayPerMinute * seconds) / 60, 0, 100);
     if (state.settings && state.settings.analytics && state.metrics) {
@@ -1063,8 +1125,9 @@
     state.stats.feeds += 1;
     bumpDaily(state, "feeds");
     const training = awardTrainingPoints(state, 2, "feed");
+    const intimacy = addIntimacy(state, 2, now);
     state.lastTick = now || Date.now();
-    return { ok: true, dialogue: "好吃！", training };
+    return { ok: true, dialogue: "好吃！", training, intimacy };
   }
 
   function play(state, now) {
@@ -1080,8 +1143,9 @@
     state.stats.plays += 1;
     bumpDaily(state, "plays");
     const training = awardTrainingPoints(state, 2, "play");
+    const intimacy = addIntimacy(state, 2, now);
     state.lastTick = now || Date.now();
-    return { ok: true, dialogue: "好玩！", training };
+    return { ok: true, dialogue: "好玩！", training, intimacy };
   }
 
   function upgradeCost(state) {
@@ -1156,8 +1220,9 @@
     state.coins += bonus;
     state.totalEarned += bonus;
     const training = awardTrainingPoints(state, 1, "pet");
+    const intimacy = addIntimacy(state, 1, now);
     state.lastTick = now || Date.now();
-    return { bonus, dialogue: pick(DIALOGUE.happy, random), training };
+    return { bonus, dialogue: pick(DIALOGUE.happy, random), training, intimacy };
   }
 
   function pick(list, rng) {
@@ -1178,6 +1243,10 @@
     if (kind === "eat") return pick(DIALOGUE.eat, rng);
     if (kind === "play") return pick(DIALOGUE.play, rng);
     if (kind === "offline") return pick(DIALOGUE.offline, rng);
+    if ((kind === "auto" || kind === "idle") && intimacyStatus(state).level >= 3) {
+      const random = rng || Math.random;
+      if (random() < 0.35) return pick(INTIMACY_DIALOGUE, random);
+    }
     const face = moodFace(state);
     if (kind === "auto") kind = face;
     return pick(DIALOGUE[kind] || DIALOGUE.idle, rng);
@@ -1295,6 +1364,7 @@
   function isUnlocked(state, action) {
     if (!action) return false;
     if (action.category === "dress") return (state.unlocked || []).includes(action.name);
+    if (intimacyActionUnlocked(state, action.name)) return true;
     return isActionLearned(state, action);
   }
 
@@ -1419,6 +1489,50 @@
   function dayKey(now) {
     const d = new Date(now || Date.now());
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  }
+
+  function intimacyLevelForPoints(points) {
+    return (
+      INTIMACY_LEVELS.find((entry) => points >= entry.min) || INTIMACY_LEVELS[INTIMACY_LEVELS.length - 1]
+    );
+  }
+
+  function intimacyStatus(state) {
+    const points = Math.max(0, Number(state.intimacy && state.intimacy.points) || 0);
+    const level = intimacyLevelForPoints(points);
+    const next = INTIMACY_LEVELS.slice()
+      .sort((a, b) => a.min - b.min)
+      .find((entry) => entry.min > points);
+    return {
+      points,
+      level: level.level,
+      name: level.name,
+      nextAt: next ? next.min : null,
+      progress: next ? (points - level.min) / Math.max(1, next.min - level.min) : 1,
+    };
+  }
+
+  function addIntimacy(state, amount, now) {
+    const ts = now || Date.now();
+    const key = dayKey(ts);
+    if (!state.intimacy) state.intimacy = { points: 0, dailyDate: key, dailyPoints: 0 };
+    if (state.intimacy.dailyDate !== key) {
+      state.intimacy.dailyDate = key;
+      state.intimacy.dailyPoints = 0;
+    }
+    const gain = Math.max(0, Math.min(35 - state.intimacy.dailyPoints, Math.round(Number(amount) || 0)));
+    state.intimacy.points += gain;
+    state.intimacy.dailyPoints += gain;
+    const status = intimacyStatus(state);
+    if (status.level >= 5 && !state.unlocked.includes("dress_bow")) state.unlocked.push("dress_bow");
+    return { gain, ...status };
+  }
+
+  function intimacyActionUnlocked(state, name) {
+    const level = intimacyStatus(state).level;
+    return Object.entries(INTIMACY_ACTIONS).some(
+      ([required, actionName]) => actionName === name && level >= Number(required)
+    );
   }
 
   // ---- 题库：状态与奖励 ---------------------------------------------------
@@ -1646,7 +1760,27 @@
   function ensureDaily(state, now) {
     const key = dayKey(now || Date.now());
     if (!state.daily || state.daily.date !== key) {
-      state.daily = { date: key, progress: { pets: 0, feeds: 0, plays: 0, actionsViewed: 0 }, claimed: [] };
+      const previous = state.daily;
+      if (previous && previous.date && previous.progress && state.diary) {
+        const exists = state.diary.entries.some((entry) => entry.date === previous.date);
+        if (!exists) {
+          const progress = previous.progress;
+          const lines = [
+            `今天赚了 ${formatCoins(progress.coinsEarned || 0)} 金币`,
+            `看了 ${progress.actionsViewed || 0} 个动作`,
+            `接待了 ${progress.visitors || 0} 位访客`,
+            `被摸了 ${progress.pets || 0} 次`,
+            `吃了 ${progress.feeds || 0} 顿饭`,
+          ];
+          state.diary.entries.push({ date: previous.date, text: `${lines.join("，")}。` });
+          state.diary.entries = state.diary.entries.slice(-30);
+        }
+      }
+      state.daily = {
+        date: key,
+        progress: { pets: 0, feeds: 0, plays: 0, actionsViewed: 0, coinsEarned: 0, visitors: 0 },
+        claimed: [],
+      };
     }
     return state.daily;
   }
@@ -1775,6 +1909,7 @@
     state.coins += wish.reward;
     state.totalEarned += wish.reward;
     state.mood = clamp(state.mood + 5, 0, 100);
+    addIntimacy(state, 12, now);
     return { reward: wish.reward };
   }
 
@@ -1931,6 +2066,8 @@
     state.coins += visitor.reward;
     state.totalEarned += visitor.reward;
     state.mood = clamp(state.mood + 5, 0, 100);
+    ensureDaily(state, now).progress.visitors += 1;
+    addIntimacy(state, 8, now);
     return visitor;
   }
 
@@ -2071,6 +2208,8 @@
     PRESTIGE_LEVEL,
     PRESTIGE_BONUS,
     PRESTIGE_TITLES,
+    INTIMACY_LEVELS,
+    INTIMACY_ACTIONS,
     GACHA_PRICE,
     BANK_HOURS,
     BANK_RATE,
@@ -2129,6 +2268,10 @@
     prestigeStatus,
     prestige,
     titleForState,
+    intimacyLevelForPoints,
+    intimacyStatus,
+    addIntimacy,
+    intimacyActionUnlocked,
     wishStatus,
     createWish,
     completeWish,

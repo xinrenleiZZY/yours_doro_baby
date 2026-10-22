@@ -25,7 +25,7 @@ const ACTION_NAMES = JSON.parse(fs.readFileSync(path.join(ROOT, "assets", "actio
 app.setPath("userData", path.join(ROOT, ".tmp-smoke-userdata"));
 
 const BASE_SAVE = {
-  version: 9,
+  version: 11,
   coins: 500,
   totalEarned: 900,
   level: 1,
@@ -50,6 +50,11 @@ const BASE_SAVE = {
     learned: ACTION_NAMES.filter((name) => name !== "toilet_reading"),
   },
   work: { jobs: [], fragments: 0, completed: 0 },
+  prestige: { count: 0, legacyLevel: 0 },
+  intimacy: { points: 130, dailyDate: "", dailyPoints: 0 },
+  diary: {
+    entries: [{ date: "2026-10-21", text: "今天赚了 3.2K 金币，看了 7 个动作，接待了 1 位访客。" }],
+  },
 };
 
 let seed = JSON.parse(JSON.stringify(BASE_SAVE));
@@ -361,6 +366,16 @@ async function runScenarios(win) {
     boot.coin === "500" && /^\+1\.[0-9]\/s$/.test(boot.rate),
     `${boot.coin} ${boot.rate}`
   );
+
+  win.webContents.send("pet:system-idle", { seconds: 700 });
+  await wait(120);
+  check(
+    "系统空闲 10 分钟会进入睡觉动作",
+    (await js(win, `window.__doroTest.currentAction()`)) === "sleep_curl"
+  );
+  win.webContents.send("pet:system-idle", { seconds: 0 });
+  await wait(120);
+  check("用户回来后播放伸懒腰", (await js(win, `window.__doroTest.currentAction()`)) === "morning_stretch");
 
   // 2. 账本面板 + 喂饭
   await js(win, `document.getElementById("coin-pill").click()`);
@@ -859,6 +874,23 @@ async function runScenarios(win) {
     "成长面板展示性格与偏好",
     Boolean(profilePanel.title) && /喜欢/.test(profilePanel.detail),
     JSON.stringify(profilePanel)
+  );
+  const intimacyPanel = await js(
+    win,
+    `({
+      title: document.getElementById("growth-intimacy-title").textContent,
+      detail: document.getElementById("growth-intimacy").textContent,
+      diaryTitle: document.getElementById("growth-diary-title").textContent,
+      diary: document.getElementById("growth-diary").textContent
+    })`
+  );
+  check(
+    "成长面板展示亲密度与桌面日记",
+    /Lv\.3/.test(intimacyPanel.title) &&
+      /专属动作/.test(intimacyPanel.detail) &&
+      /1 篇/.test(intimacyPanel.diaryTitle) &&
+      /3\.2K/.test(intimacyPanel.diary),
+    JSON.stringify(intimacyPanel)
   );
 
   const beforeClaim = await getState(win);

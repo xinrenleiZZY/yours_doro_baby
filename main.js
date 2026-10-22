@@ -14,6 +14,7 @@ const {
   Notification,
   globalShortcut,
   dialog,
+  powerMonitor,
 } = require("electron");
 const fs = require("fs");
 const path = require("path");
@@ -58,6 +59,7 @@ let crashedLastTime = false;
 let sessionClosed = false;
 let uiRestoreBounds = null;
 let lastRenderReloadAt = 0;
+let systemWatchTimer = null;
 let rendererCrashNotice = false;
 const runtime = {
   alwaysOnTop: true,
@@ -1151,6 +1153,10 @@ if (!gotLock) {
     createWindow();
     initUpdater();
     createTray();
+    if (systemWatchTimer) clearInterval(systemWatchTimer);
+    systemWatchTimer = setInterval(() => {
+      send("pet:system-idle", { seconds: powerMonitor.getSystemIdleTime() });
+    }, 5000);
     const quizArg = process.argv.find((arg) => arg.startsWith("--quiz="));
     if (quizArg) setTimeout(() => createQuizWindow(quizArg.split("=")[1]), 1200);
     const toolArg = process.argv.find((arg) => arg.startsWith("--tool="));
@@ -1180,5 +1186,6 @@ if (!gotLock) {
   app.on("will-quit", () => {
     globalShortcut.unregisterAll();
     if (updateTimer) clearTimeout(updateTimer);
+    if (systemWatchTimer) clearInterval(systemWatchTimer);
   });
 }

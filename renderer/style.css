@@ -1661,6 +1661,30 @@ body.lib-open #stage {
   color: #a2486c !important;
 }
 
+.diary-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 150px;
+  overflow-y: auto;
+}
+
+.diary-entry {
+  padding: 6px 8px;
+  border-radius: 9px;
+  background: linear-gradient(180deg, var(--soft-bg), var(--soft-bg-2));
+  color: #7d6471;
+  font-size: 9.5px;
+  line-height: 1.45;
+}
+
+.diary-entry b {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--pink-deep);
+  font-size: 9px;
+}
+
 .switch {
   position: relative;
   width: 26px;

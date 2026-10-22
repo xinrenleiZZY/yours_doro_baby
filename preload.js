@@ -38,6 +38,7 @@ contextBridge.exposeInMainWorld("petAPI", {
   onWindowMoved: (handler) => on("pet:window-moved", handler),
   onCursor: (handler) => on("pet:cursor", handler),
   onNotice: (handler) => on("pet:notice", handler),
+  onSystemIdle: (handler) => on("pet:system-idle", handler),
 
   // 题库：网络与判卷都在主进程，渲染进程只拿无答案题面。
   quizExams: (options) => ipcRenderer.invoke("quiz:exams", options),

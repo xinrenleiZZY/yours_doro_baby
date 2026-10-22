@@ -119,6 +119,10 @@
     growthDailyDate: $("growth-daily-date"),
     growthProfileTitle: $("growth-profile-title"),
     growthProfile: $("growth-profile"),
+    growthIntimacyTitle: $("growth-intimacy-title"),
+    growthIntimacy: $("growth-intimacy"),
+    growthDiaryTitle: $("growth-diary-title"),
+    growthDiary: $("growth-diary"),
     growthPrestigeTitle: $("growth-prestige-title"),
     growthPrestige: $("growth-prestige"),
     btnPrestige: $("btn-prestige"),
@@ -190,6 +194,8 @@
   let bubbleTimer = null;
   let menuOpen = false;
   let busyUntil = 0;
+  let systemSleeping = false;
+  let lastHourlyCheck = new Date().getHours();
 
   // ------------------------------------------------------------- 基础工具
   function rand(min, max) {
@@ -271,6 +277,7 @@
         upgrade: [440, 660, 880],
         buy: [600, 800],
         error: [300, 220],
+        clock: [520, 660],
       }[kind] || [700];
       const now = audioCtx.currentTime;
       notes.forEach((freq, index) => {
@@ -518,7 +525,7 @@
     const wait =
       delay === undefined ? G.nextActionDelay(undefined, state.settings.ambientIntervalSec) : delay;
     ambientTimer = setTimeout(() => {
-      if (!dragging && !state.settings.dnd && Date.now() >= busyUntil) {
+      if (!dragging && !systemSleeping && !state.settings.dnd && Date.now() >= busyUntil) {
         const action = G.pickAmbientAction(actions, state);
         if (action && action.name !== currentAction) {
           playReaction(action.name, Math.min(6000, action.durationMs * 2 + 900));
@@ -616,7 +623,7 @@
     const query = libState.query.trim().toLowerCase();
     let items;
     if (libState.group === "可训练") {
-      items = actions.filter((action) => G.isTrainingEligible(action) && !G.isActionLearned(state, action));
+      items = actions.filter((action) => G.isTrainingEligible(action) && !G.isUnlocked(state, action));
     } else if (libState.group === "收藏") {
       items = state.favorites.map((name) => byName.get(name)).filter(Boolean);
     } else if (libState.group === "最近") {
@@ -690,7 +697,7 @@
       const button = document.createElement("button");
       const unlocked = G.isUnlocked(state, action);
       const price = action.category === "dress" ? G.dressPrice(Math.max(0, dressIndex(action.name))) : 0;
-      const trainingLock = G.isTrainingEligible(action) && !G.isActionLearned(state, action);
+      const trainingLock = G.isTrainingEligible(action) && !G.isUnlocked(state, action);
       const trainingPrice = trainingLock ? G.trainingCost(action) : 0;
       button.className = `lib-item${action.name === baseAction ? " active" : ""}${unlocked ? "" : " locked"}`;
       button.title = `${G.effectiveLabel(state, action)} · ${action.category}${action.blocked ? " · 不参与随机" : ""}${
@@ -921,6 +928,38 @@
       .join("、")} · 不喜欢：${profile.dislikes
       .map((item) => `${item.icon}${item.name}`)
       .join("、")} · 招式 ${training.learned}/${training.total} · ${training.points} 训练点`;
+
+    const intimacy = G.intimacyStatus(state);
+    const unlockedActionNames = Object.entries(G.INTIMACY_ACTIONS)
+      .filter(([level]) => intimacy.level >= Number(level))
+      .map(([, name]) => (byName.get(name) ? `「${byName.get(name).label}」` : ""))
+      .filter(Boolean)
+      .join("、");
+    el.growthIntimacyTitle.textContent = `Lv.${intimacy.level} ${intimacy.name} · ${intimacy.points}`;
+    el.growthIntimacy.textContent = `${
+      intimacy.nextAt ? `距离下一阶段还差 ${intimacy.nextAt - intimacy.points} 点。` : "已经是最高亲密度。"
+    }${unlockedActionNames ? ` 专属动作：${unlockedActionNames}。` : ""}${
+      intimacy.level >= 5 ? " 专属装扮：蝴蝶结。" : ""
+    }`;
+
+    const diary = state.diary.entries.slice().reverse();
+    el.growthDiaryTitle.textContent = `${diary.length} 篇`;
+    el.growthDiary.innerHTML = "";
+    if (!diary.length) {
+      const empty = document.createElement("div");
+      empty.className = "diary-entry";
+      empty.textContent = "今天的故事还在写，跨天后会生成第一篇日记。";
+      el.growthDiary.appendChild(empty);
+    } else {
+      diary.slice(0, 10).forEach((entry) => {
+        const row = document.createElement("div");
+        row.className = "diary-entry";
+        const date = document.createElement("b");
+        date.textContent = entry.date;
+        row.append(date, document.createTextNode(entry.text));
+        el.growthDiary.appendChild(row);
+      });
+    }
 
     const prestige = G.prestigeStatus(state);
     el.growthPrestigeTitle.textContent = prestige.count
@@ -1707,6 +1746,14 @@
       const before = state.coins;
       G.tick(state, elapsed);
       api.syncToolState(state, toolStateRevision);
+      const currentHour = new Date().getHours();
+      if (currentHour !== lastHourlyCheck) {
+        lastHourlyCheck = currentHour;
+        if (!state.settings.dnd) {
+          playSound("clock");
+          speak(`现在是 ${currentHour} 点整`, 2200);
+        }
+      }
       coinWindow += state.coins - before;
       const isPayday = now - lastPaydayAt > 5000;
       updateHud(isPayday);
@@ -2027,6 +2074,7 @@
       stickerOpen ||
       quizOpen ||
       toolOpen ||
+      systemSleeping ||
       !el.petWrap
     );
   }
@@ -2633,6 +2681,22 @@
       Object.assign(state.settings, settings);
       updateMenu();
       scheduleSave(400);
+    });
+
+    api.onSystemIdle((payload) => {
+      const seconds = Number(payload && payload.seconds) || 0;
+      if (seconds >= 600 && !systemSleeping) {
+        systemSleeping = true;
+        if (reactionTimer) clearTimeout(reactionTimer);
+        const sleep = byName.has("sleep_curl") ? "sleep_curl" : IDLE_ACTION;
+        setAction(sleep, { force: true });
+      } else if (systemSleeping && seconds < 5) {
+        systemSleeping = false;
+        busyUntil = 0;
+        const stretch = byName.has("morning_stretch") ? "morning_stretch" : IDLE_ACTION;
+        playReaction(stretch, 2600);
+        speak("伸个懒腰……你回来啦", 2400);
+      }
     });
 
     api.onWindowMoved((bounds) => {
