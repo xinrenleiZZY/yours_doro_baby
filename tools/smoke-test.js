@@ -565,7 +565,7 @@ async function runScenarios(win) {
   );
 
   win.setSize(900, 700);
-  await wait(150);
+  await waitFor(win, `window.innerWidth > 850`, 2000, "动作库宽窗口布局");
   const wideLibrary = await js(
     win,
     `(() => {
@@ -574,12 +574,13 @@ async function runScenarios(win) {
       return {
         columns: getComputedStyle(grid).gridTemplateColumns.split(" ").length,
         itemHeight: item.getBoundingClientRect().height,
-        noOverflow: grid.scrollWidth <= grid.clientWidth + 1
+        noOverflow: grid.scrollWidth <= grid.clientWidth + 1,
+        width: window.innerWidth
       };
     })()`
   );
   win.setSize(560, 600);
-  await wait(150);
+  await waitFor(win, `window.innerWidth < 600`, 2000, "动作库窄窗口布局");
   const narrowLibrary = await js(
     win,
     `(() => {
@@ -588,7 +589,8 @@ async function runScenarios(win) {
       return {
         columns: getComputedStyle(grid).gridTemplateColumns.split(" ").length,
         itemHeight: item.getBoundingClientRect().height,
-        noOverflow: grid.scrollWidth <= grid.clientWidth + 1
+        noOverflow: grid.scrollWidth <= grid.clientWidth + 1,
+        width: window.innerWidth
       };
     })()`
   );
@@ -599,7 +601,7 @@ async function runScenarios(win) {
       narrowLibrary.itemHeight <= 84 &&
       wideLibrary.noOverflow &&
       narrowLibrary.noOverflow,
-    `宽${wideLibrary.columns}列，窄${narrowLibrary.columns}列`
+    `宽${wideLibrary.columns}列@${wideLibrary.width}px，窄${narrowLibrary.columns}列@${narrowLibrary.width}px`
   );
   win.setSize(600, 400);
   await wait(100);
@@ -1132,18 +1134,28 @@ async function runScenarios(win) {
     win,
     `(() => {
       const r = document.getElementById("work-chip").getBoundingClientRect();
-      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+      const x = r.left + r.width / 2;
+      const y = r.top + r.height / 2;
+      const top = document.elementFromPoint(x, y);
+      return {
+        x,
+        y,
+        inHud: Boolean(top && top.closest("#hud")),
+        inPet: Boolean(top && top.closest("#pet-wrap"))
+      };
     })()`
   );
   check(
-    "工作提示出现后命中框立即更新",
-    lastHitboxes.some(
-      (box) =>
-        workChipPoint.x >= box.x &&
-        workChipPoint.x <= box.x + box.w &&
-        workChipPoint.y >= box.y &&
-        workChipPoint.y <= box.y + box.h
-    ),
+    "工作提示可点击且不会被宠物拖动层覆盖",
+    workChipPoint.inHud &&
+      !workChipPoint.inPet &&
+      lastHitboxes.some(
+        (box) =>
+          workChipPoint.x >= box.x &&
+          workChipPoint.x <= box.x + box.w &&
+          workChipPoint.y >= box.y &&
+          workChipPoint.y <= box.y + box.h
+      ),
     JSON.stringify(workChipPoint)
   );
   const completedBefore = visitorWorkAfter.work.completed;

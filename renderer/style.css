@@ -33,8 +33,10 @@ body {
 
 #stage {
   position: relative;
+  z-index: 0;
   width: 100%;
   height: 100%;
+  isolation: isolate;
 }
 
 /* 动作库打开时窗口加宽，宠物留在左侧，右边是动作库 */
@@ -45,6 +47,7 @@ body.lib-open #stage {
 /* ---------------------------------------------------------------- doro 本体 */
 #pet-wrap {
   position: absolute;
+  z-index: 1;
   left: 0;
   right: 0;
   bottom: 18px;
@@ -125,6 +128,7 @@ body.lib-open #stage {
 
 #pet-label {
   position: absolute;
+  z-index: 2;
   left: 50%;
   bottom: 3px;
   translate: -50% 0;
@@ -144,6 +148,7 @@ body.lib-open #stage {
 /* ---------------------------------------------------------------- 金币 / 状态 */
 #hud {
   position: absolute;
+  z-index: 3;
   top: var(--hud-top, 8px);
   left: 8px;
   display: flex;
@@ -285,6 +290,7 @@ body.lib-open #stage {
 /* ---------------------------------------------------------------- 气泡 */
 #bubble {
   position: absolute;
+  z-index: 4;
   left: 50%;
   top: 76px;
   transform: translate(-50%, 6px);
@@ -326,6 +332,7 @@ body.lib-open #stage {
 /* ---------------------------------------------------------------- 特效层 */
 #fx {
   position: absolute;
+  z-index: 5;
   inset: 0;
   pointer-events: none;
   overflow: hidden;
