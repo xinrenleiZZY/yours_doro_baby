@@ -70,6 +70,7 @@ const calls = {
   notifications: [],
   stickerDeleted: [],
   toolOpened: [],
+  uiSizes: [],
   quit: 0,
 };
 const results = [];
@@ -176,7 +177,10 @@ function registerStubs() {
     calls.setPosition.push(pos);
     return pos;
   });
-  ipcMain.handle("win:set-ui-size", (_event, size) => size);
+  ipcMain.handle("win:set-ui-size", (_event, size) => {
+    calls.uiSizes.push(size);
+    return size;
+  });
   ipcMain.handle("win:set-click-through", (_event, value) => {
     calls.clickThrough.push(value);
     return value;
@@ -474,6 +478,56 @@ async function runScenarios(win) {
   );
   check("动作库能打开并分页展示", library.open && library.items === 12, `${library.items} 个/页`);
   check("动作库有分类标签", library.tabs >= 5, `${library.tabs} 个`);
+
+  const sizeBefore = calls.uiSizes[calls.uiSizes.length - 1];
+  await js(win, `document.getElementById("library-larger").click()`);
+  await wait(80);
+  const sizeAfter = calls.uiSizes[calls.uiSizes.length - 1];
+  check(
+    "动作库放大按钮会调整窗口尺寸",
+    sizeAfter && sizeBefore && sizeAfter.width > sizeBefore.width && sizeAfter.height > sizeBefore.height,
+    `${JSON.stringify(sizeBefore)}→${JSON.stringify(sizeAfter)}`
+  );
+
+  win.setSize(900, 700);
+  await wait(150);
+  const wideLibrary = await js(
+    win,
+    `(() => {
+      const grid = document.getElementById("library-grid");
+      const item = document.querySelector(".lib-item");
+      return {
+        columns: getComputedStyle(grid).gridTemplateColumns.split(" ").length,
+        itemHeight: item.getBoundingClientRect().height,
+        noOverflow: grid.scrollWidth <= grid.clientWidth + 1
+      };
+    })()`
+  );
+  win.setSize(560, 600);
+  await wait(150);
+  const narrowLibrary = await js(
+    win,
+    `(() => {
+      const grid = document.getElementById("library-grid");
+      const item = document.querySelector(".lib-item");
+      return {
+        columns: getComputedStyle(grid).gridTemplateColumns.split(" ").length,
+        itemHeight: item.getBoundingClientRect().height,
+        noOverflow: grid.scrollWidth <= grid.clientWidth + 1
+      };
+    })()`
+  );
+  check(
+    "动作库随窗口宽度自动换列",
+    wideLibrary.columns > narrowLibrary.columns &&
+      wideLibrary.itemHeight <= 84 &&
+      narrowLibrary.itemHeight <= 84 &&
+      wideLibrary.noOverflow &&
+      narrowLibrary.noOverflow,
+    `宽${wideLibrary.columns}列，窄${narrowLibrary.columns}列`
+  );
+  win.setSize(600, 400);
+  await wait(100);
 
   await js(
     win,

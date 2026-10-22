@@ -71,6 +71,10 @@
     toast: $("toast"),
     library: $("library"),
     libraryCount: $("library-count"),
+    librarySize: $("library-size"),
+    librarySmaller: $("library-smaller"),
+    libraryLarger: $("library-larger"),
+    libraryResize: $("library-resize"),
     librarySearch: $("library-search"),
     libraryTabs: $("library-tabs"),
     libraryGrid: $("library-grid"),
@@ -178,6 +182,7 @@
   let updateStatus = null;
   let shopTab = "食物";
   const libState = { group: "全部", query: "", page: 0 };
+  let libraryWindowSize = { width: 600, height: 400 };
   let currentAction = null;
   let activeLayer = null;
   let ambientTimer = null;
@@ -609,6 +614,16 @@
   }
 
   // ------------------------------------------------------------- 动作库
+  function resizeLibraryWindow(width, height) {
+    const next = {
+      width: Math.min(900, Math.max(560, Math.round(width))),
+      height: Math.min(700, Math.max(380, Math.round(height))),
+    };
+    libraryWindowSize = next;
+    el.librarySize.textContent = `${next.width} × ${next.height}`;
+    api.setUiSize(next);
+  }
+
   function libraryGroups() {
     return [
       "全部",
@@ -677,6 +692,7 @@
     libState.page = Math.min(Math.max(0, libState.page), pages - 1);
     const training = G.trainingProgress(state, actions);
     el.libraryCount.textContent = `${training.learned}/${training.total} 已学 · ${training.points} 训练点`;
+    el.librarySize.textContent = `${libraryWindowSize.width} × ${libraryWindowSize.height}`;
 
     el.libraryTabs.innerHTML = "";
     libraryGroups().forEach((group) => {
@@ -1303,7 +1319,7 @@
     closeMenu();
     el.panel.classList.remove("show");
     document.body.classList.add("lib-open");
-    api.setUiSize({ width: 600, height: 400 });
+    api.setUiSize(libraryOpen ? libraryWindowSize : { width: 600, height: 400 });
     el.library.classList.toggle("show", libraryOpen);
     el.shop.classList.toggle("show", shopOpen);
     el.schedule.classList.toggle("show", scheduleOpen);
@@ -2412,6 +2428,41 @@
       libState.page += 1;
       renderLibrary();
     });
+    el.librarySmaller.addEventListener("click", () => {
+      resizeLibraryWindow(libraryWindowSize.width - 80, libraryWindowSize.height - 60);
+    });
+    el.libraryLarger.addEventListener("click", () => {
+      resizeLibraryWindow(libraryWindowSize.width + 80, libraryWindowSize.height + 60);
+    });
+    let libraryResizing = null;
+    el.libraryResize.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      libraryResizing = {
+        pointerId: event.pointerId,
+        x: event.screenX,
+        y: event.screenY,
+        width: libraryWindowSize.width,
+        height: libraryWindowSize.height,
+      };
+      el.libraryResize.setPointerCapture(event.pointerId);
+    });
+    el.libraryResize.addEventListener("pointermove", (event) => {
+      if (!libraryResizing || event.pointerId !== libraryResizing.pointerId) return;
+      resizeLibraryWindow(
+        libraryResizing.width + event.screenX - libraryResizing.x,
+        libraryResizing.height + event.screenY - libraryResizing.y
+      );
+    });
+    const stopLibraryResize = (event) => {
+      if (!libraryResizing || event.pointerId !== libraryResizing.pointerId) return;
+      libraryResizing = null;
+      if (el.libraryResize.hasPointerCapture(event.pointerId))
+        el.libraryResize.releasePointerCapture(event.pointerId);
+    };
+    el.libraryResize.addEventListener("pointerup", stopLibraryResize);
+    el.libraryResize.addEventListener("pointercancel", stopLibraryResize);
+    el.libraryResize.addEventListener("dblclick", () => resizeLibraryWindow(600, 400));
     // 方向键在动作库里移动焦点，回车/空格直接选中
     el.libraryGrid.addEventListener("keydown", (event) => {
       const items = [...el.libraryGrid.querySelectorAll(".lib-item")];

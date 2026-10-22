@@ -879,11 +879,55 @@ body.lib-open #stage {
   border-color: var(--pink);
 }
 
+body.lib-open #library {
+  width: calc(100% - 306px);
+  min-width: 260px;
+  max-height: calc(100% - 20px);
+}
+
+#library header {
+  flex: none;
+}
+
+#library-size {
+  margin-left: auto;
+  font-style: normal;
+  font-size: 9px;
+  color: #b18d9f;
+  white-space: nowrap;
+}
+
+#library-smaller,
+#library-larger {
+  border-radius: 7px !important;
+  background: var(--soft-bg-2) !important;
+  color: var(--pink-deep) !important;
+  width: 20px;
+  height: 20px;
+  line-height: 1;
+}
+
+#library footer {
+  flex: none;
+}
+
+.resize-grip {
+  position: absolute;
+  right: 3px;
+  bottom: 2px;
+  color: rgba(166, 104, 134, 0.55);
+  font-size: 11px;
+  line-height: 1;
+  cursor: nwse-resize;
+  padding: 4px;
+}
+
 .lib-tabs {
   display: flex;
   flex-wrap: wrap;
   gap: 3px;
-  max-height: 46px;
+  flex: none;
+  max-height: 58px;
   overflow-y: auto;
 }
 
@@ -905,7 +949,9 @@ body.lib-open #stage {
 
 .lib-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(auto-fill, minmax(62px, 1fr));
+  grid-auto-rows: 82px;
+  align-content: start;
   gap: 5px;
   overflow-y: auto;
   flex: 1;
@@ -926,6 +972,10 @@ body.lib-open #stage {
 
 .lib-item {
   position: relative;
+  width: 100%;
+  height: 82px;
+  min-width: 0;
+  overflow: hidden;
   border: none;
   background: var(--soft-bg);
   border-radius: 10px;
@@ -943,19 +993,31 @@ body.lib-open #stage {
 }
 
 .lib-item img {
-  width: 42px;
-  height: 42px;
+  width: clamp(38px, 7vw, 58px);
+  height: clamp(38px, 7vw, 58px);
   object-fit: contain;
   pointer-events: none;
 }
 
 .lib-item span {
+  max-width: 100%;
   font-size: 8.5px;
   color: #7a5a6a;
   max-width: 56px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+@media (max-width: 560px) {
+  body.lib-open #library {
+    width: calc(100% - 306px);
+    min-width: 0;
+  }
+
+  .lib-grid {
+    grid-template-columns: repeat(auto-fill, minmax(54px, 1fr));
+  }
 }
 
 .lib-item.active {
