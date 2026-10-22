@@ -1,0 +1,10 @@
+services:
+  doro-updates:
+    build: .
+    container_name: doro-updates
+    restart: unless-stopped
+    ports:
+      - "9400:9400"
+    volumes:
+      # 只读挂载打包产物目录，重新打包后无需重启容器
+      - ../release:/usr/share/nginx/html/updates:ro

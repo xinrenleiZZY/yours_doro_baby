@@ -26,6 +26,7 @@
         <div id="event-chips">
           <span class="event-chip" id="wish-chip"></span>
           <span class="event-chip" id="visitor-chip"></span>
+          <span class="event-chip" id="quiz-chip"></span>
         </div>
       </div>
 
@@ -100,6 +101,11 @@
         <button data-cmd="gacha"><span>扭蛋机</span><em>500 / 次</em></button>
         <button data-cmd="minigame"><span>接金币</span><em>小游戏</em></button>
       </div>
+      <div class="menu-title">学习</div>
+      <div class="menu-group">
+        <button data-cmd="quiz"><span>题库答题</span><em id="menu-quiz-summary"></em></button>
+        <button data-cmd="daily-question"><span>每日一题</span><em>答对 +100</em></button>
+      </div>
       <div class="menu-title">设置</div>
       <div class="menu-group">
         <button data-cmd="config"><span>配置中心</span><em>频率 / 大小</em></button>
@@ -166,10 +172,42 @@
         <button data-toggle="followCursor"><span>跟随鼠标</span><i class="switch"></i></button>
         <button data-toggle="dnd"><span>勿扰模式</span><i class="switch"></i></button>
       </div>
+      <div class="cfg-section">
+        <div class="cfg-label"><span>题库服务地址</span><b id="cfg-quiz-status">未连接</b></div>
+        <input id="cfg-quiz-api" class="cfg-input" type="url" placeholder="http://192.168.0.193:9300" />
+        <div class="cfg-presets">
+          <button id="cfg-quiz-save">保存并测试</button>
+          <button id="cfg-quiz-refresh">刷新题库缓存</button>
+        </div>
+        <p class="cfg-hint">局域网题库服务；请求与判卷都在主进程，答案不会下发到界面。</p>
+      </div>
+      <div class="cfg-section">
+        <div class="cfg-label"><span>更新源</span><b id="cfg-update-status">未检查</b></div>
+        <input
+          id="cfg-update-feed"
+          class="cfg-input"
+          type="url"
+          placeholder="http://192.168.0.193:9400/updates"
+        />
+        <div class="cfg-presets">
+          <button id="cfg-update-save">保存</button>
+          <button id="cfg-update-check">立即检查更新</button>
+        </div>
+        <button data-toggle="updateAutoCheck"><span>每天 08:00 自动检查</span><i class="switch"></i></button>
+      </div>
       <div class="cfg-footer">
         <span class="cfg-hint">修改立即生效并自动保存</span>
         <button id="cfg-reset">恢复默认</button>
       </div>
+    </div>
+
+    <div id="quiz" class="interactive" role="dialog" aria-label="题库">
+      <header>
+        <span>题库 <em id="quiz-subtitle"></em></span>
+        <em id="quiz-coins">0 金币</em>
+        <button id="quiz-close" title="收起">✕</button>
+      </header>
+      <div id="quiz-body"></div>
     </div>
 
     <div id="growth" class="interactive" role="dialog" aria-label="任务与成就">
@@ -260,6 +298,7 @@
     <div id="toast"></div>
 
     <script src="game.js"></script>
+    <script src="quiz.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

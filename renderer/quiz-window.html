@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; img-src 'self' data: file:; style-src 'self' 'unsafe-inline' file:; script-src 'self' file:;"
+    />
+    <title>doro 题库</title>
+    <link rel="stylesheet" href="style.css" />
+    <link rel="stylesheet" href="quiz-window.css" />
+  </head>
+  <body class="quiz-window">
+    <div id="quiz" class="interactive" role="dialog" aria-label="题库">
+      <header>
+        <span>题库 <em id="quiz-subtitle"></em></span>
+        <em id="quiz-coins">0 金币</em>
+        <button id="quiz-close" title="关闭">✕</button>
+      </header>
+      <div id="quiz-body"></div>
+    </div>
+    <div id="quiz-toast"></div>
+    <script src="game.js"></script>
+    <script src="quiz.js"></script>
+    <script src="quiz-window.js"></script>
+  </body>
+</html>

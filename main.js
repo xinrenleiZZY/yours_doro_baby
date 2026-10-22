@@ -19,19 +19,26 @@ const path = require("path");
 const { SAVE_MAX_BYTES, sanitizeSave } = require("./lib/save-schema");
 const { sanitizeHitboxes, computeIgnore } = require("./lib/pointer");
 const { sanitizeNotification } = require("./lib/notify");
+const { QuizService } = require("./lib/quiz-api");
+const { UpdaterService } = require("./lib/updater");
 
 const WINDOW_SIZE = { width: 320, height: 360 };
+// 答题窗口：独立、不透明、可拖动，避免撑大透明的宠物窗口
+const QUIZ_WINDOW_SIZE = { width: 640, height: 720 };
 const USER_DATA = app.getPath("userData");
 const SAVE_FILE = path.join(USER_DATA, "save.json");
 const SESSION_FILE = path.join(USER_DATA, "session.json");
 const LOG_DIR = path.join(USER_DATA, "logs");
 const LOG_FILE = path.join(LOG_DIR, "main.log");
+const QUIZ_CACHE_FILE = path.join(USER_DATA, "quiz-cache.json");
+const QUIZ_EXAM_FILE = path.join(USER_DATA, "quiz-exam.json");
 const LOG_MAX_BYTES = 1024 * 1024;
 const DEV = process.argv.includes("--dev");
 // 调试鼠标穿透时可以设 DORO_TRACE_HOVER=1，把每次穿透状态变化写进日志
 const TRACE_HOVER = process.env.DORO_TRACE_HOVER === "1";
 
 let win = null;
+let quizWin = null;
 let tray = null;
 let saveTimer = null;
 let crashedLastTime = false;
@@ -44,6 +51,86 @@ const runtime = {
   clickThrough: true,
   autoLaunch: false,
 };
+
+const quizService = new QuizService({
+  cacheFile: QUIZ_CACHE_FILE,
+  examFile: QUIZ_EXAM_FILE,
+  log,
+});
+let updater = null;
+let updateTimer = null;
+
+/** 每天 08:00 自动检查一次更新；错过的日子不补检。 */
+function scheduleDailyUpdateCheck() {
+  if (updateTimer) clearTimeout(updateTimer);
+  const now = new Date();
+  const next = new Date(now);
+  next.setHours(8, 0, 0, 0);
+  if (next.getTime() <= now.getTime()) next.setDate(next.getDate() + 1);
+  updateTimer = setTimeout(() => {
+    checkUpdateIfEnabled(false);
+    scheduleDailyUpdateCheck();
+  }, next.getTime() - now.getTime());
+  if (updateTimer.unref) updateTimer.unref();
+}
+
+function settingsOfSave() {
+  const save = readSave();
+  return save && save.settings && typeof save.settings === "object" ? save.settings : {};
+}
+
+function checkUpdateIfEnabled(manual) {
+  if (!updater) return { state: "error", message: "更新服务未初始化" };
+  if (!manual && settingsOfSave().updateAutoCheck === false) return updater.snapshot();
+  updater.check({ manual });
+  return updater.snapshot();
+}
+
+function initUpdater() {
+  const settings = settingsOfSave();
+  updater = new UpdaterService({
+    feedUrl: settings.updateFeedUrl,
+    log,
+    onStatus: (status) => {
+      send("app:update-status", status);
+      buildTrayMenu();
+    },
+  });
+  updater.init();
+  scheduleDailyUpdateCheck();
+  // 启动后延迟检查，避免和窗口初始化抢资源
+  setTimeout(() => checkUpdateIfEnabled(false), 20 * 1000);
+}
+
+/** 托盘里的更新菜单项：发现新版本 → 下载并安装。 */
+function updateMenuItem() {
+  const status = updater ? updater.snapshot() : { state: "error", message: "更新服务未初始化" };
+  if (status.state === "available") {
+    return {
+      label: `发现新版本 v${status.version || ""}，点击更新`,
+      click: async () => {
+        await updater.download();
+        if (updater.snapshot().state === "downloaded") updater.install();
+      },
+    };
+  }
+  if (status.state === "downloading") {
+    return { label: `正在下载更新 ${status.percent || 0}%`, enabled: false };
+  }
+  if (status.state === "downloaded") {
+    return { label: `重启并安装 v${status.version || ""}`, click: () => updater.install() };
+  }
+  if (status.state === "checking") {
+    return { label: "正在检查更新…", enabled: false };
+  }
+  if (status.state === "dev") {
+    return { label: "检查更新（开发模式）", click: () => checkUpdateIfEnabled(true) };
+  }
+  return {
+    label: status.state === "error" ? "检查更新（上次失败，重试）" : "检查更新",
+    click: () => checkUpdateIfEnabled(true),
+  };
+}
 
 // 点击穿透的命中判定：渲染进程上报"哪些矩形区域需要接收鼠标"，
 // 主进程轮询光标位置决定是否穿透。
@@ -366,6 +453,68 @@ function toggleWindow() {
   buildTrayMenu();
 }
 
+// ---------------------------------------------------------------- 答题窗口
+function createQuizWindow(mode) {
+  log("info", "创建答题窗口", { mode: mode || "home" });
+  if (quizWin && !quizWin.isDestroyed()) {
+    quizWin.show();
+    quizWin.focus();
+    if (mode) quizWin.webContents.send("quiz-window:command", { mode });
+    return quizWin;
+  }
+  const area = screen.getPrimaryDisplay().workArea;
+  const width = Math.min(QUIZ_WINDOW_SIZE.width, area.width - 40);
+  const height = Math.min(QUIZ_WINDOW_SIZE.height, area.height - 40);
+  quizWin = new BrowserWindow({
+    width,
+    height,
+    x: area.x + Math.round((area.width - width) / 2),
+    y: area.y + Math.round((area.height - height) / 2),
+    frame: false,
+    transparent: false,
+    resizable: true,
+    minimizable: true,
+    maximizable: false,
+    skipTaskbar: false,
+    alwaysOnTop: true,
+    show: false,
+    backgroundColor: "#fff7f2",
+    title: "doro 题库",
+    webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  quizWin.setAlwaysOnTop(true, "floating");
+  quizWin.setMenuBarVisibility(false);
+  quizWin.webContents.on("did-finish-load", () => log("info", "答题窗口加载完成"));
+  quizWin.webContents.on("did-fail-load", (_e, code, description, url) => {
+    log("error", "答题窗口加载失败", { code, description, url });
+  });
+  quizWin.loadFile(
+    path.join(__dirname, "renderer", "quiz-window.html"),
+    mode ? { query: { mode: String(mode) } } : undefined
+  );
+  quizWin.once("ready-to-show", () => {
+    if (!quizWin) return;
+    quizWin.show();
+    quizWin.focus();
+    log("info", "答题窗口 ready", {
+      bounds: quizWin.getBounds(),
+      visible: quizWin.isVisible(),
+      onTop: quizWin.isAlwaysOnTop(),
+    });
+    if (mode) quizWin.webContents.send("quiz-window:command", { mode });
+  });
+  quizWin.on("closed", () => {
+    quizWin = null;
+    send("quiz:state", { open: false });
+  });
+  send("quiz:state", { open: true });
+  return quizWin;
+}
+
 // ---------------------------------------------------------------- 托盘
 function buildTrayMenu() {
   if (!tray) return;
@@ -419,6 +568,8 @@ function buildTrayMenu() {
     { label: "打开存档文件夹", click: () => shell.showItemInFolder(SAVE_FILE) },
     { label: "打开日志", click: () => shell.openPath(LOG_FILE) },
     { type: "separator" },
+    updateMenuItem(),
+    { type: "separator" },
     {
       label: "退出 doro",
       click: () => {
@@ -448,6 +599,9 @@ function registerIpc() {
     const save = readSave();
     const login = app.getLoginItemSettings();
     runtime.autoLaunch = Boolean(login.openAtLogin);
+    const settings = save && save.settings && typeof save.settings === "object" ? save.settings : {};
+    quizService.configure({ baseUrl: settings.quizApiBase });
+    if (updater && settings.updateFeedUrl) updater.setFeedUrl(settings.updateFeedUrl);
     return {
       save,
       now: Date.now(),
@@ -455,6 +609,8 @@ function registerIpc() {
       savePath: SAVE_FILE,
       logPath: LOG_FILE,
       crashedLastTime,
+      version: app.getVersion(),
+      quiz: quizService.status(),
     };
   });
 
@@ -464,8 +620,115 @@ function registerIpc() {
       log("warn", "拒绝写入非法存档");
       return { ok: false, error: "invalid-save" };
     }
+    quizService.configure({ baseUrl: clean.settings.quizApiBase });
+    if (updater) updater.setFeedUrl(clean.settings.updateFeedUrl);
     return writeSave(clean);
   });
+
+  // ---- 题库（网络与判卷都在主进程） ------------------------------------
+  ipcMain.handle("quiz:exams", async (_event, options) => {
+    try {
+      return await quizService.listExams({ force: Boolean(options && options.force) });
+    } catch (err) {
+      log("warn", "获取题库科目失败", err.message);
+      return { error: err.code || "OFFLINE", message: err.message };
+    }
+  });
+
+  ipcMain.handle("quiz:create", async (_event, payload) => {
+    try {
+      return await quizService.createSession(payload || {});
+    } catch (err) {
+      log("warn", "创建答题会话失败", err.message);
+      return { error: err.code || "FAILED", message: err.message };
+    }
+  });
+
+  ipcMain.handle("quiz:answer", (_event, payload) => {
+    try {
+      return quizService.gradeAnswer(
+        payload && payload.token,
+        payload && payload.questionId,
+        payload && payload.choice
+      );
+    } catch (err) {
+      log("warn", "单题判卷失败", err.message);
+      return { error: err.code || "FAILED", message: err.message };
+    }
+  });
+
+  ipcMain.handle("quiz:grade", (_event, payload) => {
+    try {
+      return quizService.grade(payload && payload.token, payload && payload.answers);
+    } catch (err) {
+      log("warn", "答题判卷失败", err.message);
+      return { error: err.code || "FAILED", message: err.message };
+    }
+  });
+
+  ipcMain.handle("quiz:exam-status", () => quizService.examStatus());
+
+  ipcMain.handle("quiz:exam-resume", () => {
+    try {
+      return quizService.resumeExam();
+    } catch (err) {
+      return { error: err.code || "NO_EXAM", message: err.message };
+    }
+  });
+
+  ipcMain.handle("quiz:exam-abandon", () => quizService.abandonExam());
+
+  // ---- 独立答题窗口 ----------------------------------------------------
+  ipcMain.handle("quiz-ui:open", (_event, payload) => {
+    createQuizWindow(payload && payload.mode);
+    return true;
+  });
+
+  ipcMain.handle("quiz-ui:snapshot", () => ({ save: readSave(), now: Date.now() }));
+
+  ipcMain.handle("quiz-ui:apply", (_event, payload) => {
+    if (!payload || typeof payload !== "object") return false;
+    send("pet:quiz-apply", payload);
+    return true;
+  });
+
+  ipcMain.handle("quiz-ui:speak", (_event, payload) => {
+    if (!payload || typeof payload !== "object") return false;
+    send("pet:quiz-speak", {
+      text: String(payload.text || "").slice(0, 80),
+      ms: Math.min(8000, Math.max(600, Number(payload.ms) || 2000)),
+    });
+    return true;
+  });
+
+  ipcMain.handle("quiz-ui:resize", (_event, size) => {
+    if (!quizWin || !size || typeof size !== "object") return null;
+    const bounds = quizWin.getBounds();
+    const area = screen.getDisplayNearestPoint({
+      x: bounds.x + bounds.width / 2,
+      y: bounds.y + bounds.height / 2,
+    }).workArea;
+    const width = Math.min(Math.max(520, Math.round(Number(size.width) || 640)), area.width - 20);
+    const height = Math.min(Math.max(480, Math.round(Number(size.height) || 640)), area.height - 20);
+    const x = Math.min(Math.max(area.x + 10, bounds.x), area.x + area.width - width - 10);
+    const y = Math.min(Math.max(area.y + 10, bounds.y), area.y + area.height - height - 10);
+    quizWin.setBounds({ x, y, width, height });
+    return quizWin.getBounds();
+  });
+
+  ipcMain.handle("quiz-ui:close", () => {
+    if (quizWin) quizWin.close();
+    return true;
+  });
+
+  // ---- 应用更新 --------------------------------------------------------
+  ipcMain.handle("app:update-check", (_event, feedUrl) => {
+    if (updater && feedUrl) updater.setFeedUrl(feedUrl);
+    return checkUpdateIfEnabled(true);
+  });
+  ipcMain.handle("app:update-download", async () => (updater ? updater.download() : null));
+  ipcMain.handle("app:update-install", () => (updater ? updater.install() : false));
+  ipcMain.handle("app:update-status", () => (updater ? updater.snapshot() : null));
 
   ipcMain.handle("pet:actions", () => {
     try {
@@ -615,7 +878,10 @@ if (!gotLock) {
     beginSession();
     registerIpc();
     createWindow();
+    initUpdater();
     createTray();
+    const quizArg = process.argv.find((arg) => arg.startsWith("--quiz="));
+    if (quizArg) setTimeout(() => createQuizWindow(quizArg.split("=")[1]), 1200);
     const shortcutToggle = globalShortcut.register("CommandOrControl+Alt+D", () => toggleWindow());
     const shortcutSummon = globalShortcut.register("CommandOrControl+Alt+R", () => summonToCursor());
     log("info", "注册全局快捷键", { toggle: shortcutToggle, summon: shortcutSummon });
@@ -638,5 +904,6 @@ if (!gotLock) {
 
   app.on("will-quit", () => {
     globalShortcut.unregisterAll();
+    if (updateTimer) clearTimeout(updateTimer);
   });
 }

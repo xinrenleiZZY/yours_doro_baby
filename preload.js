@@ -38,4 +38,32 @@ contextBridge.exposeInMainWorld("petAPI", {
   onWindowMoved: (handler) => on("pet:window-moved", handler),
   onCursor: (handler) => on("pet:cursor", handler),
   onNotice: (handler) => on("pet:notice", handler),
+
+  // 题库：网络与判卷都在主进程，渲染进程只拿无答案题面。
+  quizExams: (options) => ipcRenderer.invoke("quiz:exams", options),
+  quizCreate: (payload) => ipcRenderer.invoke("quiz:create", payload),
+  quizAnswer: (payload) => ipcRenderer.invoke("quiz:answer", payload),
+  quizGrade: (payload) => ipcRenderer.invoke("quiz:grade", payload),
+  quizExamStatus: () => ipcRenderer.invoke("quiz:exam-status"),
+  quizExamResume: () => ipcRenderer.invoke("quiz:exam-resume"),
+  quizExamAbandon: () => ipcRenderer.invoke("quiz:exam-abandon"),
+
+  // 独立答题窗口
+  openQuizWindow: (mode) => ipcRenderer.invoke("quiz-ui:open", { mode }),
+  quizSnapshot: () => ipcRenderer.invoke("quiz-ui:snapshot"),
+  quizApply: (payload) => ipcRenderer.invoke("quiz-ui:apply", payload),
+  quizResize: (size) => ipcRenderer.invoke("quiz-ui:resize", size),
+  quizClose: () => ipcRenderer.invoke("quiz-ui:close"),
+  quizSpeak: (text, ms) => ipcRenderer.invoke("quiz-ui:speak", { text, ms }),
+  onQuizState: (handler) => on("quiz:state", handler),
+  onQuizCommand: (handler) => on("quiz-window:command", handler),
+  onQuizApply: (handler) => on("pet:quiz-apply", handler),
+  onQuizSpeak: (handler) => on("pet:quiz-speak", handler),
+
+  // 应用更新
+  updateCheck: (feedUrl) => ipcRenderer.invoke("app:update-check", feedUrl),
+  updateDownload: () => ipcRenderer.invoke("app:update-download"),
+  updateInstall: () => ipcRenderer.invoke("app:update-install"),
+  updateStatus: () => ipcRenderer.invoke("app:update-status"),
+  onUpdateStatus: (handler) => on("app:update-status", handler),
 });

@@ -4,6 +4,7 @@
 
   const G = window.DoroGame;
   const api = window.petAPI;
+  const DoroQuiz = window.DoroQuiz;
   // 冒烟测试用 ?test=1 打开：关掉自动计时，并暴露少量只读/操作钩子
   const TEST_MODE = new URLSearchParams(location.search).has("test");
 
@@ -37,6 +38,17 @@
     chipMood: $("chip-mood"),
     wishChip: $("wish-chip"),
     visitorChip: $("visitor-chip"),
+    quizChip: $("quiz-chip"),
+    quiz: $("quiz"),
+    menuQuizSummary: $("menu-quiz-summary"),
+    cfgQuizApi: $("cfg-quiz-api"),
+    cfgQuizStatus: $("cfg-quiz-status"),
+    cfgQuizSave: $("cfg-quiz-save"),
+    cfgQuizRefresh: $("cfg-quiz-refresh"),
+    cfgUpdateFeed: $("cfg-update-feed"),
+    cfgUpdateStatus: $("cfg-update-status"),
+    cfgUpdateSave: $("cfg-update-save"),
+    cfgUpdateCheck: $("cfg-update-check"),
     panel: $("panel"),
     panelCoins: $("panel-coins"),
     panelIncome: $("panel-income"),
@@ -128,6 +140,8 @@
   let growthOpen = false;
   let gachaOpen = false;
   let minigameOpen = false;
+  let quizOpen = false;
+  let updateStatus = null;
   let shopTab = "食物";
   const libState = { group: "全部", query: "", page: 0 };
   let currentAction = null;
@@ -277,6 +291,16 @@
     } else {
       el.visitorChip.classList.remove("show");
     }
+
+    if (el.quizChip) {
+      const quizEvent = G.quizEventStatus(state, Date.now());
+      if (quizEvent.available) {
+        el.quizChip.textContent = "📚 题库事件：答对 +100（去答题）";
+        el.quizChip.classList.add("show", "quiz");
+      } else {
+        el.quizChip.classList.remove("show");
+      }
+    }
   }
 
   function noteAction(action) {
@@ -338,6 +362,7 @@
       add(el.growth, 4);
       add(el.gacha, 4);
       add(el.minigame, 4);
+      add(el.quiz, 4);
       api.setHitboxes(boxes);
     }, 30);
   }
@@ -501,6 +526,10 @@
         G.achievementList(state).filter((item) => item.ready && !item.claimed).length;
       el.menuTaskCount.textContent = readyCount ? `${readyCount} 可领` : "";
     }
+    if (el.menuQuizSummary) {
+      const daily = G.quizDailyStatus(state, Date.now());
+      el.menuQuizSummary.textContent = daily.done ? "今日已答" : "今日未答";
+    }
   }
 
   // ------------------------------------------------------------- 动作库
@@ -647,6 +676,29 @@
     el.config.querySelectorAll("[data-toggle]").forEach((button) => {
       button.classList.toggle("on", Boolean(settings[button.dataset.toggle]));
     });
+    if (el.cfgQuizApi) el.cfgQuizApi.value = settings.quizApiBase || "";
+    if (el.cfgUpdateFeed) el.cfgUpdateFeed.value = settings.updateFeedUrl || "";
+    renderUpdateStatus();
+  }
+
+  function renderUpdateStatus() {
+    if (!el.cfgUpdateStatus) return;
+    const status = updateStatus;
+    if (!status) {
+      el.cfgUpdateStatus.textContent = "尚未检查更新";
+      return;
+    }
+    const labels = {
+      dev: "开发模式（打包后可用）",
+      idle: "等待检查",
+      checking: "正在检查更新…",
+      available: `发现新版本 v${status.version || ""}`,
+      "not-available": "已是最新版本",
+      downloading: `正在下载 ${status.percent || 0}%`,
+      downloaded: `v${status.version || ""} 已下载，重启后安装`,
+      error: `检查失败：${status.message || "未知错误"}`,
+    };
+    el.cfgUpdateStatus.textContent = labels[status.state] || status.state;
   }
 
   function growthRow(options) {
@@ -838,6 +890,10 @@
   }
 
   function openSidePanel(name) {
+    if (name === "quiz") {
+      openQuizWindow("home");
+      return;
+    }
     libraryOpen = name === "library";
     shopOpen = name === "shop";
     scheduleOpen = name === "schedule";
@@ -895,6 +951,13 @@
     el.gacha.classList.remove("show");
     el.minigame.classList.remove("show");
     reportHitboxes();
+  }
+
+  async function openQuizWindow(mode) {
+    await saveNow();
+    closeMenu();
+    closeSidePanels();
+    await api.openQuizWindow(mode || "home");
   }
 
   function openLibrary() {
@@ -1348,6 +1411,7 @@
       analytics: "本地统计",
       followCursor: "跟随鼠标",
       dnd: "勿扰模式",
+      updateAutoCheck: "每日自动检查更新",
     };
     toast(`${labels[key] || key}：${state.settings[key] ? "开" : "关"}`);
   }
@@ -1535,6 +1599,7 @@
       growthOpen ||
       gachaOpen ||
       minigameOpen ||
+      quizOpen ||
       !el.petWrap
     );
   }
@@ -1637,8 +1702,15 @@
       if (!event.target.closest) return;
       if (!event.target.closest("#menu") && !event.target.closest("#pet-wrap")) closeMenu();
       if (
-        (libraryOpen || shopOpen || scheduleOpen || configOpen || growthOpen || gachaOpen || minigameOpen) &&
-        !event.target.closest("#library, #shop, #schedule, #config, #growth, #gacha, #minigame") &&
+        (libraryOpen ||
+          shopOpen ||
+          scheduleOpen ||
+          configOpen ||
+          growthOpen ||
+          gachaOpen ||
+          minigameOpen ||
+          quizOpen) &&
+        !event.target.closest("#library, #shop, #schedule, #config, #growth, #gacha, #minigame, #quiz") &&
         !event.target.closest("#pet-wrap")
       ) {
         closeSidePanels();
@@ -1678,7 +1750,10 @@
       else if (cmd === "growth") openSidePanel("growth");
       else if (cmd === "gacha") openSidePanel("gacha");
       else if (cmd === "minigame") openSidePanel("minigame");
-      else if (cmd === "clear-base") {
+      else if (cmd === "quiz") openQuizWindow("home");
+      else if (cmd === "daily-question") {
+        openQuizWindow("daily");
+      } else if (cmd === "clear-base") {
         baseAction = IDLE_ACTION;
         setAction(baseAction, { force: true });
         updateMenu();
@@ -1693,7 +1768,16 @@
     });
 
     el.coinPill.addEventListener("click", () => {
-      if (libraryOpen || shopOpen || scheduleOpen || configOpen || growthOpen || gachaOpen || minigameOpen) {
+      if (
+        libraryOpen ||
+        shopOpen ||
+        scheduleOpen ||
+        configOpen ||
+        growthOpen ||
+        gachaOpen ||
+        minigameOpen ||
+        quizOpen
+      ) {
         closeSidePanels();
       }
       el.panel.classList.toggle("show");
@@ -1712,6 +1796,17 @@
       noteAction(action);
       speak(`这是「${action.label}」`, 1800);
     });
+
+    if (el.quizChip) {
+      el.quizChip.addEventListener("click", () => {
+        const quizEvent = G.quizEventStatus(state, Date.now());
+        if (!quizEvent.available) {
+          toast("答题事件还在冷却中");
+          return;
+        }
+        openQuizWindow("event");
+      });
+    }
 
     el.visitorChip.addEventListener("click", () => {
       const visitor = G.acceptVisitor(state, Date.now());
@@ -1840,6 +1935,57 @@
       reportHitboxes();
       scheduleSave(500);
     });
+
+    const probeQuiz = async (force) => {
+      if (el.cfgQuizStatus) el.cfgQuizStatus.textContent = "正在连接题库…";
+      const res = await api.quizExams({ force: Boolean(force) });
+      if (!el.cfgQuizStatus) return;
+      if (res && res.error) {
+        el.cfgQuizStatus.textContent = `连接失败：${res.message || res.error}`;
+      } else if (res && Array.isArray(res.exams)) {
+        el.cfgQuizStatus.textContent = `已连接，共 ${res.exams.length} 个题库${res.cached ? "（缓存）" : ""}`;
+      }
+    };
+    if (el.cfgQuizSave) {
+      el.cfgQuizSave.addEventListener("click", async () => {
+        const raw = (el.cfgQuizApi.value || "").trim().replace(/\/+$/, "");
+        if (!/^https?:\/\/\S+$/i.test(raw)) {
+          toast("题库地址需要以 http:// 或 https:// 开头");
+          return;
+        }
+        state.settings.quizApiBase = raw;
+        scheduleSave(200);
+        await probeQuiz(true);
+        if (quizOpen) DoroQuiz.refresh();
+      });
+    }
+    if (el.cfgQuizRefresh) el.cfgQuizRefresh.addEventListener("click", () => probeQuiz(true));
+    if (el.cfgUpdateSave) {
+      el.cfgUpdateSave.addEventListener("click", () => {
+        const raw = (el.cfgUpdateFeed.value || "").trim().replace(/\/+$/, "");
+        if (!/^https?:\/\/\S+$/i.test(raw)) {
+          toast("更新源需要以 http:// 或 https:// 开头");
+          return;
+        }
+        state.settings.updateFeedUrl = raw;
+        scheduleSave(200);
+        toast("更新源已保存");
+      });
+    }
+    if (el.cfgUpdateCheck) {
+      el.cfgUpdateCheck.addEventListener("click", async () => {
+        const raw = (el.cfgUpdateFeed.value || "").trim().replace(/\/+$/, "");
+        if (raw) state.settings.updateFeedUrl = raw;
+        scheduleSave(200);
+        updateStatus = await api.updateCheck(raw || undefined);
+        renderUpdateStatus();
+      });
+    }
+    api.onUpdateStatus((status) => {
+      updateStatus = status;
+      renderUpdateStatus();
+      if (configOpen) renderConfig();
+    });
     el.config.querySelectorAll("[data-ambient]").forEach((button) => {
       button.addEventListener("click", () => {
         el.cfgAmbient.value = button.dataset.ambient;
@@ -1908,6 +2054,28 @@
       speak(payload.text, 3200);
     });
 
+    api.onQuizState((payload) => {
+      quizOpen = Boolean(payload && payload.open);
+      if (quizOpen) {
+        closeMenu();
+        closeSidePanels();
+      }
+      updateMenu();
+    });
+
+    api.onQuizApply((payload) => {
+      if (!payload || typeof payload !== "object") return;
+      G.completeQuiz(state, payload);
+      updateHud(0);
+      updateMenu();
+      scheduleSave(500);
+    });
+
+    api.onQuizSpeak((payload) => {
+      if (!payload || !payload.text) return;
+      speak(payload.text, payload.ms || 2000);
+    });
+
     window.addEventListener("beforeunload", () => {
       saveNow();
     });
@@ -1942,6 +2110,29 @@
       : (actions.find((action) => action.category === "walk") || actions[0]).name;
     baseAction = byName.has(state.settings.baseAction) ? state.settings.baseAction : IDLE_ACTION;
     if (!G.isUnlocked(state, byName.get(baseAction))) baseAction = IDLE_ACTION;
+
+    DoroQuiz.configure({
+      getState: () => state,
+      api,
+      setUiSize: (size) => api.setUiSize(size),
+      toast,
+      speak,
+      floatText,
+      playSound,
+      save: (delay) => scheduleSave(delay),
+      updateHud: () => updateHud(0),
+      updateMenu,
+      closePanels: () => {
+        quizOpen = false;
+        el.quiz.classList.remove("show");
+        if (DoroQuiz) DoroQuiz.close();
+        closeSidePanels();
+      },
+    });
+    api.updateStatus().then((status) => {
+      updateStatus = status;
+      renderUpdateStatus();
+    });
 
     wireEvents();
     setAction(baseAction, { force: true });
@@ -1986,6 +2177,20 @@
 
     if (TEST_MODE) {
       // 只给 tools/smoke-test.js 用；正常启动不会挂这个钩子
+      const openQuizPanel = () => {
+        closeMenu();
+        quizOpen = true;
+        document.body.classList.add("lib-open");
+        el.quiz.classList.add("show");
+        DoroQuiz.openHome();
+        reportHitboxes();
+      };
+      const closeQuizPanel = () => {
+        quizOpen = false;
+        el.quiz.classList.remove("show");
+        if (DoroQuiz) DoroQuiz.close();
+        reportHitboxes();
+      };
       window.__doroTest = {
         getState: () => JSON.parse(JSON.stringify(state)),
         currentAction: () => currentAction,
@@ -2011,6 +2216,12 @@
         openGrowth: () => openSidePanel("growth"),
         openGacha: () => openSidePanel("gacha"),
         openMinigame: () => openSidePanel("minigame"),
+        openQuiz: openQuizPanel,
+        startQuizMode: (mode) => {
+          openQuizPanel();
+          return DoroQuiz.startMode(mode);
+        },
+        quizOpen: () => quizOpen,
         forceWish: () => {
           G.createWish(state, Date.now());
           updateEventChips();
@@ -2019,7 +2230,10 @@
           G.spawnVisitor(state, Date.now());
           updateEventChips();
         },
-        closePanels: closeSidePanels,
+        closePanels: () => {
+          closeQuizPanel();
+          closeSidePanels();
+        },
       };
       document.documentElement.dataset.doroReady = "1";
       if (loaded.crashedLastTime) speak("上次好像摔了一跤……", 3000);

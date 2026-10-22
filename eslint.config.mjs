@@ -27,6 +27,8 @@ const nodeGlobals = {
   __dirname: "readonly",
   __filename: "readonly",
   Buffer: "readonly",
+  URL: "readonly",
+  setImmediate: "readonly",
   setTimeout: "readonly",
   clearTimeout: "readonly",
   setInterval: "readonly",

@@ -14,6 +14,8 @@
 - **扭蛋 / 存钱罐 / 接金币**：500 金币抽一次（金币 / 食物玩具 / 未解锁装扮 / 主题）；金币可存 8 小时吃 15% 利息；15 秒接金币小游戏，冷却 5 分钟。
 - **访客 / 房间 / 伙伴**：小猫、鸽子或另一只 doro 会定期来访，点一下接待拿奖励；商城可买家具有永久产出加成；领养伙伴 doro 会出现在桌面上并 +8% 产出。
 - **日程表**：按时间添加提醒（每天 / 工作日 / 周末 / 仅一次，最多 20 条），支持延后 10 分钟；到点 doro 会说话 + 播放动作 + 弹系统通知，点击通知唤出宠物。
+- **题库答题**：右键菜单 →「学习」进入题库。每日一题（答对 +100 / 答错不扣）、随堂小测 10 题（对 +100 / 错 -10）、随机刷题（对 +100 / 错 -10）、答题事件（对 +100 / 错不扣，冷却 20 分钟）、模拟考试（150 分钟 / 75 题，可续考）。默认题库「系统架构设计师」，可在题库面板切换，服务地址在配置中心修改。取题与判卷都在主进程，客户端拿不到答案。
+- **自动更新**：局域网 Docker 静态源（`update-server/`，端口 9400）。每天 08:00 与启动后自动检查，托盘出现「发现新版本 vX，点击更新」后点击即下载并安装；也可在配置中心手动检查。
 - **本地统计**：可选开启，记录累计天数、今日在线时长、会话次数，只存本机不上传。
 - **配置中心**：动作频率（5–600 秒，默认 60 秒 ±25%）、自动散步间隔、宠物大小（70%–150%）、安全模式、音效、气泡 / 散步 / 穿透 / 置顶开关，支持恢复默认，改动即时生效并自动保存。
 - **离线收益**：关掉以后再打开，按离线时长 5 折结算，最多结算 8 小时。
@@ -72,7 +74,7 @@ npm run dev      # 带 DevTools 启动
 | `npm start`                               | 启动                                             |
 | `npm run dev`                             | 启动并打开 DevTools                              |
 | `npm test`                                | 单元测试 + 界面冒烟测试                          |
-| `npm run test:unit`                       | 只跑经济 / 存档逻辑测试                          |
+| `npm run test:unit`                       | 只跑经济 / 题库 / 存档逻辑测试                   |
 | `npm run test:smoke`                      | 只跑界面冒烟测试（会开一个隐藏窗口）             |
 | `npm run lint` / `npm run lint:fix`       | ESLint 检查 / 自动修复                           |
 | `npm run format` / `npm run format:check` | Prettier 格式化 / 校验                           |
@@ -89,12 +91,24 @@ npm run dev      # 带 DevTools 启动
 
 ```powershell
 npm run pack   # 免安装目录：release/win-unpacked/
-npm run dist   # NSIS 安装包：release/doro_dz 桌面宠物 Setup 0.1.0.exe
+npm run dist   # NSIS 安装包：release/doro_dz 桌面宠物 Setup 0.2.0.exe
 ```
 
-安装包约 158MB（Electron 44 基线 + 49MB 动作资源），未做代码签名；`package.json` 里
-`build.publish.url` 是占位地址，接更新服务时替换。原始 `doro_dz/` GIF 未纳入 git（约 246MB），
-保留在本地用于重建资源。
+安装包约 158MB（Electron 44 基线 + 49MB 动作资源），未做代码签名。
+
+## 更新发布
+
+`package.json` 的 `build.publish` 指向局域网更新源 `http://192.168.0.193:9400/updates`。
+发布新版本的步骤：
+
+1. 提升 `package.json` 的 `version`；
+2. `npm run dist` 生成 `release/`（含 `latest.yml` 与安装包）；
+3. 启动更新服务：`cd update-server && docker compose up -d --build`；
+4. 客户端每天 08:00 自动检查，托盘「发现新版本」点击即自动下载安装。
+
+详细说明见 [`update-server/README.md`](update-server/README.md)。
+
+原始 `doro_dz/` GIF 未纳入 git（约 246MB），保留在本地用于重建资源。
 
 ## 目录结构
 
@@ -102,10 +116,13 @@ npm run dist   # NSIS 安装包：release/doro_dz 桌面宠物 Setup 0.1.0.exe
 main.js              主进程：窗口、托盘、存档、日志、IPC
 preload.js           唯一桥接层（contextIsolation）
 lib/save-schema.js   存档白名单与数值夹取（主进程与测试共用）
+lib/quiz-api.js      题库客户端 / 会话缓存 / 判卷（只在主进程运行）
+lib/updater.js       electron-updater 封装（检查 / 下载 / 安装状态机）
 renderer/
   index.html         界面结构
   style.css          视觉样式
   app.js             动画 / 交互 / 面板
+  quiz.js            题库面板（五种答题模式、考试计时与答题卡）
   game.js            经济与状态逻辑（纯函数，可在 Node 里测试）
 assets/
   actions.json       动作清单（名称 / 中文名 / 分类 / 尺寸 / 帧数）
@@ -120,6 +137,7 @@ tools/
   prepare_assets.py    GIF → 透明 WebP
   make_thumbs.py       生成缩略图
 docs/                标准、核验报告、优化路线图
+update-server/       局域网更新源（Nginx + Docker Compose，端口 9400）
 ```
 
 ## 存档与日志

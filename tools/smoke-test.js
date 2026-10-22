@@ -113,6 +113,74 @@ function registerStubs() {
     calls.quit += 1;
     return true;
   });
+  ipcMain.handle("screen:get-work-area", () => ({ x: 0, y: 0, width: 1920, height: 1080 }));
+  ipcMain.handle("app:update-status", () => ({ state: "idle", version: "0.2.0" }));
+  ipcMain.handle("app:update-check", () => ({ state: "not-available", version: "0.2.0" }));
+  ipcMain.handle("app:update-download", () => ({ state: "downloaded", version: "0.2.1" }));
+  ipcMain.handle("app:update-install", () => ({ state: "installing" }));
+
+  // 题库相关：用固定假数据跑通 UI 流程
+  ipcMain.handle("quiz:exams", () => ({
+    exams: [
+      {
+        code: "architect",
+        name: "系统架构设计师",
+        shortName: "架构",
+        category: "软考",
+        questionCount: 118,
+        examConfig: { durationMinutes: 150, questionCount: 75, totalScore: 75, passScore: 45 },
+      },
+    ],
+    cached: false,
+    baseUrl: "http://192.168.0.193:9300",
+  }));
+  ipcMain.handle("quiz:create", (_event, payload) => {
+    const mode = (payload && payload.mode) || "random";
+    const count = mode === "quiz" ? 10 : mode === "exam" ? 75 : 1;
+    const questions = Array.from({ length: count }, (_, index) => ({
+      id: `q${index}`,
+      type: "single",
+      stem: `测试题目 ${index + 1}`,
+      options: [
+        { key: "A", text: "选项甲" },
+        { key: "B", text: "选项乙" },
+      ],
+      chapterName: "测试章节",
+    }));
+    const now = Date.now();
+    return {
+      token: `tk-${mode}`,
+      mode,
+      examCode: "architect",
+      questions,
+      startedAt: now,
+      endsAt: mode === "exam" ? now + 150 * 60 * 1000 : 0,
+      totalScore: 75,
+      passScore: 45,
+      durationMinutes: mode === "exam" ? 150 : 0,
+    };
+  });
+  ipcMain.handle("quiz:answer", (_event, payload) => ({
+    id: payload.questionId,
+    correct: true,
+    chosen: payload.choice,
+    answer: ["A"],
+    explanation: "测试解析",
+  }));
+  ipcMain.handle("quiz:grade", (_event, payload) => ({
+    score: 75,
+    totalScore: 75,
+    passScore: 45,
+    passed: true,
+    correct: 75,
+    wrong: 0,
+    total: 75,
+    results: [],
+    details: payload.answers || {},
+  }));
+  ipcMain.handle("quiz:exam-status", () => ({ active: false }));
+  ipcMain.handle("quiz:exam-resume", () => ({ error: "NO_EXAM" }));
+  ipcMain.handle("quiz:exam-abandon", () => ({ ok: true }));
 }
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -496,7 +564,7 @@ async function runScenarios(win) {
   );
   check(
     "配置中心能打开",
-    config.open && config.toggles === 9 && config.ambient === "60",
+    config.open && config.toggles === 10 && config.ambient === "60",
     JSON.stringify(config)
   );
 
@@ -642,6 +710,62 @@ async function runScenarios(win) {
     "访客能接待",
     visitorShown && afterVisitor.coins > beforeVisitor.coins,
     `${beforeVisitor.coins.toFixed(0)}→${afterVisitor.coins.toFixed(0)}`
+  );
+
+  // 7h. 题库答题
+  await js(win, `window.__doroTest.openQuiz()`);
+  await wait(250);
+  const quizHome = await js(
+    win,
+    `({
+      open: document.getElementById("quiz").classList.contains("show"),
+      modes: document.querySelectorAll(".quiz-mode").length,
+      subtitle: document.getElementById("quiz-subtitle").textContent
+    })`
+  );
+  check("题库面板能打开并展示五种模式", quizHome.open && quizHome.modes === 5, JSON.stringify(quizHome));
+
+  const beforeDaily = await getState(win);
+  await js(win, `window.__doroTest.startQuizMode("daily")`);
+  await wait(350);
+  const quizQuestion = await js(
+    win,
+    `({
+      stem: document.querySelector(".quiz-stem")?.textContent || "",
+      options: document.querySelectorAll(".quiz-option").length
+    })`
+  );
+  check(
+    "每日一题能取到题目",
+    quizQuestion.options === 2 && quizQuestion.stem.includes("测试题目"),
+    JSON.stringify(quizQuestion)
+  );
+  await js(win, `document.querySelector(".quiz-option").click()`);
+  await wait(120);
+  await js(win, `document.querySelector(".quiz-actions .quiz-btn").click()`);
+  await wait(400);
+  const afterDaily = await getState(win);
+  check(
+    "每日一题答对 +100 金币",
+    Math.abs(afterDaily.coins - beforeDaily.coins - 100) < 0.01 && afterDaily.quiz.dailyDone === true,
+    `${beforeDaily.coins.toFixed(0)}→${afterDaily.coins.toFixed(0)}`
+  );
+  check("答题后显示判定反馈", await js(win, `Boolean(document.querySelector(".quiz-feedback.ok"))`));
+  await js(win, `document.getElementById("quiz-close").click()`);
+  await wait(120);
+  check(
+    "题库面板能关闭",
+    (await js(win, `document.getElementById("quiz").classList.contains("show")`)) === false
+  );
+
+  const beforeQuizBridge = await getState(win);
+  win.webContents.send("pet:quiz-apply", { mode: "random", correct: 1, wrong: 0, now: Date.now() });
+  await wait(200);
+  const afterQuizBridge = await getState(win);
+  check(
+    "独立答题窗口的奖励能同步到宠物",
+    afterQuizBridge.coins > beforeQuizBridge.coins,
+    `${beforeQuizBridge.coins.toFixed(0)}→${afterQuizBridge.coins.toFixed(0)}`
   );
 
   // 8. 设置开关

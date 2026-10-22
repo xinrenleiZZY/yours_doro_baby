@@ -11,7 +11,7 @@
 })(typeof self !== "undefined" ? self : this, function () {
   "use strict";
 
-  const SAVE_VERSION = 4;
+  const SAVE_VERSION = 5;
 
   // ---- 经济数值 -------------------------------------------------------------
   const BALANCE = {
@@ -70,6 +70,16 @@
     nextVisitorAt: 0,
     room: { furniture: [] },
     companion: { adopted: false },
+    quiz: {
+      examCode: "architect",
+      dailyDate: "",
+      dailyDone: false,
+      dailyCorrect: false,
+      eventReadyAt: 0,
+      totals: { answered: 0, correct: 0, wrong: 0, earned: 0, spent: 0 },
+      exam: { taken: 0, bestScore: 0, lastScore: 0, lastPassed: false },
+      history: [],
+    },
     window: { x: null, y: null },
     settings: {
       alwaysOnTop: true,
@@ -87,6 +97,9 @@
       followCursor: false,
       dnd: false,
       roamSpeed: 55,
+      quizApiBase: "http://192.168.0.193:9300",
+      updateFeedUrl: "http://192.168.0.193:9400/updates",
+      updateAutoCheck: true,
     },
   };
 
@@ -312,6 +325,17 @@
   const DRESS_PRICE_STEP = 20;
   const SCHEDULE_MAX = 20;
 
+  // ---- 题库 -------------------------------------------------------------
+  // 每种模式的奖励规则：答对 / 答错分别对金币的影响。模拟考试不涉及金币。
+  const QUIZ_RULES = {
+    daily: { correct: 100, wrong: 0 },
+    quiz: { correct: 100, wrong: -10 },
+    random: { correct: 100, wrong: -10 },
+    event: { correct: 100, wrong: 0 },
+    exam: { correct: 0, wrong: 0 },
+  };
+  const QUIZ_EVENT_COOLDOWN_MS = 20 * 60000;
+
   // 动作库按"分组"给随机表演加权：表情包/小剧场少一点，日常多一点
   const GROUP_WEIGHT = {
     日常: 1.5,
@@ -410,6 +434,30 @@
         companion: raw.companion || { adopted: false },
       });
     },
+    // 4 -> 5：题库（每日一题 / 随堂小测 / 随机刷题 / 答题事件 / 模拟考试）与更新配置
+    4: (raw) => {
+      return Object.assign({}, raw, {
+        version: 5,
+        quiz: raw.quiz || {
+          examCode: "architect",
+          dailyDate: "",
+          dailyDone: false,
+          dailyCorrect: false,
+          eventReadyAt: 0,
+          totals: { answered: 0, correct: 0, wrong: 0, earned: 0, spent: 0 },
+          exam: { taken: 0, bestScore: 0, lastScore: 0, lastPassed: false },
+          history: [],
+        },
+        settings: Object.assign(
+          {
+            quizApiBase: "http://192.168.0.193:9300",
+            updateFeedUrl: "http://192.168.0.193:9400/updates",
+            updateAutoCheck: true,
+          },
+          raw.settings || {}
+        ),
+      });
+    },
   };
 
   function migrate(raw) {
@@ -501,8 +549,18 @@
       raw.companion && typeof raw.companion === "object"
         ? { adopted: raw.companion.adopted === true }
         : { adopted: false };
+    state.quiz = normalizeQuiz(raw.quiz);
+    state.quiz.eventReadyAt = num(state.quiz.eventReadyAt, 0, 0);
+    if (!state.quiz.eventReadyAt) state.quiz.eventReadyAt = now + QUIZ_EVENT_COOLDOWN_MS;
     state.window = Object.assign({}, DEFAULT_STATE.window, raw.window || {});
     state.settings = Object.assign({}, DEFAULT_STATE.settings, raw.settings || {});
+    if (!/^https?:\/\/[^\s/]+/i.test(String(state.settings.quizApiBase || ""))) {
+      state.settings.quizApiBase = DEFAULT_STATE.settings.quizApiBase;
+    }
+    if (!/^https?:\/\/[^\s/]+/i.test(String(state.settings.updateFeedUrl || ""))) {
+      state.settings.updateFeedUrl = DEFAULT_STATE.settings.updateFeedUrl;
+    }
+    state.settings.updateAutoCheck = state.settings.updateAutoCheck !== false;
     state.settings.scale = num(state.settings.scale, 1, 0.6, 1.8);
     state.settings.ambientIntervalSec = num(state.settings.ambientIntervalSec, 60, 5, 600);
     state.settings.autoWalkIntervalSec = num(state.settings.autoWalkIntervalSec, 45, 10, 600);
@@ -806,6 +864,128 @@
   function dayKey(now) {
     const d = new Date(now || Date.now());
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  }
+
+  // ---- 题库：状态与奖励 ---------------------------------------------------
+  function normalizeQuiz(raw) {
+    const source = raw && typeof raw === "object" ? raw : {};
+    const totals = source.totals && typeof source.totals === "object" ? source.totals : {};
+    const exam = source.exam && typeof source.exam === "object" ? source.exam : {};
+    const history = Array.isArray(source.history)
+      ? source.history
+          .filter((item) => item && typeof item === "object")
+          .slice(-20)
+          .map((item) => ({
+            at: num(item.at, 0, 0),
+            mode: ["daily", "quiz", "random", "event", "exam"].includes(item.mode) ? item.mode : "random",
+            correct: num(item.correct, 0, 0, 999),
+            total: num(item.total, 0, 0, 999),
+            delta: num(item.delta, 0, -99999, 99999),
+          }))
+      : [];
+    return {
+      examCode: /^[a-z0-9][a-z0-9_-]{0,39}$/i.test(String(source.examCode || ""))
+        ? String(source.examCode)
+        : "architect",
+      dailyDate: typeof source.dailyDate === "string" ? source.dailyDate.slice(0, 10) : "",
+      dailyDone: source.dailyDone === true,
+      dailyCorrect: source.dailyCorrect === true,
+      eventReadyAt: num(source.eventReadyAt, 0, 0),
+      totals: {
+        answered: num(totals.answered, 0, 0),
+        correct: num(totals.correct, 0, 0),
+        wrong: num(totals.wrong, 0, 0),
+        earned: num(totals.earned, 0, 0),
+        spent: num(totals.spent, 0, 0),
+      },
+      exam: {
+        taken: num(exam.taken, 0, 0),
+        bestScore: num(exam.bestScore, 0, 0, 999),
+        lastScore: num(exam.lastScore, 0, 0, 999),
+        lastPassed: exam.lastPassed === true,
+      },
+      history,
+    };
+  }
+
+  /** 每天第一次进入时重置"每日一题"，并确保答题事件有冷却时间。 */
+  function ensureQuiz(state, now) {
+    const today = dayKey(now);
+    if (state.quiz.dailyDate !== today) {
+      state.quiz.dailyDate = today;
+      state.quiz.dailyDone = false;
+      state.quiz.dailyCorrect = false;
+    }
+    if (!state.quiz.eventReadyAt) state.quiz.eventReadyAt = now + QUIZ_EVENT_COOLDOWN_MS;
+    return state.quiz;
+  }
+
+  function quizDailyStatus(state, now) {
+    const quiz = ensureQuiz(state, now || Date.now());
+    return {
+      available: !quiz.dailyDone,
+      done: quiz.dailyDone,
+      correct: quiz.dailyCorrect,
+      date: quiz.dailyDate,
+      todayCorrect: quiz.dailyCorrect,
+    };
+  }
+
+  function quizEventStatus(state, now) {
+    const quiz = ensureQuiz(state, now || Date.now());
+    const current = now || Date.now();
+    return {
+      available: current >= quiz.eventReadyAt,
+      readyAt: quiz.eventReadyAt,
+      remainingMs: Math.max(0, quiz.eventReadyAt - current),
+    };
+  }
+
+  /**
+   * 结算一次答题结果并返回金币变化。
+   * 扣金币不会把余额扣成负数（余额不足时最多扣到 0）。
+   */
+  function completeQuiz(state, payload) {
+    const now = payload && payload.now ? payload.now : Date.now();
+    const mode = payload && QUIZ_RULES[payload.mode] ? payload.mode : "random";
+    const correct = Math.max(0, Math.round(Number(payload && payload.correct) || 0));
+    const wrong = Math.max(0, Math.round(Number(payload && payload.wrong) || 0));
+    const rule = QUIZ_RULES[mode];
+    let delta = correct * rule.correct + wrong * rule.wrong;
+    if (delta < 0) delta = -Math.min(Math.floor(state.coins), -delta);
+    state.coins = Math.max(0, state.coins + delta);
+
+    const totals = state.quiz.totals;
+    totals.answered += correct + wrong;
+    totals.correct += correct;
+    totals.wrong += wrong;
+    if (delta > 0) {
+      state.totalEarned += delta;
+      totals.earned += delta;
+    } else if (delta < 0) {
+      totals.spent += -delta;
+    }
+
+    if (mode === "daily") {
+      state.quiz.dailyDate = dayKey(now);
+      state.quiz.dailyDone = true;
+      state.quiz.dailyCorrect = correct > 0 && wrong === 0;
+    }
+    if (mode === "event") {
+      state.quiz.eventReadyAt = now + QUIZ_EVENT_COOLDOWN_MS;
+    }
+    if (mode === "exam" && payload.exam) {
+      const exam = payload.exam;
+      state.quiz.exam.taken += 1;
+      state.quiz.exam.lastScore = Math.max(0, Math.round(Number(exam.score) || 0));
+      state.quiz.exam.lastPassed = exam.passed === true;
+      state.quiz.exam.bestScore = Math.max(state.quiz.exam.bestScore, state.quiz.exam.lastScore);
+    }
+
+    state.quiz.history.push({ at: now, mode, correct, total: correct + wrong, delta });
+    if (state.quiz.history.length > 20) state.quiz.history = state.quiz.history.slice(-20);
+
+    return { delta, rule, mode, correct, wrong };
   }
 
   function normalizeScheduleItem(item) {
@@ -1219,6 +1399,13 @@
     DRESS_BASE_PRICE,
     DRESS_PRICE_STEP,
     SCHEDULE_MAX,
+    QUIZ_RULES,
+    QUIZ_EVENT_COOLDOWN_MS,
+    normalizeQuiz,
+    ensureQuiz,
+    quizDailyStatus,
+    quizEventStatus,
+    completeQuiz,
     isUnlocked,
     dressPrice,
     activeBuff,
