@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; img-src 'self' data: file:; style-src 'self' 'unsafe-inline' file:; script-src 'self' file:;"
+    />
+    <title>doro 工具</title>
+    <link rel="stylesheet" href="style.css" />
+    <link rel="stylesheet" href="tool-window.css" />
+  </head>
+  <body class="tool-window">
+    <div id="shop" class="interactive" role="dialog" aria-label="商城">
+      <header>
+        <span>商城</span>
+        <em id="shop-balance">0 金币</em>
+        <button id="shop-close" title="关闭">✕</button>
+      </header>
+      <div class="lib-tabs" id="shop-tabs"></div>
+      <div class="shop-list" id="shop-list"></div>
+    </div>
+
+    <div id="gacha" class="interactive" role="dialog" aria-label="扭蛋机">
+      <header>
+        <span>扭蛋机</span>
+        <em id="gacha-coins"></em>
+        <button id="gacha-close" title="关闭">✕</button>
+      </header>
+      <div class="gacha-body">
+        <div class="gacha-machine">🎰</div>
+        <p class="gacha-desc">500 金币一次：金币 / 食物玩具 / 未解锁装扮 / 主题</p>
+        <button id="gacha-pull">抽一次</button>
+        <p id="gacha-result" class="gacha-result"></p>
+      </div>
+    </div>
+
+    <div id="minigame" class="interactive" role="dialog" aria-label="接金币小游戏">
+      <header>
+        <span>接金币</span>
+        <em id="minigame-status"></em>
+        <button id="minigame-close" title="关闭">✕</button>
+      </header>
+      <div id="minigame-area"></div>
+      <div class="minigame-bar">
+        <span>得分 <b id="minigame-score">0</b></span>
+        <button id="minigame-start">开始（15 秒）</button>
+      </div>
+    </div>
+
+    <div id="sticker" class="interactive" role="dialog" aria-label="表情包管理">
+      <header>
+        <span>表情包管理</span>
+        <em id="sticker-count"></em>
+        <button id="sticker-import" title="导入表情包">＋ 导入</button>
+        <button id="sticker-close" title="关闭">✕</button>
+      </header>
+      <input id="sticker-search" type="search" placeholder="搜索表情包…" autocomplete="off" />
+      <div class="sticker-preview">
+        <img id="sticker-preview-img" alt="" />
+        <div class="sticker-preview-meta">
+          <input id="sticker-rename" maxlength="16" placeholder="名称" />
+          <div class="sticker-preview-actions">
+            <button id="sticker-preview-random">随机：关</button>
+            <button id="sticker-delete">删除</button>
+            <button id="sticker-reveal">文件夹</button>
+          </div>
+        </div>
+      </div>
+      <div class="lib-tabs" id="sticker-bulk">
+        <button data-bulk="all">全部随机</button>
+        <button data-bulk="none">全部禁止</button>
+        <button data-bulk="fav">仅收藏</button>
+      </div>
+      <div class="sticker-grid" id="sticker-grid"></div>
+      <footer>
+        <button id="sticker-prev" title="上一页">‹</button>
+        <span id="sticker-page">1 / 1</span>
+        <button id="sticker-next" title="下一页">›</button>
+      </footer>
+    </div>
+
+    <div id="tool-toast"></div>
+    <script src="game.js"></script>
+    <script src="tool-window.js"></script>
+  </body>
+</html>

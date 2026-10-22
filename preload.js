@@ -12,7 +12,7 @@ function on(channel, handler) {
 
 contextBridge.exposeInMainWorld("petAPI", {
   load: () => ipcRenderer.invoke("pet:load"),
-  save: (state) => ipcRenderer.invoke("pet:save", state),
+  save: (state, meta) => ipcRenderer.invoke("pet:save", state, meta),
   loadActions: () => ipcRenderer.invoke("pet:actions"),
 
   getBounds: () => ipcRenderer.invoke("win:get-bounds"),
@@ -59,6 +59,21 @@ contextBridge.exposeInMainWorld("petAPI", {
   onQuizCommand: (handler) => on("quiz-window:command", handler),
   onQuizApply: (handler) => on("pet:quiz-apply", handler),
   onQuizSpeak: (handler) => on("pet:quiz-speak", handler),
+
+  // 独立工具窗口：主进程统一处理交易，宠物与工具窗口共享同一份存档
+  openToolWindow: (tool, options) => ipcRenderer.invoke("tool:open", { tool, ...(options || {}) }),
+  toolSnapshot: () => ipcRenderer.invoke("tool:snapshot"),
+  toolCommand: (tool, command) => ipcRenderer.invoke("tool:command", { tool, command }),
+  toolClose: () => ipcRenderer.invoke("tool:close"),
+  toolSpeak: (text, ms) => ipcRenderer.invoke("tool:speak", { text, ms }),
+  syncToolState: (state, revision) => ipcRenderer.send("tool:live-state", { state, revision }),
+  onToolState: (handler) => on("tool:state", handler),
+  onToolActionsChanged: (handler) => on("tool:actions-changed", handler),
+  onToolCommand: (handler) => on("tool-window:command", handler),
+  onToolWindowState: (handler) => on("pet:tool-window-state", handler),
+  onPetToolState: (handler) => on("pet:tool-state", handler),
+  onPetActionsChanged: (handler) => on("pet:actions-changed", handler),
+  onPetToolSpeak: (handler) => on("pet:tool-speak", handler),
 
   stickerImport: () => ipcRenderer.invoke("sticker:import"),
   stickerDelete: (name) => ipcRenderer.invoke("sticker:delete", name),

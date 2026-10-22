@@ -7,6 +7,7 @@
   const DoroQuiz = window.DoroQuiz;
   // 冒烟测试用 ?test=1 打开：关掉自动计时，并暴露少量只读/操作钩子
   const TEST_MODE = new URLSearchParams(location.search).has("test");
+  const EXTERNAL_TOOLS = new Set(["shop", "gacha", "minigame", "sticker"]);
 
   // 渲染进程的异常统一上报到主进程日志，避免"点了没反应但查不到原因"
   window.addEventListener("error", (event) => {
@@ -159,6 +160,8 @@
   const stickerState = { name: null, query: "", page: 0 };
   let stickerPendingDelete = null;
   let quizOpen = false;
+  let toolOpen = false;
+  let toolStateRevision = 0;
   let updateStatus = null;
   let shopTab = "食物";
   const libState = { group: "全部", query: "", page: 0 };
@@ -206,7 +209,7 @@
     const bounds = await api.getBounds();
     if (bounds) state.window = { x: bounds.x, y: bounds.y };
     state.settings.baseAction = baseAction;
-    await api.save(state);
+    await api.save(state, { revision: toolStateRevision });
   }
 
   function toast(text, ms) {
@@ -395,6 +398,20 @@
   }
 
   // ------------------------------------------------------------- 动作 / 动画
+  function installActions(list) {
+    const next = (Array.isArray(list) ? list : []).filter(Boolean);
+    if (!next.length) return false;
+    actions = next;
+    byName = new Map(actions.map((action) => [action.name, action]));
+    IDLE_ACTION = byName.has("idle_stand")
+      ? "idle_stand"
+      : (actions.find((action) => action.category === "idle") || actions[0]).name;
+    WALK_ACTION = byName.has("walk_bag")
+      ? "walk_bag"
+      : (actions.find((action) => action.category === "walk") || actions[0]).name;
+    return true;
+  }
+
   function actionInfo(name) {
     return byName.get(name) || byName.get(baseAction) || byName.get(IDLE_ACTION) || actions[0];
   }
@@ -1016,6 +1033,10 @@
       openQuizWindow("home");
       return;
     }
+    if (!TEST_MODE && EXTERNAL_TOOLS.has(name)) {
+      void openToolWindow(name, name === "shop" ? { tab: shopTab } : undefined);
+      return;
+    }
     libraryOpen = name === "library";
     shopOpen = name === "shop";
     scheduleOpen = name === "schedule";
@@ -1086,6 +1107,42 @@
     closeMenu();
     closeSidePanels();
     await api.openQuizWindow(mode || "home");
+  }
+
+  async function openToolWindow(name, options) {
+    await saveNow();
+    closeMenu();
+    closeSidePanels();
+    await api.openToolWindow(name, options);
+  }
+
+  function applySharedToolState(payload) {
+    if (!payload || !payload.save || typeof payload.save !== "object") return;
+    toolStateRevision = Math.max(toolStateRevision, Number(payload.revision) || 0);
+    if (Array.isArray(payload.actions)) installActions(payload.actions);
+    state = G.hydrate(payload.save, payload.now || Date.now());
+    baseAction = byName.has(state.settings.baseAction) ? state.settings.baseAction : IDLE_ACTION;
+    if (!G.isUnlocked(state, byName.get(baseAction))) baseAction = IDLE_ACTION;
+    applyTheme();
+    applyVisualScale();
+    syncCompanion();
+    updateHud(0);
+    updateMenu();
+    updateEventChips();
+    if (!byName.has(currentAction)) setAction(baseAction, { force: true });
+    else {
+      const action = byName.get(currentAction);
+      if (action) {
+        el.petLabel.textContent = `Lv.${state.level} ${G.titleForLevel(state.level)} · ${G.effectiveLabel(
+          state,
+          action
+        )}`;
+      }
+    }
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+    }
   }
 
   function openLibrary() {
@@ -1416,6 +1473,7 @@
       lastFrameAt = now;
       const before = state.coins;
       G.tick(state, elapsed);
+      api.syncToolState(state, toolStateRevision);
       coinWindow += state.coins - before;
       const isPayday = now - lastPaydayAt > 5000;
       updateHud(isPayday);
@@ -1735,6 +1793,7 @@
       minigameOpen ||
       stickerOpen ||
       quizOpen ||
+      toolOpen ||
       !el.petWrap
     );
   }
@@ -2347,6 +2406,32 @@
       speak(payload.text, payload.ms || 2000);
     });
 
+    api.onToolWindowState((payload) => {
+      const openTools = payload && Array.isArray(payload.openTools) ? payload.openTools : [];
+      toolOpen = openTools.length > 0;
+      if (toolOpen) {
+        closeMenu();
+        closeSidePanels();
+      }
+      updateMenu();
+    });
+
+    api.onPetToolState((payload) => applySharedToolState(payload));
+
+    api.onPetActionsChanged(async () => {
+      if (!installActions(await api.loadActions())) return;
+      if (!byName.has(baseAction)) baseAction = IDLE_ACTION;
+      if (!byName.has(currentAction)) setAction(baseAction, { force: true });
+      renderLibrary();
+      if (stickerOpen) renderSticker();
+      updateMenu();
+    });
+
+    api.onPetToolSpeak((payload) => {
+      if (!payload || !payload.text) return;
+      speak(payload.text, payload.ms || 2000);
+    });
+
     window.addEventListener("beforeunload", () => {
       saveNow();
     });
@@ -2366,20 +2451,11 @@
     if (loaded.crashedLastTime) {
       api.log("warn", "上次没有正常退出，已从最近的存档继续");
     }
-    actions = (await api.loadActions()).filter(Boolean);
-    if (!actions.length) {
+    if (!installActions(await api.loadActions())) {
       document.body.innerHTML =
         '<p style="font:12px sans-serif;color:#c04a68;padding:10px">找不到动作资源，请先运行 npm run assets</p>';
       return;
     }
-    byName = new Map(actions.map((action) => [action.name, action]));
-    // 优先用指定的默认动作，库被裁剪过也能工作
-    IDLE_ACTION = byName.has("idle_stand")
-      ? "idle_stand"
-      : (actions.find((action) => action.category === "idle") || actions[0]).name;
-    WALK_ACTION = byName.has("walk_bag")
-      ? "walk_bag"
-      : (actions.find((action) => action.category === "walk") || actions[0]).name;
     baseAction = byName.has(state.settings.baseAction) ? state.settings.baseAction : IDLE_ACTION;
     if (!G.isUnlocked(state, byName.get(baseAction))) baseAction = IDLE_ACTION;
 
@@ -2489,6 +2565,7 @@
         openGacha: () => openSidePanel("gacha"),
         openMinigame: () => openSidePanel("minigame"),
         openSticker: () => openSidePanel("sticker"),
+        openToolWindow,
         openQuiz: openQuizPanel,
         startQuizMode: (mode) => {
           openQuizPanel();

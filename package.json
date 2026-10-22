@@ -1,14 +1,14 @@
 {
   "name": "yours-doro-baby",
   "productName": "doro_dz 桌面宠物",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "一只住在桌面上的 doro：会自己演各种小动作，还会每秒给你产金币。",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
     "test": "npm run test:unit && npm run test:smoke",
-    "test:unit": "node tools/test-game.js && node tools/test-quiz.js && node tools/test-sticker.js",
+    "test:unit": "node tools/test-game.js && node tools/test-quiz.js && node tools/test-sticker.js && node tools/test-tool-actions.js",
     "test:smoke": "electron tools/smoke-test.js",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",

@@ -12,6 +12,8 @@
 const { app, BrowserWindow, ipcMain } = require("electron");
 const fs = require("fs");
 const path = require("path");
+const G = require("../renderer/game.js");
+const { applyToolCommand } = require("../lib/tool-actions.js");
 
 const ROOT = path.join(__dirname, "..");
 const REPORT = path.join(ROOT, "_smoke-report.txt");
@@ -43,6 +45,8 @@ const BASE_SAVE = {
 let seed = JSON.parse(JSON.stringify(BASE_SAVE));
 let lastSaved = null;
 let lastHitboxes = [];
+let toolState = null;
+let toolRevision = 0;
 const calls = {
   setPosition: [],
   clickThrough: [],
@@ -50,6 +54,7 @@ const calls = {
   logs: [],
   notifications: [],
   stickerDeleted: [],
+  toolOpened: [],
   quit: 0,
 };
 const results = [];
@@ -73,6 +78,25 @@ function check(name, ok, detail) {
   say(`${ok ? "  ok  " : "FAIL  "}${name}${detail ? `  (${detail})` : ""}`);
 }
 
+function fixtureActions() {
+  const actions = JSON.parse(fs.readFileSync(path.join(ROOT, "assets", "actions.json"), "utf8"));
+  actions.push({
+    name: "user_deadbeef00",
+    label: "测试导入",
+    category: "meme",
+    group: "表情包",
+    file: "user-stickers/test.png",
+    url: "file:///tmp/doro-test-sticker.png",
+    thumb: "file:///tmp/doro-test-sticker.png",
+    size: [100, 100],
+    frames: 1,
+    durationMs: 0,
+    blocked: false,
+    user: true,
+  });
+  return actions;
+}
+
 function registerStubs() {
   ipcMain.handle("pet:load", () => ({
     save: seed,
@@ -84,26 +108,12 @@ function registerStubs() {
   }));
   ipcMain.handle("pet:save", (_event, state) => {
     lastSaved = state;
+    toolState = G.hydrate(state, Date.now());
     calls.save.push(state);
     return { ok: true };
   });
   ipcMain.handle("pet:actions", () => {
-    const actions = JSON.parse(fs.readFileSync(path.join(ROOT, "assets", "actions.json"), "utf8"));
-    actions.push({
-      name: "user_deadbeef00",
-      label: "测试导入",
-      category: "meme",
-      group: "表情包",
-      file: "user-stickers/test.png",
-      url: "file:///tmp/doro-test-sticker.png",
-      thumb: "file:///tmp/doro-test-sticker.png",
-      size: [100, 100],
-      frames: 1,
-      durationMs: 0,
-      blocked: false,
-      user: true,
-    });
-    return actions;
+    return fixtureActions();
   });
   ipcMain.handle("sticker:import", () => ({ ok: false, canceled: true }));
   ipcMain.handle("sticker:delete", (_event, name) => {
@@ -111,6 +121,37 @@ function registerStubs() {
     return { ok: true };
   });
   ipcMain.handle("sticker:reveal", () => true);
+  ipcMain.handle("tool:open", (_event, payload) => {
+    calls.toolOpened.push(payload && payload.tool);
+    return { ok: true };
+  });
+  ipcMain.handle("tool:snapshot", () => ({
+    save: toolState || G.hydrate(lastSaved || seed, Date.now()),
+    actions: fixtureActions(),
+    now: Date.now(),
+    revision: toolRevision,
+  }));
+  ipcMain.handle("tool:command", (_event, payload) => {
+    const tool = payload && payload.tool;
+    const base = toolState || G.hydrate(lastSaved || seed, Date.now());
+    const applied = applyToolCommand(base, fixtureActions(), tool, payload && payload.command, Date.now());
+    if (!applied.ok) return applied;
+    toolState = applied.state;
+    toolRevision += 1;
+    return {
+      ...applied,
+      save: toolState,
+      actions: fixtureActions(),
+      revision: toolRevision,
+      now: Date.now(),
+    };
+  });
+  ipcMain.handle("tool:speak", () => true);
+  ipcMain.handle("tool:close", (event) => {
+    const target = BrowserWindow.fromWebContents(event.sender);
+    if (target) target.close();
+    return true;
+  });
   ipcMain.handle("win:get-bounds", () => ({ x: 100, y: 100, width: 320, height: 360 }));
   ipcMain.handle("pet:hitboxes", (_event, boxes) => {
     lastHitboxes = boxes;
@@ -230,6 +271,24 @@ async function openWindow() {
   await win.loadFile(path.join(ROOT, "renderer", "index.html"), { query: { test: "1" } });
   await waitFor(win, `document.documentElement.dataset.doroReady === "1"`, 5000, "renderer 初始化");
   await waitFor(win, `Boolean(document.querySelector(".pet-layer.in"))`, 5000, "宠物动画加载");
+  return win;
+}
+
+async function openToolWindowPage(tool) {
+  const win = new BrowserWindow({
+    width: 620,
+    height: 700,
+    show: false,
+    frame: false,
+    webPreferences: {
+      preload: path.join(ROOT, "preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      backgroundThrottling: false,
+    },
+  });
+  await win.loadFile(path.join(ROOT, "renderer", "tool-window.html"), { query: { tool } });
+  await waitFor(win, `document.documentElement.dataset.toolReady === "1"`, 5000, `${tool} 工具窗口`);
   return win;
 }
 
@@ -1011,6 +1070,115 @@ async function runScenarios(win) {
   return chosenAction;
 }
 
+async function runToolWindowScenarios() {
+  toolState = G.hydrate({ coins: 2000, satiety: 80, mood: 80 }, Date.now());
+  toolRevision += 1;
+
+  const shop = await openToolWindowPage("shop");
+  const shopInfo = await js(
+    shop,
+    `({
+      tool: document.body.dataset.tool,
+      open: document.getElementById("shop").classList.contains("show"),
+      balance: document.getElementById("shop-balance").textContent,
+      items: document.querySelectorAll(".shop-item").length
+    })`
+  );
+  check(
+    "商城以独立窗口打开",
+    shopInfo.tool === "shop" && shopInfo.open && shopInfo.items > 0 && /金币/.test(shopInfo.balance),
+    JSON.stringify(shopInfo)
+  );
+  const shopBefore = toolState;
+  await js(shop, `document.querySelector(".shop-item button:not(.use)").click()`);
+  await wait(220);
+  check(
+    "独立商城购买会写入共享状态",
+    toolState.inventory.fish === 1 && toolState.coins < shopBefore.coins,
+    `${shopBefore.coins}→${toolState.coins}，鱼×${toolState.inventory.fish}`
+  );
+  await js(shop, `document.querySelector(".shop-item .use").click()`);
+  await wait(220);
+  check("独立商城可使用背包物品", toolState.inventory.fish === 0, `鱼×${toolState.inventory.fish}`);
+  shop.close();
+  await wait(120);
+
+  toolState = G.hydrate({ coins: 2000, satiety: 80, mood: 80 }, Date.now());
+  toolRevision += 1;
+  const gacha = await openToolWindowPage("gacha");
+  const pullsBefore = toolState.gacha.pulls;
+  check(
+    "扭蛋机以独立窗口打开",
+    (await js(
+      gacha,
+      `document.body.dataset.tool === "gacha" && document.getElementById("gacha").classList.contains("show")`
+    )) === true
+  );
+  await js(gacha, `document.getElementById("gacha-pull").click()`);
+  await wait(220);
+  check(
+    "独立扭蛋机抽奖会写入共享状态",
+    toolState.gacha.pulls === pullsBefore + 1 &&
+      Boolean(await js(gacha, `document.getElementById("gacha-result").textContent`)),
+    `pulls=${toolState.gacha.pulls}`
+  );
+  gacha.close();
+  await wait(120);
+
+  toolState = G.hydrate({ coins: 0, satiety: 80, mood: 80 }, Date.now());
+  toolRevision += 1;
+  const minigame = await openToolWindowPage("minigame");
+  check(
+    "接金币以独立窗口打开",
+    (await js(
+      minigame,
+      `document.body.dataset.tool === "minigame" && document.getElementById("minigame").classList.contains("show")`
+    )) === true
+  );
+  await js(minigame, `document.getElementById("minigame-start").click()`);
+  await wait(620);
+  const miniCoins = await js(minigame, `document.querySelectorAll(".minigame-coin").length`);
+  if (miniCoins > 0) await js(minigame, `document.querySelector(".minigame-coin").click()`);
+  await js(minigame, `document.getElementById("minigame-close").click()`);
+  await wait(300);
+  check(
+    "独立接金币窗口能结算并记录冷却",
+    toolState.minigame.lastPlayedAt > 0 && toolState.coins >= 5,
+    `score=${miniCoins - 1 >= 0 ? "≥0" : "0"}，coins=${toolState.coins}`
+  );
+
+  toolState = G.hydrate({ coins: 2000, satiety: 80, mood: 80 }, Date.now());
+  toolRevision += 1;
+  const sticker = await openToolWindowPage("sticker");
+  const stickerInfo = await js(
+    sticker,
+    `({
+      tool: document.body.dataset.tool,
+      open: document.getElementById("sticker").classList.contains("show"),
+      items: document.querySelectorAll(".sticker-item").length,
+      count: document.getElementById("sticker-count").textContent
+    })`
+  );
+  check(
+    "表情管理以独立窗口打开",
+    stickerInfo.tool === "sticker" &&
+      stickerInfo.open &&
+      stickerInfo.items === 8 &&
+      /51/.test(stickerInfo.count),
+    JSON.stringify(stickerInfo)
+  );
+  const randomBefore = JSON.stringify(toolState.stickerRandom);
+  await js(sticker, `document.getElementById("sticker-preview-random").click()`);
+  await wait(220);
+  check(
+    "独立表情窗口的随机设置会写入共享状态",
+    JSON.stringify(toolState.stickerRandom) !== randomBefore,
+    JSON.stringify(toolState.stickerRandom)
+  );
+  sticker.close();
+  await wait(120);
+}
+
 async function runRestartScenario(chosenAction) {
   // 用上一次存档重新开一个窗口，验证"重启后进度还在"
   seed = lastSaved;
@@ -1039,6 +1207,7 @@ async function main() {
   let chosenAction = null;
   try {
     chosenAction = await runScenarios(win);
+    await runToolWindowScenarios();
   } finally {
     win.destroy();
   }

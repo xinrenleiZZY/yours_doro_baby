@@ -398,6 +398,7 @@ test("主题购买后立即应用，且不能重复购买", () => {
   assert.strictEqual(G.purchase(state, G.SHOP_ITEMS.theme_night, NOW).ok, true);
   assert.strictEqual(state.settings.theme, "night");
   assert.strictEqual(state.perks.theme_night, true);
+  assert.strictEqual(sanitizeSave(state).perks.theme_night, true);
   assert.strictEqual(G.purchase(state, G.SHOP_ITEMS.theme_night, NOW).reason, "owned");
 });
 

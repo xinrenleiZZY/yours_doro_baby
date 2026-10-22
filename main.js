@@ -23,6 +23,8 @@ const { sanitizeNotification } = require("./lib/notify");
 const { QuizService } = require("./lib/quiz-api");
 const { UpdaterService } = require("./lib/updater");
 const { StickerStore } = require("./lib/sticker-store");
+const G = require("./renderer/game.js");
+const { applyToolCommand } = require("./lib/tool-actions");
 
 const WINDOW_SIZE = { width: 320, height: 360 };
 // 答题窗口：独立、不透明、可拖动，避免撑大透明的宠物窗口
@@ -36,6 +38,12 @@ const QUIZ_CACHE_FILE = path.join(USER_DATA, "quiz-cache.json");
 const QUIZ_EXAM_FILE = path.join(USER_DATA, "quiz-exam.json");
 const USER_STICKER_DIR = path.join(USER_DATA, "user-stickers");
 const USER_STICKERS_FILE = path.join(USER_DATA, "user-stickers.json");
+const TOOL_WINDOW_SPECS = {
+  shop: { width: 620, height: 700, title: "doro 商城" },
+  gacha: { width: 500, height: 520, title: "doro 扭蛋机" },
+  minigame: { width: 620, height: 560, title: "doro 接金币" },
+  sticker: { width: 640, height: 720, title: "doro 表情包管理" },
+};
 const LOG_MAX_BYTES = 1024 * 1024;
 const DEV = process.argv.includes("--dev");
 // 调试鼠标穿透时可以设 DORO_TRACE_HOVER=1，把每次穿透状态变化写进日志
@@ -43,6 +51,7 @@ const TRACE_HOVER = process.env.DORO_TRACE_HOVER === "1";
 
 let win = null;
 let quizWin = null;
+const toolWindows = new Map();
 let tray = null;
 let saveTimer = null;
 let crashedLastTime = false;
@@ -63,6 +72,8 @@ const quizService = new QuizService({
 });
 let updater = null;
 let updateTimer = null;
+let latestToolState = null;
+let toolStateRevision = 0;
 const stickerStore = new StickerStore({
   dir: USER_STICKER_DIR,
   manifestFile: USER_STICKERS_FILE,
@@ -342,6 +353,24 @@ function send(channel, payload) {
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
 }
 
+function loadActionList() {
+  const file = path.join(__dirname, "assets", "actions.json");
+  const bundled = JSON.parse(fs.readFileSync(file, "utf8"));
+  return Array.isArray(bundled) ? [...bundled, ...stickerStore.listActions()] : stickerStore.listActions();
+}
+
+function broadcastToolWindows(channel, payload, exceptWebContents) {
+  toolWindows.forEach((toolWin) => {
+    if (!toolWin || toolWin.isDestroyed()) return;
+    if (exceptWebContents && toolWin.webContents === exceptWebContents) return;
+    toolWin.webContents.send(channel, payload);
+  });
+}
+
+function notifyToolWindowState() {
+  send("pet:tool-window-state", { openTools: [...toolWindows.keys()] });
+}
+
 /** 统一走这里设置窗口位置：挡掉 NaN / 非整数，失败只记日志不抛给渲染层。 */
 function safeSetPosition(x, y) {
   if (!win || !Number.isFinite(x) || !Number.isFinite(y)) return null;
@@ -532,6 +561,77 @@ function createQuizWindow(mode) {
   return quizWin;
 }
 
+// ---------------------------------------------------------------- 独立工具窗口
+function createToolWindow(tool, options) {
+  const spec = TOOL_WINDOW_SPECS[tool];
+  if (!spec) return null;
+  const existing = toolWindows.get(tool);
+  if (existing && !existing.isDestroyed()) {
+    existing.show();
+    existing.focus();
+    if (options && options.tab) {
+      existing.webContents.send("tool-window:command", { tab: options.tab });
+    }
+    return existing;
+  }
+
+  const area = screen.getPrimaryDisplay().workArea;
+  const width = Math.min(spec.width, area.width - 40);
+  const height = Math.min(spec.height, area.height - 40);
+  const cascade = (toolWindows.size % 5) * 24;
+  const toolWin = new BrowserWindow({
+    width,
+    height,
+    minWidth: Math.min(460, width),
+    minHeight: Math.min(400, height),
+    x: area.x + Math.round((area.width - width) / 2) + cascade,
+    y: area.y + Math.round((area.height - height) / 2) + cascade,
+    frame: false,
+    transparent: false,
+    resizable: true,
+    minimizable: true,
+    maximizable: false,
+    skipTaskbar: false,
+    alwaysOnTop: true,
+    show: false,
+    backgroundColor: "#fff7f2",
+    title: spec.title,
+    webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  toolWindows.set(tool, toolWin);
+  toolWin.setAlwaysOnTop(true, "floating");
+  toolWin.setMenuBarVisibility(false);
+  toolWin.webContents.on("did-finish-load", () => log("info", "工具窗口加载完成", { tool }));
+  toolWin.webContents.on("did-fail-load", (_event, code, description, url) => {
+    log("error", "工具窗口加载失败", { tool, code, description, url });
+  });
+  toolWin.webContents.on("render-process-gone", (_event, details) => {
+    log("error", "工具窗口渲染进程退出", { tool, details });
+  });
+  toolWin.loadFile(path.join(__dirname, "renderer", "tool-window.html"), {
+    query: { tool, ...(options && options.tab ? { tab: String(options.tab) } : {}) },
+  });
+  toolWin.once("ready-to-show", () => {
+    if (toolWin.isDestroyed()) return;
+    toolWin.show();
+    toolWin.focus();
+    if (options && options.tab) {
+      toolWin.webContents.send("tool-window:command", { tab: options.tab });
+    }
+    log("info", "工具窗口 ready", { tool, bounds: toolWin.getBounds() });
+  });
+  toolWin.on("closed", () => {
+    if (toolWindows.get(tool) === toolWin) toolWindows.delete(tool);
+    notifyToolWindowState();
+  });
+  notifyToolWindowState();
+  return toolWin;
+}
+
 // ---------------------------------------------------------------- 托盘
 function buildTrayMenu() {
   if (!tray) return;
@@ -631,7 +731,10 @@ function registerIpc() {
     };
   });
 
-  ipcMain.handle("pet:save", (_event, state) => {
+  ipcMain.handle("pet:save", (_event, state, meta) => {
+    if (meta && Number.isFinite(Number(meta.revision)) && Number(meta.revision) < toolStateRevision) {
+      return { ok: false, error: "stale-state" };
+    }
     const clean = sanitizeSave(state);
     if (!clean) {
       log("warn", "拒绝写入非法存档");
@@ -639,7 +742,17 @@ function registerIpc() {
     }
     quizService.configure({ baseUrl: clean.settings.quizApiBase });
     if (updater) updater.setFeedUrl(clean.settings.updateFeedUrl);
-    return writeSave(clean);
+    const result = writeSave(clean);
+    if (result.ok) {
+      latestToolState = clean;
+      broadcastToolWindows("tool:state", {
+        save: clean,
+        now: Date.now(),
+        revision: toolStateRevision,
+        source: "pet-save",
+      });
+    }
+    return result;
   });
 
   // ---- 题库（网络与判卷都在主进程） ------------------------------------
@@ -749,9 +862,7 @@ function registerIpc() {
 
   ipcMain.handle("pet:actions", () => {
     try {
-      const file = path.join(__dirname, "assets", "actions.json");
-      const bundled = JSON.parse(fs.readFileSync(file, "utf8"));
-      return [...bundled, ...stickerStore.listActions()];
+      return loadActionList();
     } catch (err) {
       log("error", "读取动作清单失败", err.message);
       return [];
@@ -776,18 +887,127 @@ function registerIpc() {
       added: imported.added.map((item) => item.name),
       skipped: imported.skipped.length,
     });
+    if (imported.added.length) {
+      send("pet:actions-changed", {});
+      broadcastToolWindows("tool:actions-changed", {});
+    }
     return { ok: true, ...imported };
   });
 
   ipcMain.handle("sticker:delete", (_event, name) => {
     const ok = stickerStore.remove(name);
-    if (ok) log("info", "删除表情包", name);
+    if (ok) {
+      log("info", "删除表情包", name);
+      send("pet:actions-changed", {});
+      broadcastToolWindows("tool:actions-changed", {});
+    }
     return { ok };
   });
 
   ipcMain.handle("sticker:reveal", () => {
     fs.mkdirSync(USER_STICKER_DIR, { recursive: true });
     shell.openPath(USER_STICKER_DIR);
+    return true;
+  });
+
+  // ---- 独立工具窗口：商城 / 扭蛋机 / 接金币 / 表情包 -------------------
+  ipcMain.handle("tool:open", (_event, payload) => {
+    const tool = payload && String(payload.tool || "");
+    createToolWindow(tool, { tab: payload && payload.tab });
+    return { ok: Boolean(TOOL_WINDOW_SPECS[tool]) };
+  });
+
+  ipcMain.handle("tool:snapshot", () => {
+    const saved = latestToolState || sanitizeSave(readSave()) || G.freshState(Date.now());
+    return {
+      save: saved,
+      actions: loadActionList(),
+      now: Date.now(),
+      revision: toolStateRevision,
+    };
+  });
+
+  ipcMain.on("tool:live-state", (event, payload) => {
+    if (!win || event.sender !== win.webContents || !payload) return;
+    const clean = sanitizeSave(payload.state);
+    if (!clean) return;
+    const revision = Number(payload.revision) || 0;
+    if (revision < toolStateRevision) return;
+    latestToolState = clean;
+    broadcastToolWindows("tool:state", {
+      save: clean,
+      now: Date.now(),
+      revision,
+      source: "pet-live",
+    });
+  });
+
+  ipcMain.handle("tool:command", (event, payload) => {
+    const tool = payload && String(payload.tool || "");
+    const command = payload && payload.command;
+    const owner = toolWindows.get(tool);
+    if (!owner || owner.isDestroyed() || owner.webContents !== event.sender) {
+      return { ok: false, error: "invalid-window" };
+    }
+
+    const base = latestToolState || sanitizeSave(readSave()) || G.freshState(Date.now());
+    let actions = loadActionList();
+    let effectiveCommand = command;
+    let actionsChanged = false;
+    if (tool === "sticker" && command && command.type === "delete") {
+      const name = String(command.name || "");
+      if (!stickerStore.remove(name)) return { ok: false, error: "delete-failed" };
+      actions = loadActionList();
+      actionsChanged = true;
+      effectiveCommand = { type: "forget", name };
+    }
+
+    const now = Date.now();
+    const applied = applyToolCommand(base, actions, tool, effectiveCommand, now);
+    if (!applied.ok) return applied;
+    const clean = sanitizeSave(applied.state);
+    if (!clean) return { ok: false, error: "invalid-state" };
+    const written = writeSave(clean);
+    if (!written.ok) return written;
+
+    toolStateRevision += 1;
+    latestToolState = clean;
+    actions = loadActionList();
+    const statePayload = {
+      save: clean,
+      actions,
+      now,
+      revision: toolStateRevision,
+      source: "tool-command",
+    };
+    send("pet:tool-state", statePayload);
+    broadcastToolWindows("tool:state", statePayload, event.sender);
+    if (actionsChanged) {
+      send("pet:actions-changed", {});
+      broadcastToolWindows("tool:actions-changed", {}, event.sender);
+    }
+    return {
+      ...applied,
+      state: clean,
+      save: clean,
+      actions,
+      revision: toolStateRevision,
+      now,
+      message:
+        effectiveCommand && effectiveCommand.type === "forget" ? "已删除自定义表情包" : applied.message,
+    };
+  });
+
+  ipcMain.handle("tool:speak", (_event, payload) => {
+    const text = payload && typeof payload.text === "string" ? payload.text.slice(0, 120) : "";
+    if (!text) return false;
+    send("pet:tool-speak", { text, ms: Math.min(5000, Math.max(600, Number(payload.ms) || 2000)) });
+    return true;
+  });
+
+  ipcMain.handle("tool:close", (event) => {
+    const toolWin = BrowserWindow.fromWebContents(event.sender);
+    if (toolWin && toolWin !== win) toolWin.close();
     return true;
   });
 
@@ -933,6 +1153,10 @@ if (!gotLock) {
     createTray();
     const quizArg = process.argv.find((arg) => arg.startsWith("--quiz="));
     if (quizArg) setTimeout(() => createQuizWindow(quizArg.split("=")[1]), 1200);
+    const toolArg = process.argv.find((arg) => arg.startsWith("--tool="));
+    if (toolArg && TOOL_WINDOW_SPECS[toolArg.split("=")[1]]) {
+      setTimeout(() => createToolWindow(toolArg.split("=")[1]), 1200);
+    }
     const shortcutToggle = globalShortcut.register("CommandOrControl+Alt+D", () => toggleWindow());
     const shortcutSummon = globalShortcut.register("CommandOrControl+Alt+R", () => summonToCursor());
     log("info", "注册全局快捷键", { toggle: shortcutToggle, summon: shortcutSummon });
