@@ -281,19 +281,27 @@ test("存档白名单保留商城 / 日程字段并过滤非法项", () => {
       dislikes: ["fish"],
       reshapes: 3,
     },
+    training: {
+      points: 21,
+      totalEarned: 40,
+      totalSpent: 19,
+      learned: ["idle_stand", "scene_cat"],
+    },
     unlocked: ["dress_santa", "dress_santa3", 5],
     favorites: ["idle_stand", "bad name"],
     recent: ["idle_stand"],
     schedule: [{ id: "a", time: "09:00", text: "喝水", doneDate: "", notifiedDate: "" }],
     shopStats: { purchases: 2, spent: 40 },
   });
-  assert.strictEqual(clean.version, 7);
+  assert.strictEqual(clean.version, 8);
   assert.strictEqual(clean.inventory.fish, 2);
   assert.strictEqual(clean.inventory["bad-key"], undefined);
   assert.strictEqual(clean.perks.lucky_cat, true);
   assert.strictEqual(clean.perks.luxury_hourglass, true);
   assert.deepStrictEqual(clean.profile.likes, ["cake", "gameboy"]);
   assert.strictEqual(clean.profile.personality, "playful");
+  assert.strictEqual(clean.training.points, 21);
+  assert.deepStrictEqual(clean.training.learned, ["idle_stand", "scene_cat"]);
   assert.strictEqual(clean.buffs.double_income, 12345);
   assert.strictEqual(clean.unlocked.length, 2);
   assert.deepStrictEqual(clean.favorites, ["idle_stand"]);
@@ -620,6 +628,55 @@ test("性格重塑卡会更换性格并重新抽取偏好", () => {
   assert.notStrictEqual(state.profile.personality, "gentle");
   assert.strictEqual(state.profile.reshapes, 1);
   assert.ok(result.profile && result.profile.personality.name);
+});
+
+test("普通动作需要训练点学习，自定义动作不受训练限制", () => {
+  const state = G.hydrate({ version: 8, training: { points: 30 } }, NOW);
+  const action = {
+    name: "trainable_move",
+    file: "pet/trainable.webp",
+    category: "idle",
+    group: "日常",
+    durationMs: 700,
+  };
+  assert.strictEqual(G.isUnlocked(state, action), false);
+  assert.strictEqual(G.trainingCost(action), 13);
+  const learned = G.learnAction(state, action);
+  assert.strictEqual(learned.ok, true);
+  assert.strictEqual(state.training.points, 17);
+  assert.strictEqual(G.isUnlocked(state, action), true);
+
+  const custom = { name: "user_sticker", file: "user-stickers/a.png", category: "meme", user: true };
+  assert.strictEqual(G.isUnlocked(state, custom), true);
+});
+
+test("摸头、喂饭、陪玩和小游戏都会产出训练点", () => {
+  const state = G.hydrate({ coins: 100, satiety: 20, mood: 20 }, NOW);
+  G.pet(state, NOW, () => 0);
+  assert.strictEqual(state.training.points, 1);
+  G.feed(state, NOW);
+  assert.strictEqual(state.training.points, 3);
+  G.play(state, NOW);
+  assert.strictEqual(state.training.points, 5);
+  G.finishMinigame(state, 3, NOW);
+  assert.strictEqual(state.training.points, 15);
+});
+
+test("v7 老存档会把已看动作补偿为已学招式", () => {
+  const state = G.hydrate(
+    {
+      version: 7,
+      seenActions: ["scene_cat", "eat_cake"],
+      favorites: ["sleep_bed"],
+      recent: ["idle_stand"],
+      settings: { baseAction: "walk_bag" },
+    },
+    NOW
+  );
+  assert.strictEqual(state.version, G.SAVE_VERSION);
+  assert.ok(state.training.learned.includes("scene_cat"));
+  assert.ok(state.training.learned.includes("eat_cake"));
+  assert.ok(state.training.learned.includes("sleep_bed"));
 });
 
 console.log(`\n通过 ${passed} / ${passed + failures.length}`);

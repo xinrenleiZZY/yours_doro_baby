@@ -11,7 +11,7 @@
 })(typeof self !== "undefined" ? self : this, function () {
   "use strict";
 
-  const SAVE_VERSION = 7;
+  const SAVE_VERSION = 8;
 
   // ---- 经济数值 -------------------------------------------------------------
   const BALANCE = {
@@ -77,6 +77,12 @@
       likes: ["milk_tea", "wand"],
       dislikes: ["bubble"],
       reshapes: 0,
+    },
+    training: {
+      points: 0,
+      totalEarned: 0,
+      totalSpent: 0,
+      learned: ["idle_stand", "walk_bag", "sleep_cat", "closeup_soft"],
     },
     quiz: {
       examCode: "architect",
@@ -355,6 +361,16 @@
   };
 
   const PREFERENCE_ITEM_IDS = ["fish", "milk_tea", "cake", "hotpot", "wand", "bubble", "gameboy"];
+  const STARTER_ACTIONS = ["idle_stand", "walk_bag", "sleep_cat", "closeup_soft"];
+  const TRAINING_COSTS = {
+    日常: 12,
+    情绪: 14,
+    吃睡: 10,
+    玩乐: 16,
+    打工: 18,
+    小剧场: 24,
+    表情包: 28,
+  };
 
   const DAILY_TASKS = [
     { id: "pet5", label: "摸头 5 次", goal: 5, key: "pets", reward: 30 },
@@ -700,6 +716,25 @@
         profile: raw.profile && typeof raw.profile === "object" ? raw.profile : DEFAULT_STATE.profile,
       });
     },
+    // 7 -> 8：动作训练。旧档按历史记录补偿已学招式，避免已有动作被收回。
+    7: (raw) => {
+      const learned = [
+        ...STARTER_ACTIONS,
+        ...(Array.isArray(raw.seenActions) ? raw.seenActions : []),
+        ...(Array.isArray(raw.favorites) ? raw.favorites : []),
+        ...(Array.isArray(raw.recent) ? raw.recent : []),
+        raw.settings && raw.settings.baseAction ? raw.settings.baseAction : "",
+      ];
+      return Object.assign({}, raw, {
+        version: 8,
+        training: {
+          points: 0,
+          totalEarned: 0,
+          totalSpent: 0,
+          learned: [...new Set(learned.filter(Boolean))],
+        },
+      });
+    },
   };
 
   function migrate(raw) {
@@ -811,6 +846,15 @@
         ? { adopted: raw.companion.adopted === true }
         : { adopted: false };
     state.profile = normalizeProfile(raw.profile, state.createdAt);
+    const learned = Array.isArray(raw.training && raw.training.learned)
+      ? raw.training.learned.filter((name) => typeof name === "string").slice(0, 500)
+      : [];
+    state.training = {
+      points: num(raw.training && raw.training.points, 0, 0, 1e9),
+      totalEarned: num(raw.training && raw.training.totalEarned, 0, 0, 1e12),
+      totalSpent: num(raw.training && raw.training.totalSpent, 0, 0, 1e12),
+      learned: [...new Set([...STARTER_ACTIONS, ...learned])],
+    };
     state.quiz = normalizeQuiz(raw.quiz);
     state.quiz.eventReadyAt = num(state.quiz.eventReadyAt, 0, 0);
     if (!state.quiz.eventReadyAt) state.quiz.eventReadyAt = now + QUIZ_EVENT_COOLDOWN_MS;
@@ -945,8 +989,9 @@
     state.mood = clamp(state.mood + 4 * personalityOf(state).feedMood, 0, 100);
     state.stats.feeds += 1;
     bumpDaily(state, "feeds");
+    const training = awardTrainingPoints(state, 2, "feed");
     state.lastTick = now || Date.now();
-    return { ok: true, dialogue: "好吃！" };
+    return { ok: true, dialogue: "好吃！", training };
   }
 
   function play(state, now) {
@@ -961,8 +1006,9 @@
     state.satiety = clamp(state.satiety - 3, 0, 100);
     state.stats.plays += 1;
     bumpDaily(state, "plays");
+    const training = awardTrainingPoints(state, 2, "play");
     state.lastTick = now || Date.now();
-    return { ok: true, dialogue: "好玩！" };
+    return { ok: true, dialogue: "好玩！", training };
   }
 
   function upgradeCost(state) {
@@ -991,8 +1037,9 @@
     const bonus = lo + Math.floor(random() * (hi - lo + 1));
     state.coins += bonus;
     state.totalEarned += bonus;
+    const training = awardTrainingPoints(state, 1, "pet");
     state.lastTick = now || Date.now();
-    return { bonus, dialogue: pick(DIALOGUE.happy, random) };
+    return { bonus, dialogue: pick(DIALOGUE.happy, random), training };
   }
 
   function pick(list, rng) {
@@ -1033,7 +1080,8 @@
       if (!stickerRandomAllowed(state, action)) return false;
       return true;
     });
-    const source = usable.length ? usable : actions;
+    const fallback = actions.filter((action) => isUnlocked(state, action));
+    const source = usable.length ? usable : fallback.length ? fallback : actions;
     const personality = personalityOf(state);
     const weights = source.map((action) => {
       const kind = actionKind(action);
@@ -1069,11 +1117,67 @@
   }
 
   // ---- 商城 ---------------------------------------------------------------
-  /** 换装动作默认锁着，需要商城解锁；其它动作直接可用。 */
+  function isTrainingEligible(action) {
+    return Boolean(
+      action &&
+      action.name &&
+      action.file &&
+      !action.user &&
+      action.category !== "dress" &&
+      !STARTER_ACTIONS.includes(action.name)
+    );
+  }
+
+  function isActionLearned(state, action) {
+    if (!action) return false;
+    if (!isTrainingEligible(action)) return true;
+    return Boolean(state.training && state.training.learned.includes(action.name));
+  }
+
+  function trainingCost(action) {
+    if (!isTrainingEligible(action)) return 0;
+    const base = TRAINING_COSTS[action.group] || 16;
+    const durationExtra = clamp(Math.round((Number(action.durationMs) || 0) / 700), 0, 12);
+    return base + durationExtra;
+  }
+
+  function awardTrainingPoints(state, amount, reason) {
+    if (!state.training) state.training = { points: 0, totalEarned: 0, totalSpent: 0, learned: [] };
+    const gained = Math.max(0, Math.round(Number(amount) || 0));
+    state.training.points += gained;
+    state.training.totalEarned += gained;
+    return { gained, total: state.training.points, reason: reason || "" };
+  }
+
+  function learnAction(state, action) {
+    if (!isTrainingEligible(action)) return { ok: false, reason: "not-trainable" };
+    if (isActionLearned(state, action)) return { ok: false, reason: "learned" };
+    const cost = trainingCost(action);
+    if (!state.training || state.training.points < cost) {
+      return { ok: false, reason: "points", cost, points: state.training ? state.training.points : 0 };
+    }
+    state.training.points -= cost;
+    state.training.totalSpent += cost;
+    state.training.learned.push(action.name);
+    return { ok: true, cost, points: state.training.points, name: action.name };
+  }
+
+  function trainingProgress(state, actions) {
+    const trainable = (Array.isArray(actions) ? actions : []).filter((action) => isTrainingEligible(action));
+    const learned = trainable.filter((action) => isActionLearned(state, action));
+    return {
+      points: state.training ? state.training.points : 0,
+      learned: learned.length,
+      total: trainable.length,
+      remaining: trainable.length - learned.length,
+    };
+  }
+
+  /** 换装需要商城解锁；普通动作需要训练学会；自定义表情包默认可用。 */
   function isUnlocked(state, action) {
     if (!action) return false;
-    if (action.category !== "dress") return true;
-    return (state.unlocked || []).includes(action.name);
+    if (action.category === "dress") return (state.unlocked || []).includes(action.name);
+    return isActionLearned(state, action);
   }
 
   function isStickerAction(action) {
@@ -1658,12 +1762,17 @@
     return { ready: secondsLeft === 0, secondsLeft };
   }
 
+  function minigameTrainingGain(score) {
+    return 4 + Math.max(0, Math.round(Number(score) || 0)) * 2;
+  }
+
   function finishMinigame(state, score, now) {
     const ts = now || Date.now();
     const reward = Math.max(5, Math.round((Number(score) || 0) * 2));
     state.coins += reward;
     state.totalEarned += reward;
     state.minigame = { lastPlayedAt: ts };
+    awardTrainingPoints(state, minigameTrainingGain(score), "minigame");
     return reward;
   }
 
@@ -1757,6 +1866,12 @@
     preferenceFor,
     profileDetails,
     reshapeProfile,
+    isTrainingEligible,
+    isActionLearned,
+    trainingCost,
+    awardTrainingPoints,
+    learnAction,
+    trainingProgress,
     effectiveLabel,
     stickerRandomAllowed,
     setStickerRandom,
@@ -1795,6 +1910,7 @@
     bankWithdraw,
     pullGacha,
     minigameStatus,
+    minigameTrainingGain,
     finishMinigame,
     spawnVisitor,
     visitorStatus,

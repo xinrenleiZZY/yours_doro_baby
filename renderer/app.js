@@ -562,7 +562,10 @@
       const key = button.dataset.toggle;
       button.classList.toggle("on", Boolean(state.settings[key]));
     });
-    if (el.menuLibraryCount) el.menuLibraryCount.textContent = `${actions.length} 个`;
+    if (el.menuLibraryCount) {
+      const progress = G.trainingProgress(state, actions);
+      el.menuLibraryCount.textContent = `${progress.points} 训练点`;
+    }
     if (el.menuScheduleCount) {
       el.menuScheduleCount.textContent = state.schedule.length ? `${state.schedule.length} 条` : "";
     }
@@ -584,13 +587,21 @@
 
   // ------------------------------------------------------------- 动作库
   function libraryGroups() {
-    return ["全部", "收藏", "最近", ...new Set(actions.map((action) => action.group).filter(Boolean))];
+    return [
+      "全部",
+      "可训练",
+      "收藏",
+      "最近",
+      ...new Set(actions.map((action) => action.group).filter(Boolean)),
+    ];
   }
 
   function filteredActions() {
     const query = libState.query.trim().toLowerCase();
     let items;
-    if (libState.group === "收藏") {
+    if (libState.group === "可训练") {
+      items = actions.filter((action) => G.isTrainingEligible(action) && !G.isActionLearned(state, action));
+    } else if (libState.group === "收藏") {
       items = state.favorites.map((name) => byName.get(name)).filter(Boolean);
     } else if (libState.group === "最近") {
       items = state.recent.map((name) => byName.get(name)).filter(Boolean);
@@ -641,7 +652,8 @@
     const items = filteredActions();
     const pages = Math.max(1, Math.ceil(items.length / LIB_PAGE_SIZE));
     libState.page = Math.min(Math.max(0, libState.page), pages - 1);
-    el.libraryCount.textContent = `${items.length} / ${actions.length}`;
+    const training = G.trainingProgress(state, actions);
+    el.libraryCount.textContent = `${training.learned}/${training.total} 已学 · ${training.points} 训练点`;
 
     el.libraryTabs.innerHTML = "";
     libraryGroups().forEach((group) => {
@@ -662,9 +674,11 @@
       const button = document.createElement("button");
       const unlocked = G.isUnlocked(state, action);
       const price = action.category === "dress" ? G.dressPrice(Math.max(0, dressIndex(action.name))) : 0;
+      const trainingLock = G.isTrainingEligible(action) && !G.isActionLearned(state, action);
+      const trainingPrice = trainingLock ? G.trainingCost(action) : 0;
       button.className = `lib-item${action.name === baseAction ? " active" : ""}${unlocked ? "" : " locked"}`;
       button.title = `${G.effectiveLabel(state, action)} · ${action.category}${action.blocked ? " · 不参与随机" : ""}${
-        unlocked ? "" : ` · ${price} 币解锁`
+        unlocked ? "" : trainingLock ? ` · ${trainingPrice} 训练点学习` : ` · ${price} 币解锁`
       }`;
       const img = document.createElement("img");
       img.loading = "lazy";
@@ -684,7 +698,7 @@
       if (!unlocked) {
         const lock = document.createElement("span");
         lock.className = "lib-lock";
-        lock.textContent = "🔒";
+        lock.textContent = trainingLock ? `训${trainingPrice}` : "🔒";
         button.appendChild(lock);
       }
       if (action.blocked) {
@@ -696,6 +710,19 @@
       }
       button.addEventListener("click", () => {
         if (!unlocked) {
+          if (trainingLock) {
+            const result = G.learnAction(state, action);
+            if (!result.ok) {
+              toast(`训练点不足：需要 ${result.cost}，当前 ${result.points}`);
+              return;
+            }
+            playSound("upgrade");
+            toast(`学会「${G.effectiveLabel(state, action)}」，消耗 ${result.cost} 训练点`);
+            updateMenu();
+            scheduleSave(500);
+            selectAction(action);
+            return;
+          }
           shopTab = "装扮";
           openSidePanel("shop");
           toast(`先去商城解锁「${G.effectiveLabel(state, action)}」（${price} 币）`);
@@ -808,10 +835,13 @@
     });
 
     const profile = G.profileDetails(state);
+    const training = G.trainingProgress(state, actions);
     el.growthProfileTitle.textContent = `${profile.personality.icon} ${profile.personality.name}`;
     el.growthProfile.textContent = `${profile.personality.desc} · 喜欢：${profile.likes
       .map((item) => `${item.icon}${item.name}`)
-      .join("、")} · 不喜欢：${profile.dislikes.map((item) => `${item.icon}${item.name}`).join("、")}`;
+      .join("、")} · 不喜欢：${profile.dislikes
+      .map((item) => `${item.icon}${item.name}`)
+      .join("、")} · 招式 ${training.learned}/${training.total} · ${training.points} 训练点`;
 
     const codex = G.codexSummary(state, actions);
     el.growthCodex.textContent = `${codex.seen} / ${codex.total}`;
@@ -995,8 +1025,10 @@
     mini.endTimer = null;
     el.minigameArea.innerHTML = "";
     if (reward !== false) {
+      const trainingBefore = state.training.points;
       const coins = G.finishMinigame(state, mini.score, Date.now());
-      toast(`接金币得分 ${mini.score}，奖励 +${coins} 金币`);
+      const trainingGain = state.training.points - trainingBefore;
+      toast(`接金币得分 ${mini.score}，+${coins} 金币 · +${trainingGain} 训练点`);
       playSound("coin");
       updateHud(0);
       scheduleSave(600);

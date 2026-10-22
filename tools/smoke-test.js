@@ -17,12 +17,15 @@ const { applyToolCommand } = require("../lib/tool-actions.js");
 
 const ROOT = path.join(__dirname, "..");
 const REPORT = path.join(ROOT, "_smoke-report.txt");
+const ACTION_NAMES = JSON.parse(fs.readFileSync(path.join(ROOT, "assets", "actions.json"), "utf8")).map(
+  (action) => action.name
+);
 
 // 测试专用 profile，不污染真实存档
 app.setPath("userData", path.join(ROOT, ".tmp-smoke-userdata"));
 
 const BASE_SAVE = {
-  version: 1,
+  version: 8,
   coins: 500,
   totalEarned: 900,
   level: 1,
@@ -39,6 +42,12 @@ const BASE_SAVE = {
     showBubble: true,
     autoWalk: false,
     scale: 1,
+  },
+  training: {
+    points: 100,
+    totalEarned: 100,
+    totalSpent: 0,
+    learned: ACTION_NAMES.filter((name) => name !== "toilet_reading"),
   },
 };
 
@@ -449,6 +458,27 @@ async function runScenarios(win) {
   );
   check("动作库能打开并分页展示", library.open && library.items === 12, `${library.items} 个/页`);
   check("动作库有分类标签", library.tabs >= 5, `${library.tabs} 个`);
+
+  await js(
+    win,
+    `(() => {
+      const input = document.getElementById("library-search");
+      input.value = "如厕看报";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      return true;
+    })()`
+  );
+  await wait(120);
+  const trainingBefore = await getState(win);
+  await js(win, `document.querySelector(".lib-item").click()`);
+  await wait(180);
+  const trainingAfter = await getState(win);
+  check(
+    "未学动作可消耗训练点学习",
+    trainingAfter.training.learned.includes("toilet_reading") &&
+      trainingAfter.training.points < trainingBefore.training.points,
+    `${trainingBefore.training.points}→${trainingAfter.training.points} 点`
+  );
 
   await js(
     win,
