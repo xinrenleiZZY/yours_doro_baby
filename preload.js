@@ -40,6 +40,17 @@ contextBridge.exposeInMainWorld("petAPI", {
   onNotice: (handler) => on("pet:notice", handler),
   onSystemIdle: (handler) => on("pet:system-idle", handler),
 
+  // AI 聊天：密钥只在主进程；宠物窗口只接收收敛后的动作意图。
+  aiOpen: () => ipcRenderer.invoke("ai:open"),
+  aiClose: () => ipcRenderer.invoke("ai:close"),
+  aiStatus: () => ipcRenderer.invoke("ai:status"),
+  aiConfigGet: () => ipcRenderer.invoke("ai:config-get"),
+  aiConfigSave: (config) => ipcRenderer.invoke("ai:config-save", config),
+  aiHistory: () => ipcRenderer.invoke("ai:history"),
+  aiClearHistory: () => ipcRenderer.invoke("ai:clear-history"),
+  aiChat: (payload) => ipcRenderer.invoke("ai:chat", payload),
+  onAiIntent: (handler) => on("pet:ai-intent", handler),
+
   // 题库：网络与判卷都在主进程，渲染进程只拿无答案题面。
   quizExams: (options) => ipcRenderer.invoke("quiz:exams", options),
   quizCreate: (payload) => ipcRenderer.invoke("quiz:create", payload),

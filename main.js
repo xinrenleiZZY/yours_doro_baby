@@ -15,6 +15,7 @@ const {
   globalShortcut,
   dialog,
   powerMonitor,
+  safeStorage,
 } = require("electron");
 const fs = require("fs");
 const path = require("path");
@@ -24,12 +25,14 @@ const { sanitizeNotification } = require("./lib/notify");
 const { QuizService } = require("./lib/quiz-api");
 const { UpdaterService } = require("./lib/updater");
 const { StickerStore } = require("./lib/sticker-store");
+const { AiService } = require("./lib/ai-service");
 const G = require("./renderer/game.js");
 const { applyToolCommand } = require("./lib/tool-actions");
 
 const WINDOW_SIZE = { width: 320, height: 360 };
 // 答题窗口：独立、不透明、可拖动，避免撑大透明的宠物窗口
 const QUIZ_WINDOW_SIZE = { width: 640, height: 720 };
+const CHAT_WINDOW_SIZE = { width: 540, height: 720 };
 const USER_DATA = app.getPath("userData");
 const SAVE_FILE = path.join(USER_DATA, "save.json");
 const SESSION_FILE = path.join(USER_DATA, "session.json");
@@ -39,6 +42,8 @@ const QUIZ_CACHE_FILE = path.join(USER_DATA, "quiz-cache.json");
 const QUIZ_EXAM_FILE = path.join(USER_DATA, "quiz-exam.json");
 const USER_STICKER_DIR = path.join(USER_DATA, "user-stickers");
 const USER_STICKERS_FILE = path.join(USER_DATA, "user-stickers.json");
+const AI_CONFIG_FILE = path.join(USER_DATA, "ai-config.json");
+const AI_HISTORY_FILE = path.join(USER_DATA, "ai-history.json");
 const TOOL_WINDOW_SPECS = {
   shop: { width: 620, height: 700, title: "doro 商城" },
   gacha: { width: 500, height: 520, title: "doro 扭蛋机" },
@@ -52,6 +57,7 @@ const TRACE_HOVER = process.env.DORO_TRACE_HOVER === "1";
 
 let win = null;
 let quizWin = null;
+let chatWin = null;
 const toolWindows = new Map();
 let tray = null;
 let saveTimer = null;
@@ -59,6 +65,7 @@ let crashedLastTime = false;
 let sessionClosed = false;
 let uiRestoreBounds = null;
 let lastRenderReloadAt = 0;
+let lastChatReloadAt = 0;
 let systemWatchTimer = null;
 let rendererCrashNotice = false;
 const runtime = {
@@ -87,6 +94,12 @@ const stickerStore = new StickerStore({
       return null;
     }
   },
+  log,
+});
+const aiService = new AiService({
+  configFile: AI_CONFIG_FILE,
+  historyFile: AI_HISTORY_FILE,
+  safeStorage,
   log,
 });
 
@@ -332,7 +345,8 @@ function startPointerWatch() {
   if (pointerWatch.timer) clearInterval(pointerWatch.timer);
   pointerWatch.ignoring = null;
   tickPointer();
-  pointerWatch.timer = setInterval(tickPointer, 80);
+  // 高频轮询，避免用户移动后立即点击时仍处于上一次的穿透状态。
+  pointerWatch.timer = setInterval(tickPointer, 16);
 }
 
 function stopPointerWatch() {
@@ -359,6 +373,25 @@ function loadActionList() {
   const file = path.join(__dirname, "assets", "actions.json");
   const bundled = JSON.parse(fs.readFileSync(file, "utf8"));
   return Array.isArray(bundled) ? [...bundled, ...stickerStore.listActions()] : stickerStore.listActions();
+}
+
+function aiPetContext() {
+  const state = latestToolState || readSave() || {};
+  const personality = state.profile ? G.personalityOf(state) : { name: "温柔" };
+  const intimacy = state.intimacy ? G.intimacyStatus(state) : { level: 1, name: "刚认识" };
+  return {
+    localTime: new Date().toLocaleString("zh-CN", { hour12: false }),
+    weekday: new Date().toLocaleDateString("zh-CN", { weekday: "long" }),
+    personality: personality.name,
+    level: Number(state.level) || 1,
+    mood: Math.round(Number(state.mood) || 0),
+    satiety: Math.round(Number(state.satiety) || 0),
+    intimacyLevel: intimacy.level,
+    intimacyName: intimacy.name,
+    coins: G.formatCoins(Number(state.coins) || 0),
+    dnd: Boolean(state.settings && state.settings.dnd),
+    systemIdleSeconds: powerMonitor.getSystemIdleTime(),
+  };
 }
 
 function broadcastToolWindows(channel, payload, exceptWebContents) {
@@ -563,6 +596,74 @@ function createQuizWindow(mode) {
   return quizWin;
 }
 
+// ---------------------------------------------------------------- AI 聊天窗口
+function isChatWindowSender(event) {
+  return Boolean(
+    chatWin && !chatWin.isDestroyed() && event && event.sender && event.sender === chatWin.webContents
+  );
+}
+
+function createChatWindow() {
+  if (chatWin && !chatWin.isDestroyed()) {
+    chatWin.show();
+    chatWin.focus();
+    return chatWin;
+  }
+  const area = screen.getPrimaryDisplay().workArea;
+  const width = Math.min(CHAT_WINDOW_SIZE.width, area.width - 40);
+  const height = Math.min(CHAT_WINDOW_SIZE.height, area.height - 40);
+  chatWin = new BrowserWindow({
+    width,
+    height,
+    minWidth: Math.min(420, width),
+    minHeight: Math.min(520, height),
+    x: area.x + Math.round((area.width - width) / 2),
+    y: area.y + Math.round((area.height - height) / 2),
+    frame: false,
+    transparent: false,
+    resizable: true,
+    minimizable: true,
+    maximizable: false,
+    skipTaskbar: false,
+    alwaysOnTop: true,
+    show: false,
+    backgroundColor: "#fff8f5",
+    title: "和 doro 聊天",
+    webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  chatWin.setAlwaysOnTop(true, "floating");
+  chatWin.setMenuBarVisibility(false);
+  chatWin.webContents.on("did-finish-load", () => log("info", "AI 聊天窗口加载完成"));
+  chatWin.webContents.on("did-fail-load", (_event, code, description, url) => {
+    log("error", "AI 聊天窗口加载失败", { code, description, url });
+  });
+  chatWin.webContents.on("render-process-gone", (_event, details) => {
+    log("error", "AI 聊天窗口渲染进程退出", details);
+    if (details.reason === "clean-exit") return;
+    const now = Date.now();
+    if (now - lastChatReloadAt > 60000) {
+      lastChatReloadAt = now;
+      setTimeout(() => {
+        if (chatWin && !chatWin.isDestroyed()) chatWin.reload();
+      }, 1000);
+    }
+  });
+  chatWin.loadFile(path.join(__dirname, "renderer", "chat-window.html"));
+  chatWin.once("ready-to-show", () => {
+    if (!chatWin || chatWin.isDestroyed()) return;
+    chatWin.show();
+    chatWin.focus();
+  });
+  chatWin.on("closed", () => {
+    chatWin = null;
+  });
+  return chatWin;
+}
+
 // ---------------------------------------------------------------- 独立工具窗口
 function createToolWindow(tool, options) {
   const spec = TOOL_WINDOW_SPECS[tool];
@@ -640,6 +741,7 @@ function buildTrayMenu() {
   const menu = Menu.buildFromTemplate([
     { label: win && win.isVisible() ? "先躲起来" : "出来玩", click: toggleWindow },
     { type: "separator" },
+    { label: "和 doro 聊天（Ctrl+Alt+C）", click: () => createChatWindow() },
     { label: "喂饭（20 金币）", click: () => send("pet:command", "feed") },
     { label: "陪玩（30 金币）", click: () => send("pet:command", "play") },
     { label: "叫它过来（Ctrl+Alt+R）", click: summonToCursor },
@@ -755,6 +857,48 @@ function registerIpc() {
       });
     }
     return result;
+  });
+
+  // ---- AI 聊天（密钥、上下文与网络留在主进程） -------------------------
+  ipcMain.handle("ai:status", (event) =>
+    isChatWindowSender(event) ? aiService.status() : { configured: false, error: "unauthorized" }
+  );
+  ipcMain.handle("ai:config-get", (event) =>
+    isChatWindowSender(event) ? aiService.publicConfig() : { error: "unauthorized" }
+  );
+  ipcMain.handle("ai:config-save", (event, config) =>
+    isChatWindowSender(event) ? aiService.updateConfig(config) : { ok: false, error: "unauthorized" }
+  );
+  ipcMain.handle("ai:history", (event) => (isChatWindowSender(event) ? aiService.publicHistory() : []));
+  ipcMain.handle("ai:clear-history", (event) =>
+    isChatWindowSender(event) ? aiService.clearHistory() : { ok: false, error: "unauthorized" }
+  );
+  ipcMain.handle("ai:open", () => {
+    createChatWindow();
+    return true;
+  });
+  ipcMain.handle("ai:close", (event) => {
+    const owner = BrowserWindow.fromWebContents(event.sender);
+    if (owner && owner === chatWin) owner.close();
+    return true;
+  });
+  ipcMain.handle("ai:chat", async (event, payload) => {
+    if (!isChatWindowSender(event)) return { ok: false, error: "unauthorized" };
+    const message = payload && typeof payload.message === "string" ? payload.message : "";
+    if (!message.trim()) return { ok: false, error: "empty-message" };
+    try {
+      const result = await aiService.chat({
+        message,
+        context: aiPetContext(),
+      });
+      if (result.ok && isChatWindowSender(event)) {
+        send("pet:ai-intent", { intent: result.intent, source: "chat" });
+      }
+      return result;
+    } catch (err) {
+      log("error", "AI 聊天处理失败", err && err.stack ? err.stack : String(err));
+      return { ok: false, error: "internal" };
+    }
   });
 
   // ---- 题库（网络与判卷都在主进程） ------------------------------------
@@ -1163,9 +1307,15 @@ if (!gotLock) {
     if (toolArg && TOOL_WINDOW_SPECS[toolArg.split("=")[1]]) {
       setTimeout(() => createToolWindow(toolArg.split("=")[1]), 1200);
     }
+    if (process.argv.includes("--chat")) setTimeout(() => createChatWindow(), 1200);
     const shortcutToggle = globalShortcut.register("CommandOrControl+Alt+D", () => toggleWindow());
     const shortcutSummon = globalShortcut.register("CommandOrControl+Alt+R", () => summonToCursor());
-    log("info", "注册全局快捷键", { toggle: shortcutToggle, summon: shortcutSummon });
+    const shortcutChat = globalShortcut.register("CommandOrControl+Alt+C", () => createChatWindow());
+    log("info", "注册全局快捷键", {
+      toggle: shortcutToggle,
+      summon: shortcutSummon,
+      chat: shortcutChat,
+    });
 
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();

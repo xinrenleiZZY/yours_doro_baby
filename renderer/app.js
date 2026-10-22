@@ -202,6 +202,9 @@
   let busyUntil = 0;
   let systemSleeping = false;
   let lastHourlyCheck = new Date().getHours();
+  let activeSince = Date.now();
+  let lastBreakNudgeAt = Date.now();
+  let breakIdleReset = false;
 
   // ------------------------------------------------------------- 基础工具
   function rand(min, max) {
@@ -362,6 +365,7 @@
       }
     }
     syncHudPosition();
+    reportHitboxes();
   }
 
   function noteAction(action) {
@@ -412,8 +416,8 @@
           h: Math.round(rect.height + p * 2),
         });
       };
-      add(el.petStack, 8);
-      add(el.hud, 2);
+      add(el.petStack, 12);
+      add(el.hud, 8);
       add(el.panel, 4);
       add(el.menu, 4);
       add(el.library, 4);
@@ -525,6 +529,54 @@
       },
       (ms || 2200) + 40
     );
+  }
+
+  const AI_GESTURE_ACTIONS = {
+    nod: ["closeup_smile", "happy_clap", "happy_cheer"],
+    shake: ["shy_shake", "angry_red", "idle_face"],
+    jump: ["happy_cheer", "happy_heart", "closeup_smile"],
+    stretch: ["sunset_stretch", "morning_stretch", "idle_stretch"],
+    hide: ["idle_loaf", "sleep_curl", "idle_box"],
+  };
+  const AI_EMOTION_ACTIONS = {
+    gentle: ["closeup_soft", "idle_sit", "idle_soft"],
+    happy: ["happy_heart", "happy_clap", "closeup_smile"],
+    sad: ["sad_puddle", "cry_bear", "idle_loaf"],
+    angry: ["angry_pinch", "angry_red", "angry_shout"],
+    shy: ["happy_shy", "happy_shy2", "idle_shy"],
+    curious: ["idle_question", "idle_face", "idle_box"],
+    sleepy: ["sleep_cat", "sleep_curl", "sleep_face"],
+  };
+
+  function availableAction(names) {
+    const list = Array.isArray(names) ? names : [];
+    for (const name of list) {
+      const action = byName.get(name);
+      if (
+        action &&
+        G.isUnlocked(state, action) &&
+        !action.blocked &&
+        !G.isStickerHidden(state, action) &&
+        action.category !== "dress"
+      ) {
+        return action;
+      }
+    }
+    return null;
+  }
+
+  function applyAiIntent(payload) {
+    const intent = payload && payload.intent;
+    if (!intent || typeof intent.reply !== "string") return;
+    const gesture = AI_GESTURE_ACTIONS[intent.gesture];
+    const action =
+      availableAction(gesture) ||
+      availableAction(AI_EMOTION_ACTIONS[intent.emotion]) ||
+      byName.get(IDLE_ACTION);
+    busyUntil = 0;
+    speak(intent.reply.slice(0, 280), 6200);
+    if (action)
+      playReaction(action.name, Math.min(6500, Math.max(2400, Number(action.durationMs) * 2 + 800)));
   }
 
   function scheduleAmbient(delay) {
@@ -1809,6 +1861,20 @@
       if (state.satiety <= G.BALANCE.emptyThreshold && Math.random() < 0.12) {
         playReaction(pickByCategory("sad").name, 2400);
       }
+      if (
+        !systemSleeping &&
+        !state.settings.dnd &&
+        now - activeSince >= 50 * 60 * 1000 &&
+        now - lastBreakNudgeAt >= 60 * 60 * 1000 &&
+        now >= busyUntil
+      ) {
+        lastBreakNudgeAt = now;
+        const stretch = availableAction(["sunset_stretch", "morning_stretch", "idle_stretch"]);
+        if (stretch) playReaction(stretch.name, 3200);
+        speak("坐得有点久啦，起来喝口水，顺便伸个懒腰吧", 5200);
+        playSound("clock");
+        nextMumbleAt = now + 30000;
+      }
     }, 1000);
   }
 
@@ -2274,6 +2340,7 @@
       else if (cmd === "minigame") openSidePanel("minigame");
       else if (cmd === "quiz") openQuizWindow("home");
       else if (cmd === "sticker") openSidePanel("sticker");
+      else if (cmd === "chat") api.aiOpen();
       else if (cmd === "daily-question") {
         openQuizWindow("daily");
       } else if (cmd === "clear-base") {
@@ -2777,19 +2844,30 @@
 
     api.onSystemIdle((payload) => {
       const seconds = Number(payload && payload.seconds) || 0;
+      if (seconds >= 120 && !breakIdleReset) {
+        breakIdleReset = true;
+        activeSince = Date.now();
+      }
       if (seconds >= 600 && !systemSleeping) {
         systemSleeping = true;
         if (reactionTimer) clearTimeout(reactionTimer);
         const sleep = byName.has("sleep_curl") ? "sleep_curl" : IDLE_ACTION;
         setAction(sleep, { force: true });
       } else if (systemSleeping && seconds < 5) {
+        breakIdleReset = false;
         systemSleeping = false;
         busyUntil = 0;
+        activeSince = Date.now();
+        lastBreakNudgeAt = Date.now();
         const stretch = byName.has("morning_stretch") ? "morning_stretch" : IDLE_ACTION;
         playReaction(stretch, 2600);
         speak("伸个懒腰……你回来啦", 2400);
+      } else if (seconds < 5) {
+        breakIdleReset = false;
       }
     });
+
+    api.onAiIntent((payload) => applyAiIntent(payload));
 
     api.onWindowMoved((bounds) => {
       state.window = { x: bounds.x, y: bounds.y };

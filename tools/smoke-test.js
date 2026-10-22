@@ -63,6 +63,14 @@ let lastSaved = null;
 let lastHitboxes = [];
 let toolState = null;
 let toolRevision = 0;
+let aiConfigState = {
+  baseUrl: "https://api.deepseek.com/v1",
+  model: "deepseek-chat",
+  persona: "测试人格：说话简短。",
+  hasApiKey: false,
+  encryptionAvailable: true,
+};
+let aiHistoryState = [];
 const calls = {
   setPosition: [],
   clickThrough: [],
@@ -73,6 +81,9 @@ const calls = {
   toolOpened: [],
   uiSizes: [],
   quit: 0,
+  aiChats: [],
+  aiSaves: [],
+  aiClosed: 0,
 };
 const results = [];
 const lines = [];
@@ -209,6 +220,51 @@ function registerStubs() {
   ipcMain.handle("app:update-download", () => ({ state: "downloaded", version: "0.2.1" }));
   ipcMain.handle("app:update-install", () => ({ state: "installing" }));
 
+  ipcMain.handle("ai:status", () => ({
+    configured: aiConfigState.hasApiKey,
+    provider: "openai-compatible",
+    model: aiConfigState.model,
+    hasApiKey: aiConfigState.hasApiKey,
+  }));
+  ipcMain.handle("ai:config-get", () => ({ ...aiConfigState, persona: aiConfigState.persona }));
+  ipcMain.handle("ai:config-save", (_event, config) => {
+    aiConfigState = {
+      ...aiConfigState,
+      baseUrl: String(config.baseUrl || ""),
+      model: String(config.model || ""),
+      persona: String(config.persona || ""),
+      hasApiKey: Boolean(config.apiKey) || (aiConfigState.hasApiKey && !config.clearApiKey),
+    };
+    calls.aiSaves.push(config);
+    return {
+      ok: true,
+      config: { ...aiConfigState },
+      status: {
+        configured: aiConfigState.hasApiKey,
+        model: aiConfigState.model,
+        hasApiKey: aiConfigState.hasApiKey,
+      },
+    };
+  });
+  ipcMain.handle("ai:history", () => aiHistoryState.map((item) => ({ ...item })));
+  ipcMain.handle("ai:clear-history", () => {
+    aiHistoryState = [];
+    return { ok: true };
+  });
+  ipcMain.handle("ai:chat", (_event, payload) => {
+    calls.aiChats.push(payload);
+    const intent = { reply: "那就先歇十分钟吧。", emotion: "gentle", gesture: "stretch" };
+    aiHistoryState.push({ role: "user", content: payload.message, at: Date.now() });
+    aiHistoryState.push({ role: "assistant", content: intent.reply, at: Date.now() });
+    return { ok: true, intent, history: aiHistoryState };
+  });
+  ipcMain.handle("ai:close", (event) => {
+    calls.aiClosed += 1;
+    const target = BrowserWindow.fromWebContents(event.sender);
+    if (target) target.close();
+    return true;
+  });
+
   // 题库相关：用固定假数据跑通 UI 流程
   ipcMain.handle("quiz:exams", () => ({
     exams: [
@@ -309,6 +365,24 @@ async function openToolWindowPage(tool) {
   });
   await win.loadFile(path.join(ROOT, "renderer", "tool-window.html"), { query: { tool } });
   await waitFor(win, `document.documentElement.dataset.toolReady === "1"`, 5000, `${tool} 工具窗口`);
+  return win;
+}
+
+async function openChatWindowPage() {
+  const win = new BrowserWindow({
+    width: 540,
+    height: 720,
+    show: false,
+    frame: false,
+    webPreferences: {
+      preload: path.join(ROOT, "preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      backgroundThrottling: false,
+    },
+  });
+  await win.loadFile(path.join(ROOT, "renderer", "chat-window.html"));
+  await waitFor(win, `document.documentElement.dataset.chatReady === "1"`, 5000, "AI 聊天窗口");
   return win;
 }
 
@@ -1054,6 +1128,24 @@ async function runScenarios(win) {
     "打工中显示工作提示",
     await js(win, `document.getElementById("work-chip").classList.contains("show")`)
   );
+  const workChipPoint = await js(
+    win,
+    `(() => {
+      const r = document.getElementById("work-chip").getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    })()`
+  );
+  check(
+    "工作提示出现后命中框立即更新",
+    lastHitboxes.some(
+      (box) =>
+        workChipPoint.x >= box.x &&
+        workChipPoint.x <= box.x + box.w &&
+        workChipPoint.y >= box.y &&
+        workChipPoint.y <= box.y + box.h
+    ),
+    JSON.stringify(workChipPoint)
+  );
   const completedBefore = visitorWorkAfter.work.completed;
   await js(win, `window.__doroTest.finishWork()`);
   await wait(180);
@@ -1499,6 +1591,83 @@ async function runToolWindowScenarios() {
   await wait(120);
 }
 
+async function runChatWindowScenario() {
+  const chat = await openChatWindowPage();
+  const initial = await js(
+    chat,
+    `({
+      settingsOpen: !document.getElementById("settings").hidden,
+      status: document.getElementById("status").textContent,
+      messages: document.querySelectorAll(".message").length
+    })`
+  );
+  check(
+    "未配置时聊天窗口会引导填写接口",
+    initial.settingsOpen && /还没配置/.test(initial.status) && initial.messages === 0,
+    JSON.stringify(initial)
+  );
+
+  await js(
+    chat,
+    `(() => {
+      document.getElementById("base-url").value = "https://api.example.com/v1";
+      document.getElementById("model").value = "test-chat";
+      document.getElementById("api-key").value = "test-secret";
+      document.getElementById("persona").value = "测试人格：说话简短。";
+      document.getElementById("save-settings").click();
+      return true;
+    })()`
+  );
+  await waitFor(chat, `document.getElementById("status").classList.contains("ready")`, 3000, "聊天配置保存");
+  check(
+    "聊天配置通过主进程保存",
+    calls.aiSaves.length === 1 &&
+      aiConfigState.hasApiKey &&
+      aiConfigState.model === "test-chat" &&
+      calls.aiSaves[0].apiKey === "test-secret",
+    JSON.stringify({ saves: calls.aiSaves.length, model: aiConfigState.model })
+  );
+
+  await js(
+    chat,
+    `(() => {
+      document.getElementById("message").value = "写代码写累了";
+      document.getElementById("send").click();
+      return true;
+    })()`
+  );
+  await waitFor(
+    chat,
+    `[...document.querySelectorAll(".message.assistant .bubble")].some((node) => node.textContent.includes("歇十分钟"))`,
+    3000,
+    "聊天回复"
+  );
+  const chatResult = await js(
+    chat,
+    `({
+      assistant: [...document.querySelectorAll(".message.assistant .bubble")].map((node) => node.textContent),
+      error: document.querySelectorAll(".message.error").length,
+      status: document.getElementById("status").textContent
+    })`
+  );
+  check(
+    "聊天回复会显示并写入短期历史",
+    chatResult.assistant.some((text) => text.includes("歇十分钟")) &&
+      chatResult.error === 0 &&
+      aiHistoryState.length === 2 &&
+      calls.aiChats[0].message === "写代码写累了",
+    JSON.stringify(chatResult)
+  );
+  chat.showInactive();
+  await wait(200);
+  fs.writeFileSync(path.join(ROOT, "_shot_chat_window.png"), (await chat.webContents.capturePage()).toPNG());
+  chat.hide();
+
+  await js(chat, `document.getElementById("close").click()`);
+  await wait(160);
+  check("聊天窗口可以关闭", calls.aiClosed === 1 && chat.isDestroyed(), `closed=${calls.aiClosed}`);
+}
+
 async function runRestartScenario(chosenAction) {
   // 用上一次存档重新开一个窗口，验证"重启后进度还在"
   seed = lastSaved;
@@ -1529,6 +1698,7 @@ async function main() {
     chosenAction = await runScenarios(win);
     win.destroy();
     await runToolWindowScenarios();
+    await runChatWindowScenario();
   } finally {
     if (!win.isDestroyed()) win.destroy();
   }

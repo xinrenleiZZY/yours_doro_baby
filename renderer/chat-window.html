@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'self'; script-src 'self';"
+    />
+    <title>和 doro 聊天</title>
+    <link rel="stylesheet" href="chat-window.css" />
+  </head>
+  <body>
+    <main class="app">
+      <header class="titlebar">
+        <div class="identity">
+          <span class="avatar" aria-hidden="true">D</span>
+          <div>
+            <strong>和 doro 聊天</strong>
+            <span id="status" class="status">正在读取配置…</span>
+          </div>
+        </div>
+        <div class="window-actions">
+          <button id="settings-toggle" type="button" title="AI 设置">⚙</button>
+          <button id="close" type="button" title="关闭">✕</button>
+        </div>
+      </header>
+
+      <section id="settings" class="settings" hidden>
+        <div class="preset-row" aria-label="服务预设">
+          <button
+            type="button"
+            data-preset-base="https://api.deepseek.com/v1"
+            data-preset-model="deepseek-chat"
+          >
+            DeepSeek
+          </button>
+          <button type="button" data-preset-base="https://api.openai.com/v1" data-preset-model="gpt-4o-mini">
+            OpenAI
+          </button>
+          <button type="button" data-preset-base="http://127.0.0.1:11434/v1" data-preset-model="qwen2.5:7b">
+            Ollama
+          </button>
+        </div>
+        <label>
+          <span>兼容接口 Base URL</span>
+          <input id="base-url" type="url" spellcheck="false" />
+        </label>
+        <label>
+          <span>模型名称</span>
+          <input id="model" type="text" spellcheck="false" />
+        </label>
+        <label>
+          <span>API Key</span>
+          <input id="api-key" type="password" spellcheck="false" autocomplete="off" />
+        </label>
+        <label class="check-row">
+          <input id="clear-key" type="checkbox" />
+          <span>清除已保存的 API Key</span>
+        </label>
+        <label>
+          <span>人格提示</span>
+          <textarea id="persona" rows="5" spellcheck="false"></textarea>
+        </label>
+        <div class="settings-footer">
+          <span id="settings-message">密钥只保存在主进程，并由系统安全存储加密。</span>
+          <button id="save-settings" type="button">保存设置</button>
+        </div>
+      </section>
+
+      <section id="history" class="history" aria-live="polite"></section>
+
+      <footer class="composer">
+        <textarea id="message" rows="2" maxlength="2000" placeholder="跟 doro 说点什么…"></textarea>
+        <button id="send" type="button">发送</button>
+        <div class="composer-meta">
+          <span>Enter 发送 · Shift+Enter 换行</span>
+          <button id="clear-history" type="button">清空对话</button>
+        </div>
+      </footer>
+    </main>
+    <script src="chat-window.js"></script>
+  </body>
+</html>
