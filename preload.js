@@ -60,6 +60,10 @@ contextBridge.exposeInMainWorld("petAPI", {
   onQuizApply: (handler) => on("pet:quiz-apply", handler),
   onQuizSpeak: (handler) => on("pet:quiz-speak", handler),
 
+  stickerImport: () => ipcRenderer.invoke("sticker:import"),
+  stickerDelete: (name) => ipcRenderer.invoke("sticker:delete", name),
+  stickerReveal: () => ipcRenderer.invoke("sticker:reveal"),
+
   // 应用更新
   updateCheck: (feedUrl) => ipcRenderer.invoke("app:update-check", feedUrl),
   updateDownload: () => ipcRenderer.invoke("app:update-download"),

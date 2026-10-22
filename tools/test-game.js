@@ -270,6 +270,8 @@ test("存档白名单保留商城 / 日程字段并过滤非法项", () => {
     daily: { date: "2026-10-19", progress: { feeds: 2 }, claimed: ["feed1"] },
     achievements: ["first_pet"],
     metrics: { days: { "2026-10-19": 120 } },
+    stickerRandom: { meme_test: true, bad: "x" },
+    stickerLabels: { meme_test: "新名称", bad: 3 },
     inventory: { fish: 2, "bad-key": 3 },
     buffs: { double_income: 12345 },
     perks: { lucky_cat: true },
@@ -279,7 +281,7 @@ test("存档白名单保留商城 / 日程字段并过滤非法项", () => {
     schedule: [{ id: "a", time: "09:00", text: "喝水", doneDate: "", notifiedDate: "" }],
     shopStats: { purchases: 2, spent: 40 },
   });
-  assert.strictEqual(clean.version, 5);
+  assert.strictEqual(clean.version, 6);
   assert.strictEqual(clean.inventory.fish, 2);
   assert.strictEqual(clean.inventory["bad-key"], undefined);
   assert.strictEqual(clean.perks.lucky_cat, true);
@@ -296,6 +298,10 @@ test("存档白名单保留商城 / 日程字段并过滤非法项", () => {
   assert.deepStrictEqual(clean.daily.claimed, ["feed1"]);
   assert.deepStrictEqual(clean.achievements, ["first_pet"]);
   assert.strictEqual(clean.metrics.days["2026-10-19"], 120);
+  assert.strictEqual(clean.stickerRandom.meme_test, true);
+  assert.strictEqual(clean.stickerRandom.bad, undefined);
+  assert.strictEqual(clean.stickerLabels.meme_test, "新名称");
+  assert.strictEqual(clean.stickerLabels.bad, undefined);
 });
 
 test("动作间隔按配置秒数浮动，默认会兜底", () => {
@@ -510,6 +516,51 @@ test("v3 老存档迁移补齐 v4 字段", () => {
   assert.deepStrictEqual(state.room.furniture, []);
   assert.strictEqual(state.companion.adopted, false);
   assert.strictEqual(state.version, G.SAVE_VERSION);
+});
+
+test("表情包随机规则：安全模式 / 显式开关 / blocked", () => {
+  const state = G.hydrate({ settings: { safeMode: true } }, NOW);
+  const meme = { name: "meme_test", group: "表情包", label: "梗", blocked: false };
+  assert.strictEqual(G.stickerRandomAllowed(state, meme), false);
+  G.setStickerRandom(state, meme.name, true);
+  assert.strictEqual(G.stickerRandomAllowed(state, meme), true);
+  G.setStickerRandom(state, meme.name, false);
+  assert.strictEqual(G.stickerRandomAllowed(state, meme), false);
+
+  const blocked = { name: "blocked_test", group: "表情包", label: "刀", blocked: true };
+  state.settings.safeMode = false;
+  assert.strictEqual(G.stickerRandomAllowed(state, blocked), false);
+  G.setStickerRandom(state, blocked.name, true);
+  assert.strictEqual(G.stickerRandomAllowed(state, blocked), true);
+});
+
+test("表情包可以改自定义名称，清空后回退原名称", () => {
+  const state = G.hydrate({}, NOW);
+  const action = { name: "meme_test", group: "表情包", label: "原名称" };
+  assert.strictEqual(G.effectiveLabel(state, action), "原名称");
+  G.setStickerLabel(state, action.name, "新名称");
+  assert.strictEqual(G.effectiveLabel(state, action), "新名称");
+  G.setStickerLabel(state, action.name, "   ");
+  assert.strictEqual(G.effectiveLabel(state, action), "原名称");
+});
+
+test("心愿只会选择当前可完成且未屏蔽的动作分类", () => {
+  const state = G.hydrate({ unlocked: [] }, NOW);
+  const actions = [
+    { name: "locked_dress", category: "dress", blocked: false },
+    { name: "blocked_scene", category: "scene", blocked: true },
+    { name: "usable_scene", category: "scene", blocked: false },
+  ];
+  for (let index = 0; index < 10; index += 1) {
+    const wish = G.createWish(state, NOW + index, actions);
+    assert.strictEqual(wish.category, "scene");
+    state.wish = null;
+  }
+  assert.strictEqual(G.availableWishActions(actions, state, "dress").length, 0);
+  assert.deepStrictEqual(
+    G.availableWishActions(actions, state, "scene").map((action) => action.name),
+    ["usable_scene"]
+  );
 });
 
 console.log(`\n通过 ${passed} / ${passed + failures.length}`);

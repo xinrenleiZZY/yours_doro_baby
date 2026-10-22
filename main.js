@@ -13,6 +13,7 @@ const {
   shell,
   Notification,
   globalShortcut,
+  dialog,
 } = require("electron");
 const fs = require("fs");
 const path = require("path");
@@ -21,6 +22,7 @@ const { sanitizeHitboxes, computeIgnore } = require("./lib/pointer");
 const { sanitizeNotification } = require("./lib/notify");
 const { QuizService } = require("./lib/quiz-api");
 const { UpdaterService } = require("./lib/updater");
+const { StickerStore } = require("./lib/sticker-store");
 
 const WINDOW_SIZE = { width: 320, height: 360 };
 // 答题窗口：独立、不透明、可拖动，避免撑大透明的宠物窗口
@@ -32,6 +34,8 @@ const LOG_DIR = path.join(USER_DATA, "logs");
 const LOG_FILE = path.join(LOG_DIR, "main.log");
 const QUIZ_CACHE_FILE = path.join(USER_DATA, "quiz-cache.json");
 const QUIZ_EXAM_FILE = path.join(USER_DATA, "quiz-exam.json");
+const USER_STICKER_DIR = path.join(USER_DATA, "user-stickers");
+const USER_STICKERS_FILE = path.join(USER_DATA, "user-stickers.json");
 const LOG_MAX_BYTES = 1024 * 1024;
 const DEV = process.argv.includes("--dev");
 // 调试鼠标穿透时可以设 DORO_TRACE_HOVER=1，把每次穿透状态变化写进日志
@@ -59,6 +63,19 @@ const quizService = new QuizService({
 });
 let updater = null;
 let updateTimer = null;
+const stickerStore = new StickerStore({
+  dir: USER_STICKER_DIR,
+  manifestFile: USER_STICKERS_FILE,
+  probeSize: (file) => {
+    try {
+      const image = nativeImage.createFromPath(file);
+      return image.isEmpty() ? null : image.getSize();
+    } catch (err) {
+      return null;
+    }
+  },
+  log,
+});
 
 /** 每天 08:00 自动检查一次更新；错过的日子不补检。 */
 function scheduleDailyUpdateCheck() {
@@ -733,11 +750,45 @@ function registerIpc() {
   ipcMain.handle("pet:actions", () => {
     try {
       const file = path.join(__dirname, "assets", "actions.json");
-      return JSON.parse(fs.readFileSync(file, "utf8"));
+      const bundled = JSON.parse(fs.readFileSync(file, "utf8"));
+      return [...bundled, ...stickerStore.listActions()];
     } catch (err) {
       log("error", "读取动作清单失败", err.message);
       return [];
     }
+  });
+
+  // ---- 用户表情包（增 / 删 / 查） --------------------------------------
+  ipcMain.handle("sticker:import", async () => {
+    if (!win) return { ok: false, message: "宠物窗口未就绪" };
+    const result = await dialog.showOpenDialog(win, {
+      title: "导入表情包",
+      buttonLabel: "导入",
+      properties: ["openFile", "multiSelections"],
+      filters: [
+        { name: "表情包图片", extensions: ["gif", "webp", "png", "apng", "jpg", "jpeg"] },
+        { name: "所有文件", extensions: ["*"] },
+      ],
+    });
+    if (result.canceled || !result.filePaths.length) return { ok: false, canceled: true };
+    const imported = stickerStore.importFiles(result.filePaths);
+    log("info", "导入表情包", {
+      added: imported.added.map((item) => item.name),
+      skipped: imported.skipped.length,
+    });
+    return { ok: true, ...imported };
+  });
+
+  ipcMain.handle("sticker:delete", (_event, name) => {
+    const ok = stickerStore.remove(name);
+    if (ok) log("info", "删除表情包", name);
+    return { ok };
+  });
+
+  ipcMain.handle("sticker:reveal", () => {
+    fs.mkdirSync(USER_STICKER_DIR, { recursive: true });
+    shell.openPath(USER_STICKER_DIR);
+    return true;
   });
 
   ipcMain.handle("win:get-bounds", () => (win ? win.getBounds() : null));

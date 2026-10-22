@@ -88,6 +88,7 @@
     schedList: $("sched-list"),
     menuScheduleCount: $("menu-schedule-count"),
     menuTaskCount: $("menu-task-count"),
+    menuStickerCount: $("menu-sticker-count"),
     config: $("config"),
     cfgAmbient: $("cfg-ambient"),
     cfgAmbientVal: $("cfg-ambient-val"),
@@ -96,6 +97,20 @@
     cfgScale: $("cfg-scale"),
     cfgScaleVal: $("cfg-scale-val"),
     cfgReset: $("cfg-reset"),
+    sticker: $("sticker"),
+    stickerCount: $("sticker-count"),
+    stickerSearch: $("sticker-search"),
+    stickerPreviewImg: $("sticker-preview-img"),
+    stickerRename: $("sticker-rename"),
+    stickerPreviewRandom: $("sticker-preview-random"),
+    stickerDelete: $("sticker-delete"),
+    stickerImport: $("sticker-import"),
+    stickerReveal: $("sticker-reveal"),
+    stickerBulk: $("sticker-bulk"),
+    stickerGrid: $("sticker-grid"),
+    stickerPage: $("sticker-page"),
+    stickerPrev: $("sticker-prev"),
+    stickerNext: $("sticker-next"),
     growth: $("growth"),
     growthCoins: $("growth-coins"),
     growthDaily: $("growth-daily"),
@@ -140,6 +155,9 @@
   let growthOpen = false;
   let gachaOpen = false;
   let minigameOpen = false;
+  let stickerOpen = false;
+  const stickerState = { name: null, query: "", page: 0 };
+  let stickerPendingDelete = null;
   let quizOpen = false;
   let updateStatus = null;
   let shopTab = "食物";
@@ -164,6 +182,14 @@
   // ------------------------------------------------------------- 基础工具
   function rand(min, max) {
     return min + Math.random() * (max - min);
+  }
+
+  function actionImageUrl(action) {
+    return action && action.url ? action.url : `../assets/${action.file}`;
+  }
+
+  function actionThumbUrl(action) {
+    return action && action.thumb ? action.thumb : `../assets/thumbs/${action.name}.png`;
   }
 
   function scheduleSave(delay) {
@@ -261,7 +287,7 @@
     if (TEST_MODE) return;
     const wait = delayMs === undefined ? rand(20000, 45000) : delayMs;
     wishTimer = setTimeout(() => {
-      if (!state.wish && !state.settings.dnd) G.createWish(state);
+      if (!state.wish && !state.settings.dnd) G.createWish(state, undefined, actions);
       updateEventChips();
       scheduleSave(500);
       scheduleWish(rand(15, 30) * 60000);
@@ -363,6 +389,7 @@
       add(el.gacha, 4);
       add(el.minigame, 4);
       add(el.quiz, 4);
+      add(el.sticker, 4);
       api.setHitboxes(boxes);
     }, 30);
   }
@@ -391,8 +418,8 @@
     const img = document.createElement("img");
     img.className = "pet-layer";
     img.draggable = false;
-    img.alt = action.label;
-    img.src = `../assets/${action.file}`;
+    img.alt = G.effectiveLabel(state, action);
+    img.src = actionImageUrl(action);
     const size = petDisplaySize(action);
     img.style.width = `${size.width}px`;
     img.style.height = `${size.height}px`;
@@ -411,7 +438,7 @@
     el.petStack.appendChild(next);
     currentAction = action.name;
     activeLayer = next;
-    el.petLabel.textContent = `Lv.${state.level} ${G.titleForLevel(state.level)} · ${action.label}`;
+    el.petLabel.textContent = `Lv.${state.level} ${G.titleForLevel(state.level)} · ${G.effectiveLabel(state, action)}`;
     reportHitboxes();
 
     let revealed = false;
@@ -526,6 +553,10 @@
         G.achievementList(state).filter((item) => item.ready && !item.claimed).length;
       el.menuTaskCount.textContent = readyCount ? `${readyCount} 可领` : "";
     }
+    if (el.menuStickerCount) {
+      const stickers = actions.filter((action) => G.isStickerAction(action));
+      el.menuStickerCount.textContent = `${stickers.filter((action) => G.stickerRandomAllowed(state, action)).length}/${stickers.length}`;
+    }
     if (el.menuQuizSummary) {
       const daily = G.quizDailyStatus(state, Date.now());
       el.menuQuizSummary.textContent = daily.done ? "今日已答" : "今日未答";
@@ -550,7 +581,7 @@
     return items.filter((action) => {
       if (!query) return true;
       return (
-        action.label.toLowerCase().includes(query) ||
+        G.effectiveLabel(state, action).toLowerCase().includes(query) ||
         action.name.includes(query) ||
         String(action.category || "").includes(query)
       );
@@ -580,7 +611,7 @@
     state.recent = [action.name, ...state.recent.filter((name) => name !== action.name)].slice(0, 12);
     G.bumpDaily(state, "actionsViewed");
     noteAction(action);
-    speak(`换成「${action.label}」`, 1800);
+    speak(`换成「${G.effectiveLabel(state, action)}」`, 1800);
     updateMenu();
     updateHud(0);
     renderLibrary();
@@ -613,15 +644,15 @@
       const unlocked = G.isUnlocked(state, action);
       const price = action.category === "dress" ? G.dressPrice(Math.max(0, dressIndex(action.name))) : 0;
       button.className = `lib-item${action.name === baseAction ? " active" : ""}${unlocked ? "" : " locked"}`;
-      button.title = `${action.label} · ${action.category}${action.blocked ? " · 不参与随机" : ""}${
+      button.title = `${G.effectiveLabel(state, action)} · ${action.category}${action.blocked ? " · 不参与随机" : ""}${
         unlocked ? "" : ` · ${price} 币解锁`
       }`;
       const img = document.createElement("img");
       img.loading = "lazy";
-      img.src = `../assets/thumbs/${action.name}.png`;
-      img.alt = action.label;
+      img.src = actionThumbUrl(action);
+      img.alt = G.effectiveLabel(state, action);
       const text = document.createElement("span");
-      text.textContent = action.label;
+      text.textContent = G.effectiveLabel(state, action);
       const star = document.createElement("i");
       star.className = `lib-star${state.favorites.includes(action.name) ? " on" : ""}`;
       star.textContent = "★";
@@ -648,7 +679,7 @@
         if (!unlocked) {
           shopTab = "装扮";
           openSidePanel("shop");
-          toast(`先去商城解锁「${action.label}」（${price} 币）`);
+          toast(`先去商城解锁「${G.effectiveLabel(state, action)}」（${price} 币）`);
           return;
         }
         selectAction(action);
@@ -839,6 +870,97 @@
     el.minigameScore.textContent = String(mini.score);
   }
 
+  const STICKER_PAGE_SIZE = 8;
+
+  function stickerItems() {
+    const query = stickerState.query.trim().toLowerCase();
+    return actions
+      .filter((action) => G.isStickerAction(action))
+      .filter((action) => {
+        if (!query) return true;
+        return G.effectiveLabel(state, action).toLowerCase().includes(query) || action.name.includes(query);
+      });
+  }
+
+  function renderSticker() {
+    const all = actions.filter((action) => G.isStickerAction(action));
+    const items = stickerItems();
+    const pages = Math.max(1, Math.ceil(items.length / STICKER_PAGE_SIZE));
+    stickerState.page = Math.min(Math.max(0, stickerState.page), pages - 1);
+    el.stickerCount.textContent = `${all.filter((action) => G.stickerRandomAllowed(state, action)).length} / ${
+      all.length
+    } 参与随机`;
+
+    const selected = items.find((action) => action.name === stickerState.name) || items[0] || null;
+    if (!selected) {
+      stickerState.name = null;
+      el.stickerPreviewImg.removeAttribute("src");
+      el.stickerPreviewImg.alt = "";
+      el.stickerRename.value = "";
+      el.stickerRename.disabled = true;
+      el.stickerPreviewRandom.disabled = true;
+      el.stickerPreviewRandom.classList.remove("on");
+      el.stickerPreviewRandom.textContent = "随机：关";
+      el.stickerDelete.disabled = true;
+      el.stickerDelete.textContent = "删除";
+      stickerPendingDelete = null;
+      el.stickerGrid.innerHTML = '<div class="sticker-empty">没有匹配的表情包</div>';
+      el.stickerPage.textContent = "0 / 0";
+      el.stickerPrev.disabled = true;
+      el.stickerNext.disabled = true;
+      return;
+    }
+    stickerState.name = selected.name;
+    el.stickerRename.disabled = false;
+    el.stickerPreviewRandom.disabled = false;
+    el.stickerPreviewImg.src = actionImageUrl(selected);
+    el.stickerPreviewImg.alt = G.effectiveLabel(state, selected);
+    el.stickerRename.value = G.effectiveLabel(state, selected);
+    const allowed = G.stickerRandomAllowed(state, selected);
+    el.stickerPreviewRandom.classList.toggle("on", allowed);
+    el.stickerPreviewRandom.textContent = allowed ? "随机：开" : "随机：关";
+    el.stickerDelete.disabled = !selected.user;
+    el.stickerDelete.title = selected.user ? "删除这个自定义表情包" : "内置表情包不能删除";
+    el.stickerDelete.textContent = "删除";
+    stickerPendingDelete = null;
+
+    el.stickerGrid.innerHTML = "";
+    const start = stickerState.page * STICKER_PAGE_SIZE;
+    items.slice(start, start + STICKER_PAGE_SIZE).forEach((action) => {
+      const button = document.createElement("button");
+      button.className = `sticker-item${action.name === stickerState.name ? " active" : ""}`;
+      button.title = `${G.effectiveLabel(state, action)} · ${G.stickerRandomAllowed(state, action) ? "参与随机" : "不参与随机"}`;
+      const img = document.createElement("img");
+      img.loading = "lazy";
+      img.src = actionThumbUrl(action);
+      img.alt = G.effectiveLabel(state, action);
+      const label = document.createElement("span");
+      label.textContent = G.effectiveLabel(state, action);
+      const star = document.createElement("i");
+      star.className = "sticker-star";
+      star.textContent = state.favorites.includes(action.name) ? "★" : "";
+      star.title = "收藏";
+      star.addEventListener("click", (event) => {
+        event.stopPropagation();
+        toggleFavorite(action.name);
+        renderSticker();
+      });
+      const flag = document.createElement("i");
+      flag.className = "sticker-flag";
+      flag.textContent = G.stickerRandomAllowed(state, action) ? "●" : "○";
+      button.append(img, label, star, flag);
+      button.addEventListener("click", () => {
+        stickerState.name = action.name;
+        renderSticker();
+      });
+      el.stickerGrid.appendChild(button);
+    });
+
+    el.stickerPage.textContent = `${stickerState.page + 1} / ${pages}`;
+    el.stickerPrev.disabled = stickerState.page <= 0;
+    el.stickerNext.disabled = stickerState.page >= pages - 1;
+  }
+
   function stopMinigame(reward) {
     if (!mini.running) return;
     mini.running = false;
@@ -901,6 +1023,7 @@
     growthOpen = name === "growth";
     gachaOpen = name === "gacha";
     minigameOpen = name === "minigame";
+    stickerOpen = name === "sticker";
     closeMenu();
     el.panel.classList.remove("show");
     document.body.classList.add("lib-open");
@@ -912,6 +1035,7 @@
     el.growth.classList.toggle("show", growthOpen);
     el.gacha.classList.toggle("show", gachaOpen);
     el.minigame.classList.toggle("show", minigameOpen);
+    el.sticker.classList.toggle("show", stickerOpen);
     if (libraryOpen) renderLibrary();
     if (shopOpen) renderShop();
     if (scheduleOpen) renderSchedule();
@@ -919,6 +1043,7 @@
     if (growthOpen) renderGrowth();
     if (gachaOpen) renderGacha();
     if (minigameOpen) renderMinigame();
+    if (stickerOpen) renderSticker();
     if (libraryOpen) setTimeout(() => el.librarySearch.focus(), 60);
     reportHitboxes();
   }
@@ -931,7 +1056,8 @@
       !configOpen &&
       !growthOpen &&
       !gachaOpen &&
-      !minigameOpen
+      !minigameOpen &&
+      !stickerOpen
     )
       return;
     libraryOpen = false;
@@ -941,6 +1067,7 @@
     growthOpen = false;
     gachaOpen = false;
     minigameOpen = false;
+    stickerOpen = false;
     document.body.classList.remove("lib-open");
     api.setUiSize({ width: 320, height: 360 });
     el.library.classList.remove("show");
@@ -950,6 +1077,7 @@
     el.growth.classList.remove("show");
     el.gacha.classList.remove("show");
     el.minigame.classList.remove("show");
+    el.sticker.classList.remove("show");
     reportHitboxes();
   }
 
@@ -1378,7 +1506,7 @@
     G.bumpDaily(state, "actionsViewed");
     noteAction(action);
     playReaction(action.name, Math.min(6000, action.durationMs * 2 + 900));
-    speak(action.label, 1800);
+    speak(G.effectiveLabel(state, action), 1800);
     updateMenu();
   }
 
@@ -1599,6 +1727,7 @@
       growthOpen ||
       gachaOpen ||
       minigameOpen ||
+      stickerOpen ||
       quizOpen ||
       !el.petWrap
     );
@@ -1659,7 +1788,16 @@
 
   // ------------------------------------------------------------- 菜单 / 穿透
   function openMenu(x, y) {
-    if (libraryOpen || shopOpen || scheduleOpen || configOpen || growthOpen || gachaOpen || minigameOpen) {
+    if (
+      libraryOpen ||
+      shopOpen ||
+      scheduleOpen ||
+      configOpen ||
+      growthOpen ||
+      gachaOpen ||
+      minigameOpen ||
+      stickerOpen
+    ) {
       closeSidePanels();
     }
     menuOpen = true;
@@ -1709,8 +1847,11 @@
           growthOpen ||
           gachaOpen ||
           minigameOpen ||
+          stickerOpen ||
           quizOpen) &&
-        !event.target.closest("#library, #shop, #schedule, #config, #growth, #gacha, #minigame, #quiz") &&
+        !event.target.closest(
+          "#library, #shop, #schedule, #config, #growth, #gacha, #minigame, #sticker, #quiz"
+        ) &&
         !event.target.closest("#pet-wrap")
       ) {
         closeSidePanels();
@@ -1751,6 +1892,7 @@
       else if (cmd === "gacha") openSidePanel("gacha");
       else if (cmd === "minigame") openSidePanel("minigame");
       else if (cmd === "quiz") openQuizWindow("home");
+      else if (cmd === "sticker") openSidePanel("sticker");
       else if (cmd === "daily-question") {
         openQuizWindow("daily");
       } else if (cmd === "clear-base") {
@@ -1787,14 +1929,12 @@
     el.wishChip.addEventListener("click", () => {
       const wish = G.wishStatus(state);
       if (!wish || wish.expired) return;
-      const pool = actions.filter(
-        (action) => action.category === wish.category && G.isUnlocked(state, action) && !action.blocked
-      );
+      const pool = G.availableWishActions(actions, state, wish.category);
       if (!pool.length) return;
       const action = pool[Math.floor(Math.random() * pool.length)];
       playReaction(action.name, 2400);
       noteAction(action);
-      speak(`这是「${action.label}」`, 1800);
+      speak(`这是「${G.effectiveLabel(state, action)}」`, 1800);
     });
 
     if (el.quizChip) {
@@ -1916,6 +2056,129 @@
     $("schedule-close").addEventListener("click", closeSidePanels);
     $("config-close").addEventListener("click", closeSidePanels);
     $("growth-close").addEventListener("click", closeSidePanels);
+
+    $("sticker-close").addEventListener("click", closeSidePanels);
+    el.stickerSearch.addEventListener("input", () => {
+      stickerState.query = el.stickerSearch.value;
+      stickerState.page = 0;
+      renderSticker();
+    });
+    el.stickerPrev.addEventListener("click", () => {
+      stickerState.page -= 1;
+      renderSticker();
+    });
+    el.stickerNext.addEventListener("click", () => {
+      stickerState.page += 1;
+      renderSticker();
+    });
+    el.stickerPreviewRandom.addEventListener("click", () => {
+      const action = byName.get(stickerState.name);
+      if (!action) return;
+      G.setStickerRandom(state, action.name, !G.stickerRandomAllowed(state, action));
+      renderSticker();
+      updateMenu();
+      scheduleSave(500);
+    });
+    const applyStickerRename = () => {
+      const action = byName.get(stickerState.name);
+      if (!action) return;
+      G.setStickerLabel(state, action.name, el.stickerRename.value);
+      renderSticker();
+      renderLibrary();
+      scheduleSave(500);
+    };
+    el.stickerRename.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        applyStickerRename();
+        el.stickerRename.blur();
+      }
+    });
+    el.stickerRename.addEventListener("blur", applyStickerRename);
+    el.stickerBulk.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-bulk]");
+      if (!button) return;
+      const mode = button.dataset.bulk;
+      actions
+        .filter((action) => G.isStickerAction(action))
+        .forEach((action) => {
+          if (mode === "all") G.setStickerRandom(state, action.name, true);
+          else if (mode === "none") G.setStickerRandom(state, action.name, false);
+          else G.setStickerRandom(state, action.name, state.favorites.includes(action.name));
+        });
+      renderSticker();
+      updateMenu();
+      scheduleSave(500);
+      toast(
+        mode === "all"
+          ? "所有表情包已允许随机"
+          : mode === "none"
+            ? "所有表情包已禁止随机"
+            : "只保留收藏参与随机"
+      );
+    });
+
+    el.stickerImport.addEventListener("click", async () => {
+      const result = await api.stickerImport();
+      if (!result || !result.ok) {
+        if (result && result.message) toast(result.message);
+        return;
+      }
+      if (result.added.length) {
+        result.added.forEach((action) => {
+          actions.push(action);
+          byName.set(action.name, action);
+        });
+        stickerState.name = result.added[0].name;
+        renderSticker();
+        renderLibrary();
+        updateMenu();
+        scheduleSave(400);
+        toast(`已导入 ${result.added.length} 个表情包`);
+      } else {
+        const reason = result.skipped && result.skipped[0] ? result.skipped[0].reason : "";
+        toast(reason === "duplicate" ? "这些表情包已经在库里了" : "没有可导入的文件");
+      }
+    });
+
+    el.stickerReveal.addEventListener("click", () => api.stickerReveal());
+
+    el.stickerDelete.addEventListener("click", async () => {
+      const action = byName.get(stickerState.name);
+      if (!action || !action.user) return;
+      if (stickerPendingDelete !== action.name) {
+        stickerPendingDelete = action.name;
+        el.stickerDelete.textContent = "再点一次确认";
+        setTimeout(() => {
+          if (stickerPendingDelete === action.name) {
+            stickerPendingDelete = null;
+            el.stickerDelete.textContent = "删除";
+          }
+        }, 3000);
+        return;
+      }
+      stickerPendingDelete = null;
+      const result = await api.stickerDelete(action.name);
+      if (!result || !result.ok) {
+        toast("删除失败");
+        return;
+      }
+      const deletedLabel = G.effectiveLabel(state, action);
+      actions = actions.filter((item) => item.name !== action.name);
+      byName.delete(action.name);
+      state.favorites = state.favorites.filter((name) => name !== action.name);
+      state.recent = state.recent.filter((name) => name !== action.name);
+      delete state.stickerRandom[action.name];
+      delete state.stickerLabels[action.name];
+      if (baseAction === action.name) baseAction = IDLE_ACTION;
+      if (currentAction === action.name) setAction(baseAction, { force: true });
+      stickerState.name = null;
+      renderSticker();
+      renderLibrary();
+      updateMenu();
+      scheduleSave(400);
+      toast(`已删除「${deletedLabel}」`);
+    });
 
     el.cfgAmbient.addEventListener("input", () => {
       state.settings.ambientIntervalSec = Number(el.cfgAmbient.value);
@@ -2216,6 +2479,7 @@
         openGrowth: () => openSidePanel("growth"),
         openGacha: () => openSidePanel("gacha"),
         openMinigame: () => openSidePanel("minigame"),
+        openSticker: () => openSidePanel("sticker"),
         openQuiz: openQuizPanel,
         startQuizMode: (mode) => {
           openQuizPanel();
@@ -2223,7 +2487,7 @@
         },
         quizOpen: () => quizOpen,
         forceWish: () => {
-          G.createWish(state, Date.now());
+          G.createWish(state, Date.now(), actions);
           updateEventChips();
         },
         forceVisitor: () => {

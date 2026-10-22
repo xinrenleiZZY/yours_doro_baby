@@ -11,7 +11,7 @@
 })(typeof self !== "undefined" ? self : this, function () {
   "use strict";
 
-  const SAVE_VERSION = 5;
+  const SAVE_VERSION = 6;
 
   // ---- 经济数值 -------------------------------------------------------------
   const BALANCE = {
@@ -55,6 +55,8 @@
     unlocked: [],
     favorites: [],
     recent: [],
+    stickerRandom: {},
+    stickerLabels: {},
     schedule: [],
     shopStats: { purchases: 0, spent: 0 },
     daily: { date: "", progress: { pets: 0, feeds: 0, plays: 0, actionsViewed: 0 }, claimed: [] },
@@ -458,6 +460,14 @@
         ),
       });
     },
+    // 5 -> 6：表情包管理（随机开关 / 自定义名称）
+    5: (raw) => {
+      return Object.assign({}, raw, {
+        version: 6,
+        stickerRandom: raw.stickerRandom && typeof raw.stickerRandom === "object" ? raw.stickerRandom : {},
+        stickerLabels: raw.stickerLabels && typeof raw.stickerLabels === "object" ? raw.stickerLabels : {},
+      });
+    },
   };
 
   function migrate(raw) {
@@ -498,6 +508,25 @@
     state.recent = Array.isArray(raw.recent)
       ? raw.recent.filter((name) => typeof name === "string").slice(0, 20)
       : [];
+    state.stickerRandom = {};
+    if (raw.stickerRandom && typeof raw.stickerRandom === "object") {
+      Object.entries(raw.stickerRandom)
+        .filter(([name, value]) => /^[a-z0-9_]{1,40}$/.test(name) && typeof value === "boolean")
+        .slice(0, 400)
+        .forEach(([name, value]) => {
+          state.stickerRandom[name] = value;
+        });
+    }
+    state.stickerLabels = {};
+    if (raw.stickerLabels && typeof raw.stickerLabels === "object") {
+      Object.entries(raw.stickerLabels)
+        .filter(([name, value]) => /^[a-z0-9_]{1,40}$/.test(name) && typeof value === "string")
+        .slice(0, 400)
+        .forEach(([name, value]) => {
+          const label = value.trim().slice(0, 16);
+          if (label) state.stickerLabels[name] = label;
+        });
+    }
     state.schedule = Array.isArray(raw.schedule)
       ? raw.schedule
           .filter((item) => item && typeof item === "object" && typeof item.time === "string")
@@ -745,14 +774,12 @@
   function pickAmbientAction(actions, state, rng) {
     const random = rng || Math.random;
     const face = moodFace(state);
-    const safeMode = !state.settings || state.settings.safeMode !== false;
     // 太小的贴图放大后很糊，不参与随机表演
     const usable = actions.filter((action) => {
       const size = action.size;
       const bigEnough = !size || Math.max(size[0], size[1]) >= 140;
       if (!bigEnough || !isUnlocked(state, action)) return false;
-      if (action.blocked) return false;
-      if (safeMode && action.group === "表情包") return false;
+      if (!stickerRandomAllowed(state, action)) return false;
       return true;
     });
     const source = usable.length ? usable : actions;
@@ -794,6 +821,48 @@
     if (!action) return false;
     if (action.category !== "dress") return true;
     return (state.unlocked || []).includes(action.name);
+  }
+
+  function isStickerAction(action) {
+    return Boolean(action && action.group === "表情包");
+  }
+
+  function effectiveLabel(state, action) {
+    if (!action) return "";
+    const custom = state.stickerLabels && state.stickerLabels[action.name];
+    return (typeof custom === "string" && custom.trim()) || action.label;
+  }
+
+  /**
+   * 表情包是否参与随机表演：
+   * - 存档里显式开/关优先；
+   * - 否则静态 blocked 标记生效；
+   * - 安全模式默认排除整个表情包分组。
+   */
+  function stickerRandomAllowed(state, action) {
+    if (!action) return false;
+    const override = state.stickerRandom && state.stickerRandom[action.name];
+    if (override === true) return true;
+    if (override === false) return false;
+    if (action.blocked) return false;
+    if (isStickerAction(action) && (!state.settings || state.settings.safeMode !== false)) return false;
+    return true;
+  }
+
+  function setStickerRandom(state, name, value) {
+    if (!name) return;
+    if (!state.stickerRandom) state.stickerRandom = {};
+    state.stickerRandom[name] = Boolean(value);
+  }
+
+  function setStickerLabel(state, name, label) {
+    if (!name) return;
+    if (!state.stickerLabels) state.stickerLabels = {};
+    const clean = String(label || "")
+      .trim()
+      .slice(0, 16);
+    if (clean) state.stickerLabels[name] = clean;
+    else delete state.stickerLabels[name];
   }
 
   function dressPrice(index) {
@@ -1189,9 +1258,19 @@
     return { ...wish, secondsLeft, expired: secondsLeft <= 0 };
   }
 
-  function createWish(state, now) {
+  function availableWishActions(actions, state, category) {
+    return (Array.isArray(actions) ? actions : []).filter(
+      (action) => action && action.category === category && isUnlocked(state, action) && !action.blocked
+    );
+  }
+
+  function createWish(state, now, actions) {
     const ts = now || Date.now();
-    const choice = WISH_CATEGORIES[Math.floor(Math.random() * WISH_CATEGORIES.length)];
+    const candidates = Array.isArray(actions)
+      ? WISH_CATEGORIES.filter((entry) => availableWishActions(actions, state, entry.key).length)
+      : WISH_CATEGORIES;
+    const source = candidates.length ? candidates : WISH_CATEGORIES;
+    const choice = source[Math.floor(Math.random() * source.length)];
     state.wish = {
       id: `w${ts.toString(36)}`,
       category: choice.key,
@@ -1407,6 +1486,11 @@
     quizEventStatus,
     completeQuiz,
     isUnlocked,
+    isStickerAction,
+    effectiveLabel,
+    stickerRandomAllowed,
+    setStickerRandom,
+    setStickerLabel,
     dressPrice,
     activeBuff,
     purchase,
@@ -1433,6 +1517,7 @@
     wishStatus,
     createWish,
     completeWish,
+    availableWishActions,
     checkinStatus,
     doCheckin,
     bankStatus,

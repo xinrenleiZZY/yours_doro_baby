@@ -92,6 +92,7 @@
         <button data-cmd="next-action">随便来一个</button>
         <button data-cmd="clear-base">恢复随机表演</button>
         <button data-cmd="summon">叫它过来</button>
+        <button data-cmd="sticker"><span>表情包管理</span><em id="menu-sticker-count"></em></button>
       </div>
       <div class="menu-title">小生意</div>
       <div class="menu-group">
@@ -272,6 +273,38 @@
       </header>
       <div class="lib-tabs" id="shop-tabs"></div>
       <div class="shop-list" id="shop-list"></div>
+    </div>
+
+    <div id="sticker" class="interactive" role="dialog" aria-label="表情包管理">
+      <header>
+        <span>表情包管理</span>
+        <em id="sticker-count"></em>
+        <button id="sticker-import" title="导入表情包">＋ 导入</button>
+        <button id="sticker-close" title="收起">✕</button>
+      </header>
+      <input id="sticker-search" type="search" placeholder="搜索表情包…" autocomplete="off" />
+      <div class="sticker-preview">
+        <img id="sticker-preview-img" alt="" />
+        <div class="sticker-preview-meta">
+          <input id="sticker-rename" maxlength="16" placeholder="名称" />
+          <div class="sticker-preview-actions">
+            <button id="sticker-preview-random">随机：关</button>
+            <button id="sticker-delete">删除</button>
+            <button id="sticker-reveal">文件夹</button>
+          </div>
+        </div>
+      </div>
+      <div class="lib-tabs" id="sticker-bulk">
+        <button data-bulk="all">全部随机</button>
+        <button data-bulk="none">全部禁止</button>
+        <button data-bulk="fav">仅收藏</button>
+      </div>
+      <div class="sticker-grid" id="sticker-grid"></div>
+      <footer>
+        <button id="sticker-prev" title="上一页">‹</button>
+        <span id="sticker-page">1 / 1</span>
+        <button id="sticker-next" title="下一页">›</button>
+      </footer>
     </div>
 
     <div id="schedule" class="interactive" role="dialog" aria-label="日程表">

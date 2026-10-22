@@ -43,7 +43,15 @@ const BASE_SAVE = {
 let seed = JSON.parse(JSON.stringify(BASE_SAVE));
 let lastSaved = null;
 let lastHitboxes = [];
-const calls = { setPosition: [], clickThrough: [], save: [], logs: [], notifications: [], quit: 0 };
+const calls = {
+  setPosition: [],
+  clickThrough: [],
+  save: [],
+  logs: [],
+  notifications: [],
+  stickerDeleted: [],
+  quit: 0,
+};
 const results = [];
 const lines = [];
 let crashed = false;
@@ -79,9 +87,30 @@ function registerStubs() {
     calls.save.push(state);
     return { ok: true };
   });
-  ipcMain.handle("pet:actions", () =>
-    JSON.parse(fs.readFileSync(path.join(ROOT, "assets", "actions.json"), "utf8"))
-  );
+  ipcMain.handle("pet:actions", () => {
+    const actions = JSON.parse(fs.readFileSync(path.join(ROOT, "assets", "actions.json"), "utf8"));
+    actions.push({
+      name: "user_deadbeef00",
+      label: "测试导入",
+      category: "meme",
+      group: "表情包",
+      file: "user-stickers/test.png",
+      url: "file:///tmp/doro-test-sticker.png",
+      thumb: "file:///tmp/doro-test-sticker.png",
+      size: [100, 100],
+      frames: 1,
+      durationMs: 0,
+      blocked: false,
+      user: true,
+    });
+    return actions;
+  });
+  ipcMain.handle("sticker:import", () => ({ ok: false, canceled: true }));
+  ipcMain.handle("sticker:delete", (_event, name) => {
+    calls.stickerDeleted.push(name);
+    return { ok: true };
+  });
+  ipcMain.handle("sticker:reveal", () => true);
   ipcMain.handle("win:get-bounds", () => ({ x: 100, y: 100, width: 320, height: 360 }));
   ipcMain.handle("pet:hitboxes", (_event, boxes) => {
     lastHitboxes = boxes;
@@ -658,7 +687,7 @@ async function runScenarios(win) {
   check("存钱罐能存钱", afterBank.bank.amount === 200, `${afterBank.bank.amount} 金币`);
 
   const codexText = await js(win, `document.getElementById("growth-codex").textContent`);
-  check("图鉴进度显示", /\d+ \/ 295/.test(codexText), codexText);
+  check("图鉴进度显示", /\d+ \/ 296/.test(codexText), codexText);
   await js(win, `document.getElementById("growth-close").click()`);
 
   // 7f. 扭蛋 / 接金币
@@ -767,6 +796,97 @@ async function runScenarios(win) {
     afterQuizBridge.coins > beforeQuizBridge.coins,
     `${beforeQuizBridge.coins.toFixed(0)}→${afterQuizBridge.coins.toFixed(0)}`
   );
+
+  // 7i. 表情包管理
+  await js(win, `window.__doroTest.openSticker()`);
+  await wait(200);
+  const stickerInfo = await js(
+    win,
+    `({
+      open: document.getElementById("sticker").classList.contains("show"),
+      items: document.querySelectorAll(".sticker-item").length,
+      count: document.getElementById("sticker-count").textContent,
+      preview: document.getElementById("sticker-preview-img").getAttribute("src")
+    })`
+  );
+  check(
+    "表情包管理能打开",
+    stickerInfo.open &&
+      stickerInfo.items === 8 &&
+      /51/.test(stickerInfo.count) &&
+      Boolean(stickerInfo.preview),
+    JSON.stringify(stickerInfo)
+  );
+
+  const beforeSticker = await getState(win);
+  await js(win, `document.getElementById("sticker-preview-random").click()`);
+  await wait(150);
+  const afterSticker = await getState(win);
+  check(
+    "表情包随机开关能切换",
+    JSON.stringify(beforeSticker.stickerRandom) !== JSON.stringify(afterSticker.stickerRandom),
+    JSON.stringify(afterSticker.stickerRandom)
+  );
+
+  await js(
+    win,
+    `(() => {
+      const input = document.getElementById("sticker-rename");
+      input.value = "测试改名";
+      input.dispatchEvent(new Event("blur"));
+      return true;
+    })()`
+  );
+  await wait(150);
+  const renamed = await getState(win);
+  check(
+    "表情包能改名",
+    Object.values(renamed.stickerLabels).includes("测试改名"),
+    JSON.stringify(renamed.stickerLabels)
+  );
+
+  await js(win, `document.querySelector('[data-bulk="none"]').click()`);
+  await wait(180);
+  const bulk = await getState(win);
+  check(
+    "表情包批量禁止随机",
+    Object.values(bulk.stickerRandom).length >= 51 &&
+      Object.values(bulk.stickerRandom).every((value) => value === false),
+    `${Object.keys(bulk.stickerRandom).length} 条`
+  );
+
+  await js(
+    win,
+    `(() => {
+      const input = document.getElementById("sticker-search");
+      input.value = "测试导入";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      return true;
+    })()`
+  );
+  await wait(150);
+  check("自定义表情包可以被搜索", (await js(win, `document.querySelectorAll(".sticker-item").length`)) === 1);
+  await js(win, `document.querySelector(".sticker-item").click()`);
+  await wait(100);
+  await js(win, `document.getElementById("sticker-delete").click()`);
+  await wait(100);
+  await js(win, `document.getElementById("sticker-delete").click()`);
+  await wait(250);
+  check(
+    "自定义表情包可以删除",
+    calls.stickerDeleted.includes("user_deadbeef00") &&
+      (await js(win, `document.querySelectorAll(".sticker-item").length`)) === 0
+  );
+  check(
+    "搜索无结果时清空预览",
+    (await js(
+      win,
+      `!document.getElementById("sticker-preview-img").hasAttribute("src") &&
+        document.getElementById("sticker-rename").disabled &&
+        document.getElementById("sticker-preview-random").disabled`
+    )) === true
+  );
+  await js(win, `document.getElementById("sticker-close").click()`);
 
   // 8. 设置开关
   const beforeToggle = await getState(win);
