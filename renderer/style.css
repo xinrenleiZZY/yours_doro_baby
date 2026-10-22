@@ -1243,6 +1243,43 @@ body.lib-open #stage {
 }
 
 /* ---------------------------------------------------------------- 配置中心 */
+#config {
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+#config header {
+  flex: none;
+  padding: 10px 10px 7px;
+  border-bottom: 1px solid rgba(226, 96, 154, 0.16);
+}
+
+.cfg-scroll {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 8px 10px 10px;
+  scrollbar-gutter: stable;
+}
+
+.cfg-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.cfg-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.cfg-scroll::-webkit-scrollbar-thumb {
+  background: rgba(226, 96, 154, 0.38);
+  border-radius: 99px;
+}
+
 .cfg-section {
   display: flex;
   flex-direction: column;

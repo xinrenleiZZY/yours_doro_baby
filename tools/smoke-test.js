@@ -656,6 +656,32 @@ async function runScenarios(win) {
     JSON.stringify(config)
   );
 
+  const configScroll = await js(
+    win,
+    `(() => {
+      const panel = document.getElementById("config");
+      const scroller = panel.querySelector(".cfg-scroll");
+      scroller.scrollTop = scroller.scrollHeight;
+      const footer = panel.querySelector(".cfg-footer").getBoundingClientRect();
+      const panelRect = panel.getBoundingClientRect();
+      return {
+        clientHeight: scroller.clientHeight,
+        scrollHeight: scroller.scrollHeight,
+        scrollTop: scroller.scrollTop,
+        atBottom: scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 1,
+        footerVisible: footer.bottom <= panelRect.bottom + 1 && footer.top >= panelRect.top
+      };
+    })()`
+  );
+  check(
+    "配置中心可以向下滚动到底部",
+    configScroll.scrollHeight > configScroll.clientHeight &&
+      configScroll.scrollTop > 0 &&
+      configScroll.atBottom &&
+      configScroll.footerVisible,
+    JSON.stringify(configScroll)
+  );
+
   await js(
     win,
     `(() => {

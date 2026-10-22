@@ -144,61 +144,65 @@
         <span>配置中心</span>
         <button id="config-close" title="收起">✕</button>
       </header>
-      <div class="cfg-section">
-        <div class="cfg-label"><span>动作频率</span><b id="cfg-ambient-val">60 秒</b></div>
-        <input id="cfg-ambient" type="range" min="5" max="600" step="5" value="60" />
-        <div class="cfg-presets">
-          <button data-ambient="120">慢 120s</button>
-          <button data-ambient="60">中 60s</button>
-          <button data-ambient="25">快 25s</button>
+      <div class="cfg-scroll">
+        <div class="cfg-section">
+          <div class="cfg-label"><span>动作频率</span><b id="cfg-ambient-val">60 秒</b></div>
+          <input id="cfg-ambient" type="range" min="5" max="600" step="5" value="60" />
+          <div class="cfg-presets">
+            <button data-ambient="120">慢 120s</button>
+            <button data-ambient="60">中 60s</button>
+            <button data-ambient="25">快 25s</button>
+          </div>
+          <p class="cfg-hint">两次随机表演之间的基础间隔，实际有 ±25% 浮动</p>
         </div>
-        <p class="cfg-hint">两次随机表演之间的基础间隔，实际有 ±25% 浮动</p>
-      </div>
-      <div class="cfg-section">
-        <div class="cfg-label"><span>漫游速度</span><b id="cfg-walk-val">55 px/秒</b></div>
-        <input id="cfg-walk" type="range" min="20" max="200" step="5" value="55" />
-      </div>
-      <div class="cfg-section">
-        <div class="cfg-label"><span>宠物大小</span><b id="cfg-scale-val">100%</b></div>
-        <input id="cfg-scale" type="range" min="70" max="150" step="5" value="100" />
-      </div>
-      <div class="cfg-toggles">
-        <button data-toggle="showBubble"><span>说话气泡</span><i class="switch"></i></button>
-        <button data-toggle="autoWalk"><span>自动散步</span><i class="switch"></i></button>
-        <button data-toggle="clickThrough"><span>点击穿透</span><i class="switch"></i></button>
-        <button data-toggle="alwaysOnTop"><span>窗口置顶</span><i class="switch"></i></button>
-        <button data-toggle="safeMode"><span>安全模式</span><i class="switch"></i></button>
-        <button data-toggle="sound"><span>音效</span><i class="switch"></i></button>
-        <button data-toggle="analytics"><span>本地统计</span><i class="switch"></i></button>
-        <button data-toggle="followCursor"><span>跟随鼠标</span><i class="switch"></i></button>
-        <button data-toggle="dnd"><span>勿扰模式</span><i class="switch"></i></button>
-      </div>
-      <div class="cfg-section">
-        <div class="cfg-label"><span>题库服务地址</span><b id="cfg-quiz-status">未连接</b></div>
-        <input id="cfg-quiz-api" class="cfg-input" type="url" placeholder="http://192.168.0.193:9300" />
-        <div class="cfg-presets">
-          <button id="cfg-quiz-save">保存并测试</button>
-          <button id="cfg-quiz-refresh">刷新题库缓存</button>
+        <div class="cfg-section">
+          <div class="cfg-label"><span>漫游速度</span><b id="cfg-walk-val">55 px/秒</b></div>
+          <input id="cfg-walk" type="range" min="20" max="200" step="5" value="55" />
         </div>
-        <p class="cfg-hint">局域网题库服务；请求与判卷都在主进程，答案不会下发到界面。</p>
-      </div>
-      <div class="cfg-section">
-        <div class="cfg-label"><span>更新源</span><b id="cfg-update-status">未检查</b></div>
-        <input
-          id="cfg-update-feed"
-          class="cfg-input"
-          type="url"
-          placeholder="http://192.168.0.193:9400/updates"
-        />
-        <div class="cfg-presets">
-          <button id="cfg-update-save">保存</button>
-          <button id="cfg-update-check">立即检查更新</button>
+        <div class="cfg-section">
+          <div class="cfg-label"><span>宠物大小</span><b id="cfg-scale-val">100%</b></div>
+          <input id="cfg-scale" type="range" min="70" max="150" step="5" value="100" />
         </div>
-        <button data-toggle="updateAutoCheck"><span>每天 08:00 自动检查</span><i class="switch"></i></button>
-      </div>
-      <div class="cfg-footer">
-        <span class="cfg-hint">修改立即生效并自动保存</span>
-        <button id="cfg-reset">恢复默认</button>
+        <div class="cfg-toggles">
+          <button data-toggle="showBubble"><span>说话气泡</span><i class="switch"></i></button>
+          <button data-toggle="autoWalk"><span>自动散步</span><i class="switch"></i></button>
+          <button data-toggle="clickThrough"><span>点击穿透</span><i class="switch"></i></button>
+          <button data-toggle="alwaysOnTop"><span>窗口置顶</span><i class="switch"></i></button>
+          <button data-toggle="safeMode"><span>安全模式</span><i class="switch"></i></button>
+          <button data-toggle="sound"><span>音效</span><i class="switch"></i></button>
+          <button data-toggle="analytics"><span>本地统计</span><i class="switch"></i></button>
+          <button data-toggle="followCursor"><span>跟随鼠标</span><i class="switch"></i></button>
+          <button data-toggle="dnd"><span>勿扰模式</span><i class="switch"></i></button>
+        </div>
+        <div class="cfg-section">
+          <div class="cfg-label"><span>题库服务地址</span><b id="cfg-quiz-status">未连接</b></div>
+          <input id="cfg-quiz-api" class="cfg-input" type="url" placeholder="http://192.168.0.193:9300" />
+          <div class="cfg-presets">
+            <button id="cfg-quiz-save">保存并测试</button>
+            <button id="cfg-quiz-refresh">刷新题库缓存</button>
+          </div>
+          <p class="cfg-hint">局域网题库服务；请求与判卷都在主进程，答案不会下发到界面。</p>
+        </div>
+        <div class="cfg-section">
+          <div class="cfg-label"><span>更新源</span><b id="cfg-update-status">未检查</b></div>
+          <input
+            id="cfg-update-feed"
+            class="cfg-input"
+            type="url"
+            placeholder="http://192.168.0.193:9400/updates"
+          />
+          <div class="cfg-presets">
+            <button id="cfg-update-save">保存</button>
+            <button id="cfg-update-check">立即检查更新</button>
+          </div>
+          <button data-toggle="updateAutoCheck">
+            <span>每天 08:00 自动检查</span><i class="switch"></i>
+          </button>
+        </div>
+        <div class="cfg-footer">
+          <span class="cfg-hint">修改立即生效并自动保存</span>
+          <button id="cfg-reset">恢复默认</button>
+        </div>
       </div>
     </div>
 
