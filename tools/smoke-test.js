@@ -1220,7 +1220,7 @@ async function runScenarios(win) {
     `${beforeQuizBridge.coins.toFixed(0)}→${afterQuizBridge.coins.toFixed(0)}`
   );
 
-  // 7i. 表情包管理
+  // 7i. 动作库管理
   await js(win, `window.__doroTest.openSticker()`);
   await wait(200);
   const stickerInfo = await js(
@@ -1233,10 +1233,10 @@ async function runScenarios(win) {
     })`
   );
   check(
-    "表情包管理能打开",
+    "动作库管理能打开",
     stickerInfo.open &&
       stickerInfo.items === 8 &&
-      /51/.test(stickerInfo.count) &&
+      /296/.test(stickerInfo.count) &&
       Boolean(stickerInfo.preview),
     JSON.stringify(stickerInfo)
   );
@@ -1273,7 +1273,7 @@ async function runScenarios(win) {
   const bulk = await getState(win);
   check(
     "表情包批量禁止随机",
-    Object.values(bulk.stickerRandom).length >= 51 &&
+    Object.values(bulk.stickerRandom).length >= 296 &&
       Object.values(bulk.stickerRandom).every((value) => value === false),
     `${Object.keys(bulk.stickerRandom).length} 条`
   );
@@ -1517,11 +1517,11 @@ async function runToolWindowScenarios() {
     })`
   );
   check(
-    "表情管理以独立窗口打开",
+    "动作库管理以独立窗口打开",
     stickerInfo.tool === "sticker" &&
       stickerInfo.open &&
       stickerInfo.items === 8 &&
-      /51/.test(stickerInfo.count),
+      /296/.test(stickerInfo.count),
     JSON.stringify(stickerInfo)
   );
   sticker.setSize(900, 720);
@@ -1553,7 +1553,7 @@ async function runToolWindowScenarios() {
     })()`
   );
   check(
-    "表情管理会随窗口宽度自动换列且不再拉伸空行",
+    "动作库管理会随窗口宽度自动换列且不再拉伸空行",
     wideSticker.columns > narrowSticker.columns &&
       wideSticker.height <= 100 &&
       narrowSticker.height <= 90 &&
@@ -1566,17 +1566,17 @@ async function runToolWindowScenarios() {
   await js(sticker, `document.getElementById("sticker-delete").click()`);
   await wait(200);
   check(
-    "内置表情删除后只隐藏",
+    "内置动作删除后只隐藏",
     toolState.stickerHidden.length === 1 &&
-      /\/ 50 参与随机/.test(await js(sticker, `document.getElementById("sticker-count").textContent`)),
+      /\/ 295 参与随机/.test(await js(sticker, `document.getElementById("sticker-count").textContent`)),
     JSON.stringify(toolState.stickerHidden)
   );
   await js(sticker, `document.getElementById("sticker-download").click()`);
   await wait(200);
   check(
-    "下载内置按钮能恢复隐藏表情",
+    "下载内置按钮能恢复隐藏动作",
     toolState.stickerHidden.length === 0 &&
-      /\/ 51 参与随机/.test(await js(sticker, `document.getElementById("sticker-count").textContent`)),
+      /\/ 296 参与随机/.test(await js(sticker, `document.getElementById("sticker-count").textContent`)),
     `hidden=${toolState.stickerHidden.length}`
   );
   const randomBefore = JSON.stringify(toolState.stickerRandom);

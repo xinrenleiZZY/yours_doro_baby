@@ -19,7 +19,7 @@
     shop: "doro 商城",
     gacha: "doro 扭蛋机",
     minigame: "doro 接金币",
-    sticker: "doro 表情包管理",
+    sticker: "doro 动作库管理",
   };
 
   let state = null;
@@ -319,11 +319,10 @@
     return response;
   }
 
-  // ------------------------------------------------------------- 表情包
+  // ------------------------------------------------------------- 动作库管理
   function stickerItems() {
     const query = stickerQuery.trim().toLowerCase();
     return actions
-      .filter((action) => G.isStickerAction(action))
       .filter((action) => !G.isStickerHidden(state, action))
       .filter((action) => {
         if (!query) return true;
@@ -332,7 +331,7 @@
   }
 
   function renderSticker() {
-    const all = actions.filter((action) => G.isStickerAction(action) && !G.isStickerHidden(state, action));
+    const all = actions.filter((action) => !G.isStickerHidden(state, action));
     const items = stickerItems();
     const pages = Math.max(1, Math.ceil(items.length / STICKER_PAGE_SIZE));
     stickerPage = Math.min(Math.max(0, stickerPage), pages - 1);
@@ -348,7 +347,7 @@
       $("sticker-rename").disabled = true;
       $("sticker-preview-random").disabled = true;
       $("sticker-delete").disabled = true;
-      grid.innerHTML = '<div class="sticker-empty">没有匹配的表情包</div>';
+      grid.innerHTML = '<div class="sticker-empty">没有匹配的动作</div>';
       $("sticker-page").textContent = "0 / 0";
       $("sticker-prev").disabled = true;
       $("sticker-next").disabled = true;
@@ -366,7 +365,7 @@
       ? "随机：开"
       : "随机：关";
     $("sticker-delete").disabled = false;
-    $("sticker-delete").title = selected.user ? "删除这个自定义表情包" : "隐藏这个内置表情包";
+    $("sticker-delete").title = selected.user ? "删除这个自定义动作" : "隐藏这个内置动作";
     $("sticker-delete").textContent = "删除";
     pendingDelete = null;
 
@@ -482,11 +481,7 @@
         const mode = button.dataset.bulk === "fav" ? "favorites" : button.dataset.bulk;
         await runCommand({ type: "batch-random", mode });
         showToast(
-          mode === "all"
-            ? "所有表情包已允许随机"
-            : mode === "none"
-              ? "所有表情包已禁止随机"
-              : "仅收藏参与随机"
+          mode === "all" ? "所有动作已允许随机" : mode === "none" ? "所有动作已禁止随机" : "仅收藏参与随机"
         );
       });
       $("sticker-import").addEventListener("click", async () => {
@@ -498,10 +493,10 @@
         if (result.added && result.added.length) {
           actions = await api.loadActions();
           stickerName = result.added[0].name;
-          showToast(`已导入 ${result.added.length} 个表情包`);
+          showToast(`已导入 ${result.added.length} 个动作图片`);
         } else {
           const reason = result.skipped && result.skipped[0] ? result.skipped[0].reason : "";
-          showToast(reason === "duplicate" ? "这些表情包已经在库里了" : "没有可导入的文件");
+          showToast(reason === "duplicate" ? "这些动作图片已经在库里了" : "没有可导入的文件");
         }
         renderSticker();
       });
@@ -509,7 +504,7 @@
         const response = await runCommand({ type: "restore" });
         if (response && response.result) {
           showToast(
-            response.result.restored ? `已恢复 ${response.result.restored} 个内置表情包` : "内置表情包都在"
+            response.result.restored ? `已恢复 ${response.result.restored} 个内置动作` : "内置动作都在"
           );
         }
       });

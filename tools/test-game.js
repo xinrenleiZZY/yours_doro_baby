@@ -589,9 +589,9 @@ test("表情包可以改自定义名称，清空后回退原名称", () => {
   assert.strictEqual(G.effectiveLabel(state, action), "原名称");
 });
 
-test("内置表情包删除只隐藏并可批量恢复", () => {
+test("动作库管理隐藏普通内置动作并可批量恢复", () => {
   const state = G.hydrate({ version: 12 }, NOW);
-  const builtIn = { name: "closeup_soft", label: "柔和特写", category: "special", group: "表情包" };
+  const builtIn = { name: "bath", label: "泡澡", category: "bath", group: "吃睡" };
   const custom = { name: "user_test", label: "自定义", category: "meme", group: "表情包", user: true };
   assert.strictEqual(G.hideBuiltInSticker(state, builtIn).ok, true);
   assert.strictEqual(G.isStickerHidden(state, builtIn), true);

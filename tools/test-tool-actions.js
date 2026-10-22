@@ -174,20 +174,14 @@ test("独立商城可以重塑性格并返回新档案", () => {
   assert.ok(result.speech.includes("型"));
 });
 
-test("独立表情窗口可以隐藏并恢复内置表情", () => {
+test("动作库管理可以隐藏并恢复普通内置动作", () => {
   const builtInActions = [
-    { name: "closeup_soft", label: "柔和特写", category: "special", group: "表情包", file: "pet/a.webp" },
+    { name: "bath", label: "泡澡", category: "bath", group: "吃睡", file: "pet/a.webp" },
   ];
   const state = G.hydrate({ version: 12 }, NOW);
-  const hidden = applyToolCommand(
-    state,
-    builtInActions,
-    "sticker",
-    { type: "hide", name: "closeup_soft" },
-    NOW
-  );
+  const hidden = applyToolCommand(state, builtInActions, "sticker", { type: "hide", name: "bath" }, NOW);
   assert.strictEqual(hidden.ok, true);
-  assert.deepStrictEqual(hidden.state.stickerHidden, ["closeup_soft"]);
+  assert.deepStrictEqual(hidden.state.stickerHidden, ["bath"]);
   const restored = applyToolCommand(hidden.state, builtInActions, "sticker", { type: "restore" }, NOW);
   assert.strictEqual(restored.ok, true);
   assert.strictEqual(restored.result.restored, 1);

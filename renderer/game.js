@@ -1392,7 +1392,7 @@
   }
 
   function hideBuiltInSticker(state, action) {
-    if (!isStickerAction(action) || action.user) return { ok: false, reason: "not-built-in" };
+    if (!action || !action.name || action.user) return { ok: false, reason: "not-built-in" };
     if (!state.stickerHidden) state.stickerHidden = [];
     if (!state.stickerHidden.includes(action.name)) state.stickerHidden.push(action.name);
     return { ok: true, name: action.name };
@@ -1401,7 +1401,7 @@
   function restoreBuiltInStickers(state, actions) {
     const builtInNames = new Set(
       (Array.isArray(actions) ? actions : [])
-        .filter((action) => isStickerAction(action) && !action.user)
+        .filter((action) => action && !action.user)
         .map((action) => action.name)
     );
     const previous = state.stickerHidden ? state.stickerHidden.length : 0;

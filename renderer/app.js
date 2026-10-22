@@ -659,8 +659,8 @@
       el.menuTaskCount.textContent = readyCount ? `${readyCount} 可领` : "";
     }
     if (el.menuStickerCount) {
-      const stickers = actions.filter((action) => G.isStickerAction(action));
-      el.menuStickerCount.textContent = `${stickers.filter((action) => G.stickerRandomAllowed(state, action)).length}/${stickers.length}`;
+      const visible = actions.filter((action) => !G.isStickerHidden(state, action));
+      el.menuStickerCount.textContent = `${visible.length}/${actions.length}`;
     }
     if (el.menuQuizSummary) {
       const daily = G.quizDailyStatus(state, Date.now());
@@ -1217,7 +1217,6 @@
   function stickerItems() {
     const query = stickerState.query.trim().toLowerCase();
     return actions
-      .filter((action) => G.isStickerAction(action))
       .filter((action) => !G.isStickerHidden(state, action))
       .filter((action) => {
         if (!query) return true;
@@ -1226,7 +1225,7 @@
   }
 
   function renderSticker() {
-    const all = actions.filter((action) => G.isStickerAction(action) && !G.isStickerHidden(state, action));
+    const all = actions.filter((action) => !G.isStickerHidden(state, action));
     const items = stickerItems();
     const pages = Math.max(1, Math.ceil(items.length / STICKER_PAGE_SIZE));
     stickerState.page = Math.min(Math.max(0, stickerState.page), pages - 1);
@@ -1247,7 +1246,7 @@
       el.stickerDelete.disabled = true;
       el.stickerDelete.textContent = "删除";
       stickerPendingDelete = null;
-      el.stickerGrid.innerHTML = '<div class="sticker-empty">没有匹配的表情包</div>';
+      el.stickerGrid.innerHTML = '<div class="sticker-empty">没有匹配的动作</div>';
       el.stickerPage.textContent = "0 / 0";
       el.stickerPrev.disabled = true;
       el.stickerNext.disabled = true;
@@ -1263,7 +1262,7 @@
     el.stickerPreviewRandom.classList.toggle("on", allowed);
     el.stickerPreviewRandom.textContent = allowed ? "随机：开" : "随机：关";
     el.stickerDelete.disabled = false;
-    el.stickerDelete.title = selected.user ? "删除这个自定义表情包" : "隐藏这个内置表情包";
+    el.stickerDelete.title = selected.user ? "删除这个自定义动作" : "隐藏这个内置动作";
     el.stickerDelete.textContent = "删除";
     stickerPendingDelete = null;
 
@@ -2611,7 +2610,7 @@
       if (!button) return;
       const mode = button.dataset.bulk;
       actions
-        .filter((action) => G.isStickerAction(action) && !G.isStickerHidden(state, action))
+        .filter((action) => !G.isStickerHidden(state, action))
         .forEach((action) => {
           if (mode === "all") G.setStickerRandom(state, action.name, true);
           else if (mode === "none") G.setStickerRandom(state, action.name, false);
@@ -2621,11 +2620,7 @@
       updateMenu();
       scheduleSave(500);
       toast(
-        mode === "all"
-          ? "所有表情包已允许随机"
-          : mode === "none"
-            ? "所有表情包已禁止随机"
-            : "只保留收藏参与随机"
+        mode === "all" ? "所有动作已允许随机" : mode === "none" ? "所有动作已禁止随机" : "只保留收藏参与随机"
       );
     });
 
@@ -2645,10 +2640,10 @@
         renderLibrary();
         updateMenu();
         scheduleSave(400);
-        toast(`已导入 ${result.added.length} 个表情包`);
+        toast(`已导入 ${result.added.length} 个动作图片`);
       } else {
         const reason = result.skipped && result.skipped[0] ? result.skipped[0].reason : "";
-        toast(reason === "duplicate" ? "这些表情包已经在库里了" : "没有可导入的文件");
+        toast(reason === "duplicate" ? "这些动作图片已经在库里了" : "没有可导入的文件");
       }
     });
 
@@ -2659,7 +2654,7 @@
       renderLibrary();
       updateMenu();
       scheduleSave(500);
-      toast(result.restored ? `已恢复 ${result.restored} 个内置表情包` : "内置表情包都在");
+      toast(result.restored ? `已恢复 ${result.restored} 个内置动作` : "内置动作都在");
     });
 
     el.stickerDelete.addEventListener("click", async () => {
