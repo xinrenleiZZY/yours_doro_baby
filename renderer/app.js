@@ -2372,6 +2372,7 @@
       else if (cmd === "quiz") openQuizWindow("home");
       else if (cmd === "sticker") openSidePanel("sticker");
       else if (cmd === "chat") api.aiOpen();
+      else if (cmd === "social") api.socialOpen();
       else if (cmd === "daily-question") {
         openQuizWindow("daily");
       } else if (cmd === "clear-base") {

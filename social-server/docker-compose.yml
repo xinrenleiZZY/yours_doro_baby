@@ -1,0 +1,9 @@
+services:
+  doro-social:
+    build: .
+    container_name: doro-social
+    restart: unless-stopped
+    ports:
+      - "9500:9500"
+    volumes:
+      - ./data:/data

@@ -72,6 +72,32 @@ let aiConfigState = {
   encryptionAvailable: true,
 };
 let aiHistoryState = [];
+const socialFixture = {
+  profile: {
+    gameId: "doro_1a2b3c4d",
+    nickname: "测试小鱼",
+    bio: "局域网摸鱼",
+    avatar: "🐣",
+    level: 12,
+    personality: "温柔",
+    intimacyName: "逐渐熟悉",
+    online: true,
+  },
+  friends: [
+    {
+      gameId: "doro_5e6f7a8b",
+      nickname: "泡面朋友",
+      bio: "在线写代码",
+      avatar: "🐈",
+      online: true,
+      level: 8,
+      personality: "勤勉",
+      intimacyName: "初次见面",
+    },
+  ],
+  incoming: [],
+  outgoing: [],
+};
 const calls = {
   setPosition: [],
   clickThrough: [],
@@ -85,6 +111,8 @@ const calls = {
   aiChats: [],
   aiSaves: [],
   aiClosed: 0,
+  socialCopies: [],
+  socialClosed: 0,
 };
 const results = [];
 const lines = [];
@@ -265,6 +293,40 @@ function registerStubs() {
     if (target) target.close();
     return true;
   });
+  ipcMain.handle("social:snapshot", () => ({
+    configured: true,
+    serverUrl: "http://192.168.0.193:9500",
+    gameId: socialFixture.profile.gameId,
+    nickname: socialFixture.profile.nickname,
+  }));
+  ipcMain.handle("social:get", () => ({ ok: true, ...socialFixture }));
+  ipcMain.handle("social:presence", () => ({ ok: true }));
+  ipcMain.handle("social:search", () => ({
+    ok: true,
+    users: [
+      {
+        gameId: "doro_9f0e1d2c",
+        nickname: "搜索结果",
+        bio: "可以添加",
+        avatar: "🐹",
+        online: true,
+      },
+    ],
+  }));
+  ipcMain.handle("social:update", (_event, profile) => ({
+    ok: true,
+    profile: { ...socialFixture.profile, ...profile },
+  }));
+  ipcMain.handle("social:copy", (_event, text) => {
+    calls.socialCopies.push(text);
+    return true;
+  });
+  ipcMain.handle("social:close", (event) => {
+    calls.socialClosed += 1;
+    const target = BrowserWindow.fromWebContents(event.sender);
+    if (target) target.close();
+    return true;
+  });
 
   // 题库相关：用固定假数据跑通 UI 流程
   ipcMain.handle("quiz:exams", () => ({
@@ -384,6 +446,24 @@ async function openChatWindowPage() {
   });
   await win.loadFile(path.join(ROOT, "renderer", "chat-window.html"));
   await waitFor(win, `document.documentElement.dataset.chatReady === "1"`, 5000, "AI 聊天窗口");
+  return win;
+}
+
+async function openSocialWindowPage() {
+  const win = new BrowserWindow({
+    width: 620,
+    height: 720,
+    show: false,
+    frame: false,
+    webPreferences: {
+      preload: path.join(ROOT, "preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      backgroundThrottling: false,
+    },
+  });
+  await win.loadFile(path.join(ROOT, "renderer", "social-window.html"));
+  await waitFor(win, `document.documentElement.dataset.socialReady === "1"`, 5000, "好友窗口");
   return win;
 }
 
@@ -1715,6 +1795,46 @@ async function runChatWindowScenario() {
   check("聊天窗口可以关闭", calls.aiClosed === 1 && chat.isDestroyed(), `closed=${calls.aiClosed}`);
 }
 
+async function runSocialWindowScenario() {
+  const social = await openSocialWindowPage();
+  const info = await js(
+    social,
+    `({
+      nickname: document.getElementById("profile-nickname").textContent,
+      gameId: document.getElementById("copy-id").textContent,
+      friends: document.querySelectorAll("#friends .person-row").length,
+      appVisible: !document.getElementById("app").hidden
+    })`
+  );
+  check(
+    "好友窗显示游戏 ID、昵称与好友列表",
+    info.appVisible &&
+      info.nickname === "测试小鱼" &&
+      info.gameId.includes("doro_1a2b3c4d") &&
+      info.friends === 1,
+    JSON.stringify(info)
+  );
+  await js(social, `document.getElementById("copy-id").click()`);
+  await wait(100);
+  check("游戏 ID 可以复制", calls.socialCopies.includes("doro_1a2b3c4d"));
+  await js(
+    social,
+    `(() => {
+      document.getElementById("search-input").value = "搜索";
+      document.getElementById("search-button").click();
+      return true;
+    })()`
+  );
+  await wait(150);
+  check(
+    "可以搜索局域网玩家",
+    (await js(social, `document.querySelectorAll("#search-results .person-row").length`)) === 1
+  );
+  await js(social, `document.getElementById("close").click()`);
+  await wait(150);
+  check("好友窗口可以关闭", calls.socialClosed === 1 && social.isDestroyed());
+}
+
 async function runRestartScenario(chosenAction) {
   // 用上一次存档重新开一个窗口，验证"重启后进度还在"
   seed = lastSaved;
@@ -1747,6 +1867,7 @@ async function main() {
     toolScenariosActive = true;
     await runToolWindowScenarios();
     await runChatWindowScenario();
+    await runSocialWindowScenario();
   } finally {
     if (!win.isDestroyed()) win.destroy();
   }

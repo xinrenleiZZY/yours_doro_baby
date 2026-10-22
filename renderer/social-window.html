@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; img-src 'self' data: file:; style-src 'self'; script-src 'self';"
+    />
+    <title>doro 好友与个人资料</title>
+    <link rel="stylesheet" href="social-window.css" />
+  </head>
+  <body>
+    <div class="social-app">
+      <header class="titlebar">
+        <div>
+          <strong>好友与个人资料</strong>
+          <span id="connection-status"><i></i><span id="connection-text">正在连接局域网服务…</span></span>
+        </div>
+        <button id="close" title="关闭">✕</button>
+      </header>
+
+      <main id="content">
+        <section id="setup" class="card setup" hidden>
+          <h2>创建你的游戏身份</h2>
+          <p>好友服务和资料保存在局域网 Docker 中，不会上传到公网。</p>
+          <label
+            ><span>服务器地址</span><input id="setup-server" type="url" value="http://192.168.0.193:9500"
+          /></label>
+          <label
+            ><span>昵称</span><input id="setup-nickname" maxlength="20" placeholder="给自己起个昵称"
+          /></label>
+          <label><span>简介</span><textarea id="setup-bio" maxlength="120" rows="2"></textarea></label>
+          <button id="register" class="primary">创建身份</button>
+        </section>
+
+        <section id="app" hidden>
+          <section class="card profile-card">
+            <div class="profile-head">
+              <span id="profile-avatar" class="avatar">🐣</span>
+              <div>
+                <h2 id="profile-nickname">doro 玩家</h2>
+                <button id="copy-id" class="game-id" type="button"></button>
+              </div>
+            </div>
+            <p id="profile-bio" class="bio"></p>
+            <div class="profile-meta" id="profile-meta"></div>
+            <div class="edit-grid">
+              <input id="edit-nickname" maxlength="20" placeholder="昵称" />
+              <input id="edit-bio" maxlength="120" placeholder="一句简介" />
+              <button id="save-profile" class="primary">保存资料</button>
+            </div>
+          </section>
+
+          <section class="card">
+            <div class="card-title">
+              <h3>添加好友</h3>
+              <span>搜索昵称或游戏 ID</span>
+            </div>
+            <div class="search-row">
+              <input id="search-input" maxlength="40" placeholder="例如 doro_1a2b3c4d" />
+              <button id="search-button">搜索</button>
+            </div>
+            <div id="search-results" class="list"></div>
+          </section>
+
+          <section class="card">
+            <div class="card-title">
+              <h3>好友申请</h3>
+              <span id="request-count"></span>
+            </div>
+            <div id="requests" class="list"></div>
+          </section>
+
+          <section class="card">
+            <div class="card-title">
+              <h3>我的好友</h3>
+              <span id="friend-count"></span>
+            </div>
+            <div id="friends" class="list"></div>
+          </section>
+        </section>
+      </main>
+      <div id="toast"></div>
+    </div>
+    <script src="social-window.js"></script>
+  </body>
+</html>

@@ -16,6 +16,7 @@ const {
   dialog,
   powerMonitor,
   safeStorage,
+  clipboard,
 } = require("electron");
 const fs = require("fs");
 const path = require("path");
@@ -26,6 +27,7 @@ const { QuizService } = require("./lib/quiz-api");
 const { UpdaterService } = require("./lib/updater");
 const { StickerStore } = require("./lib/sticker-store");
 const { AiService } = require("./lib/ai-service");
+const { SocialClient } = require("./lib/social-client");
 const G = require("./renderer/game.js");
 const { applyToolCommand } = require("./lib/tool-actions");
 
@@ -33,6 +35,7 @@ const WINDOW_SIZE = { width: 320, height: 360 };
 // 答题窗口：独立、不透明、可拖动，避免撑大透明的宠物窗口
 const QUIZ_WINDOW_SIZE = { width: 640, height: 720 };
 const CHAT_WINDOW_SIZE = { width: 540, height: 720 };
+const SOCIAL_WINDOW_SIZE = { width: 620, height: 720 };
 const USER_DATA = app.getPath("userData");
 const SAVE_FILE = path.join(USER_DATA, "save.json");
 const SESSION_FILE = path.join(USER_DATA, "session.json");
@@ -44,6 +47,7 @@ const USER_STICKER_DIR = path.join(USER_DATA, "user-stickers");
 const USER_STICKERS_FILE = path.join(USER_DATA, "user-stickers.json");
 const AI_CONFIG_FILE = path.join(USER_DATA, "ai-config.json");
 const AI_HISTORY_FILE = path.join(USER_DATA, "ai-history.json");
+const SOCIAL_PROFILE_FILE = path.join(USER_DATA, "social-profile.json");
 const TOOL_WINDOW_SPECS = {
   shop: { width: 620, height: 700, title: "doro 商城" },
   gacha: { width: 500, height: 520, title: "doro 扭蛋机" },
@@ -58,6 +62,7 @@ const TRACE_HOVER = process.env.DORO_TRACE_HOVER === "1";
 let win = null;
 let quizWin = null;
 let chatWin = null;
+let socialWin = null;
 const toolWindows = new Map();
 let tray = null;
 let saveTimer = null;
@@ -100,6 +105,11 @@ const aiService = new AiService({
   configFile: AI_CONFIG_FILE,
   historyFile: AI_HISTORY_FILE,
   safeStorage,
+  log,
+});
+const socialClient = new SocialClient({
+  profileFile: SOCIAL_PROFILE_FILE,
+  baseUrl: "http://192.168.0.193:9500",
   log,
 });
 
@@ -394,6 +404,17 @@ function aiPetContext() {
   };
 }
 
+function socialPublicContext() {
+  const state = latestToolState || readSave() || {};
+  const personality = state.profile ? G.personalityOf(state) : { name: "温柔" };
+  const intimacy = state.intimacy ? G.intimacyStatus(state) : { name: "初次见面" };
+  return {
+    level: Number(state.level) || 1,
+    personality: personality.name,
+    intimacyName: intimacy.name,
+  };
+}
+
 function broadcastToolWindows(channel, payload, exceptWebContents) {
   toolWindows.forEach((toolWin) => {
     if (!toolWin || toolWin.isDestroyed()) return;
@@ -664,6 +685,57 @@ function createChatWindow() {
   return chatWin;
 }
 
+function isSocialWindowSender(event) {
+  return Boolean(socialWin && !socialWin.isDestroyed() && event && event.sender === socialWin.webContents);
+}
+
+function createSocialWindow() {
+  if (socialWin && !socialWin.isDestroyed()) {
+    socialWin.show();
+    socialWin.focus();
+    return socialWin;
+  }
+  const area = screen.getPrimaryDisplay().workArea;
+  const width = Math.min(SOCIAL_WINDOW_SIZE.width, area.width - 40);
+  const height = Math.min(SOCIAL_WINDOW_SIZE.height, area.height - 40);
+  socialWin = new BrowserWindow({
+    width,
+    height,
+    minWidth: Math.min(480, width),
+    minHeight: Math.min(560, height),
+    x: area.x + Math.round((area.width - width) / 2),
+    y: area.y + Math.round((area.height - height) / 2),
+    frame: false,
+    resizable: true,
+    maximizable: false,
+    skipTaskbar: false,
+    alwaysOnTop: true,
+    show: false,
+    backgroundColor: "#fff8f5",
+    title: "doro 好友与资料",
+    webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  socialWin.setAlwaysOnTop(true, "floating");
+  socialWin.setMenuBarVisibility(false);
+  socialWin.webContents.on("did-fail-load", (_event, code, description, url) => {
+    log("error", "好友窗口加载失败", { code, description, url });
+  });
+  socialWin.loadFile(path.join(__dirname, "renderer", "social-window.html"));
+  socialWin.once("ready-to-show", () => {
+    if (!socialWin || socialWin.isDestroyed()) return;
+    socialWin.show();
+    socialWin.focus();
+  });
+  socialWin.on("closed", () => {
+    socialWin = null;
+  });
+  return socialWin;
+}
+
 // ---------------------------------------------------------------- 独立工具窗口
 function createToolWindow(tool, options) {
   const spec = TOOL_WINDOW_SPECS[tool];
@@ -742,6 +814,7 @@ function buildTrayMenu() {
     { label: win && win.isVisible() ? "先躲起来" : "出来玩", click: toggleWindow },
     { type: "separator" },
     { label: "和 doro 聊天（Ctrl+Alt+C）", click: () => createChatWindow() },
+    { label: "好友与个人资料", click: () => createSocialWindow() },
     { label: "喂饭（20 金币）", click: () => send("pet:command", "feed") },
     { label: "陪玩（30 金币）", click: () => send("pet:command", "play") },
     { label: "叫它过来（Ctrl+Alt+R）", click: summonToCursor },
@@ -899,6 +972,62 @@ function registerIpc() {
       log("error", "AI 聊天处理失败", err && err.stack ? err.stack : String(err));
       return { ok: false, error: "internal" };
     }
+  });
+
+  // ---- 局域网好友与个人资料 ---------------------------------------------
+  ipcMain.handle("social:open", () => {
+    createSocialWindow();
+    return true;
+  });
+  ipcMain.handle("social:snapshot", (event) =>
+    isSocialWindowSender(event) ? socialClient.snapshot() : { configured: false, error: "unauthorized" }
+  );
+  ipcMain.handle("social:setup", async (event, payload) => {
+    if (!isSocialWindowSender(event)) return { ok: false, error: "unauthorized" };
+    const urlResult = socialClient.setServerUrl(payload && payload.serverUrl);
+    if (!urlResult.ok && urlResult.error !== "already-registered") return urlResult;
+    return socialClient.register({
+      ...(payload || {}),
+      ...socialPublicContext(),
+    });
+  });
+  ipcMain.handle("social:get", (event) =>
+    isSocialWindowSender(event) ? socialClient.social() : { ok: false, error: "unauthorized" }
+  );
+  ipcMain.handle("social:update", (event, payload) =>
+    isSocialWindowSender(event)
+      ? socialClient.updateProfile({ ...(payload || {}), ...socialPublicContext() })
+      : { ok: false, error: "unauthorized" }
+  );
+  ipcMain.handle("social:search", (event, query) =>
+    isSocialWindowSender(event) ? socialClient.search(query) : { ok: false, error: "unauthorized" }
+  );
+  ipcMain.handle("social:request", (event, payload) =>
+    isSocialWindowSender(event)
+      ? socialClient.requestFriend(payload && payload.targetId, payload && payload.message)
+      : { ok: false, error: "unauthorized" }
+  );
+  ipcMain.handle("social:respond", (event, payload) =>
+    isSocialWindowSender(event)
+      ? socialClient.respondFriend(payload && payload.requestId, payload && payload.accept)
+      : { ok: false, error: "unauthorized" }
+  );
+  ipcMain.handle("social:remove", (event, friendId) =>
+    isSocialWindowSender(event) ? socialClient.removeFriend(friendId) : { ok: false, error: "unauthorized" }
+  );
+  ipcMain.handle("social:presence", (event, online) =>
+    isSocialWindowSender(event)
+      ? socialClient.presence(Boolean(online))
+      : { ok: false, error: "unauthorized" }
+  );
+  ipcMain.handle("social:copy", (event, text) => {
+    if (!isSocialWindowSender(event)) return false;
+    clipboard.writeText(String(text || "").slice(0, 100));
+    return true;
+  });
+  ipcMain.handle("social:close", (event) => {
+    if (socialWin && BrowserWindow.fromWebContents(event.sender) === socialWin) socialWin.close();
+    return true;
   });
 
   // ---- 题库（网络与判卷都在主进程） ------------------------------------
@@ -1308,6 +1437,7 @@ if (!gotLock) {
       setTimeout(() => createToolWindow(toolArg.split("=")[1]), 1200);
     }
     if (process.argv.includes("--chat")) setTimeout(() => createChatWindow(), 1200);
+    if (process.argv.includes("--social")) setTimeout(() => createSocialWindow(), 1200);
     const shortcutToggle = globalShortcut.register("CommandOrControl+Alt+D", () => toggleWindow());
     const shortcutSummon = globalShortcut.register("CommandOrControl+Alt+R", () => summonToCursor());
     const shortcutChat = globalShortcut.register("CommandOrControl+Alt+C", () => createChatWindow());

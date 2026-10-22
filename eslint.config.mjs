@@ -28,6 +28,7 @@ const nodeGlobals = {
   __filename: "readonly",
   Buffer: "readonly",
   URL: "readonly",
+  fetch: "readonly",
   setImmediate: "readonly",
   setTimeout: "readonly",
   clearTimeout: "readonly",
@@ -76,7 +77,7 @@ export default [
     },
   },
   {
-    files: ["main.js", "preload.js", "lib/**/*.js", "tools/**/*.js"],
+    files: ["main.js", "preload.js", "lib/**/*.js", "tools/**/*.js", "social-server/**/*.js"],
     languageOptions: {
       globals: nodeGlobals,
     },

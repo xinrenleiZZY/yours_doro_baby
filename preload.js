@@ -51,6 +51,19 @@ contextBridge.exposeInMainWorld("petAPI", {
   aiChat: (payload) => ipcRenderer.invoke("ai:chat", payload),
   onAiIntent: (handler) => on("pet:ai-intent", handler),
 
+  socialOpen: () => ipcRenderer.invoke("social:open"),
+  socialClose: () => ipcRenderer.invoke("social:close"),
+  socialSnapshot: () => ipcRenderer.invoke("social:snapshot"),
+  socialSetup: (payload) => ipcRenderer.invoke("social:setup", payload),
+  socialGet: () => ipcRenderer.invoke("social:get"),
+  socialUpdate: (payload) => ipcRenderer.invoke("social:update", payload),
+  socialSearch: (query) => ipcRenderer.invoke("social:search", query),
+  socialRequest: (payload) => ipcRenderer.invoke("social:request", payload),
+  socialRespond: (payload) => ipcRenderer.invoke("social:respond", payload),
+  socialRemove: (friendId) => ipcRenderer.invoke("social:remove", friendId),
+  socialPresence: (online) => ipcRenderer.invoke("social:presence", online),
+  socialCopy: (text) => ipcRenderer.invoke("social:copy", text),
+
   // 题库：网络与判卷都在主进程，渲染进程只拿无答案题面。
   quizExams: (options) => ipcRenderer.invoke("quiz:exams", options),
   quizCreate: (payload) => ipcRenderer.invoke("quiz:create", payload),
