@@ -259,6 +259,11 @@ body.lib-open #stage {
   color: #25654a;
 }
 
+.event-chip.work {
+  background: linear-gradient(180deg, #e1eeff, #aacaf5);
+  color: #315b91;
+}
+
 .chip {
   font-size: 10px;
   padding: 3px 7px;
@@ -1609,6 +1614,51 @@ body.lib-open #stage {
   padding: 5px 7px;
   border-radius: 9px;
   background: var(--soft-bg);
+}
+
+.work-section {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.work-worker,
+.work-job {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 7px;
+  border-radius: 9px;
+  background: var(--soft-bg-2);
+  font-size: 9.5px;
+}
+
+.work-worker span,
+.work-job span {
+  flex: 1;
+  min-width: 0;
+}
+
+.work-worker button,
+.work-fragment-button {
+  border: none;
+  border-radius: 8px;
+  padding: 4px 7px;
+  font: 9.5px var(--font);
+  color: #fff;
+  background: linear-gradient(180deg, #9fc8f4, #5e8fc7);
+  cursor: pointer;
+}
+
+.work-worker button:disabled,
+.work-fragment-button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.work-dismiss {
+  background: var(--soft-bg) !important;
+  color: #a2486c !important;
 }
 
 .switch {

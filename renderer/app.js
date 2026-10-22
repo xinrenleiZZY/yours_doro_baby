@@ -39,6 +39,7 @@
     chipMood: $("chip-mood"),
     wishChip: $("wish-chip"),
     visitorChip: $("visitor-chip"),
+    workChip: $("work-chip"),
     quizChip: $("quiz-chip"),
     quiz: $("quiz"),
     menuQuizSummary: $("menu-quiz-summary"),
@@ -127,6 +128,8 @@
     growthCheckinInfo: $("growth-checkin-info"),
     growthBank: $("growth-bank"),
     growthRoom: $("growth-room"),
+    growthWorkCount: $("growth-work-count"),
+    growthWork: $("growth-work"),
     btnCheckin: $("btn-checkin"),
     btnBank200: $("btn-bank-200"),
     btnBank1000: $("btn-bank-1000"),
@@ -323,6 +326,15 @@
       el.visitorChip.classList.remove("show");
     }
 
+    const jobs = G.workStatus(state);
+    if (jobs.length) {
+      const next = jobs.reduce((soonest, job) => (job.endsAt < soonest.endsAt ? job : soonest), jobs[0]);
+      el.workChip.textContent = `💼 ${jobs.length} 人打工 · ${Math.ceil(next.secondsLeft / 60)} 分钟`;
+      el.workChip.classList.add("show");
+    } else {
+      el.workChip.classList.remove("show");
+    }
+
     if (el.quizChip) {
       const quizEvent = G.quizEventStatus(state, Date.now());
       if (quizEvent.available) {
@@ -350,7 +362,7 @@
 
   function syncCompanion() {
     const existing = document.getElementById("companion-pet");
-    const adopted = state.companion && state.companion.adopted;
+    const adopted = state.companion && state.companion.adopted && !G.workerUnavailable(state, "companion");
     if (adopted && !existing) {
       const img = new Image();
       img.id = "companion-pet";
@@ -807,6 +819,69 @@
     return row;
   }
 
+  function workRewardLabel(reward) {
+    if (reward.type === "coins") return `${G.formatCoins(reward.amount)} 金币`;
+    if (reward.type === "food") {
+      const item = G.SHOP_ITEMS[reward.itemId];
+      return `${item ? item.icon : "🍱"}${item ? item.name : "食物"}×${reward.amount}`;
+    }
+    return `装扮碎片×${reward.amount}`;
+  }
+
+  function dispatchWorker(worker, hours) {
+    const result = G.dispatchWorker(state, worker, hours, Date.now());
+    if (!result.ok) {
+      const messages = {
+        busy: "这名打工者已经出门了",
+        full: "最多只能同时派两个人打工",
+        missing: worker === "companion" ? "还没有伙伴 doro" : "当前没有可派遣的访客",
+      };
+      toast(messages[result.reason] || "暂时无法派遣");
+      return;
+    }
+    toast(`${result.job.icon} ${result.job.label} 已出发 ${hours} 小时`);
+    syncCompanion();
+    updateEventChips();
+    renderGrowth();
+    scheduleSave(500);
+  }
+
+  function collectWork(silent) {
+    const finished = G.collectFinishedJobs(state, Date.now());
+    if (!finished.length) return finished;
+    const summary = finished.map((job) => `${job.icon} ${workRewardLabel(job.reward)}`).join("；");
+    toast(`打工归来：${summary}`, 4200);
+    speak(`打工回来啦，带了${summary}`, 3600);
+    playSound("coin");
+    syncCompanion();
+    updateHud(0);
+    updateEventChips();
+    updateMenu();
+    if (growthOpen) renderGrowth();
+    scheduleSave(500);
+    if (!silent) api.notify({ title: "doro 打工归来", body: summary });
+    return finished;
+  }
+
+  function exchangeWorkFragments() {
+    const result = G.exchangeFragments(state, actions, Date.now());
+    if (!result.ok) {
+      toast("装扮碎片不足，需要 5 枚");
+      return;
+    }
+    if (result.type === "dress") {
+      toast(`碎片兑换成功：${result.action.label}`);
+      speak(`换到了「${result.action.label}」`, 2400);
+      renderLibrary();
+    } else {
+      toast(`没有可兑换装扮，碎片换成 ${G.formatCoins(result.amount)} 金币`);
+    }
+    playSound("coin");
+    updateHud(0);
+    renderGrowth();
+    scheduleSave(500);
+  }
+
   function renderGrowth() {
     el.growthCoins.textContent = `${G.formatCoins(state.coins)} 金币`;
     el.growthDailyDate.textContent = G.dayKey();
@@ -873,6 +948,83 @@
           G.roomBonusValue(state) * 100
         )}%）`
       : "房间还空着，去商城「家具」看看";
+
+    const jobs = G.workStatus(state);
+    const visitor = G.visitorStatus(state);
+    const companionHome =
+      state.companion && state.companion.adopted && !G.workerUnavailable(state, "companion");
+    el.growthWorkCount.textContent = `${jobs.length}/2 工位 · 碎片 ${state.work.fragments}`;
+    el.growthWork.innerHTML = "";
+    const workSection = document.createElement("div");
+    workSection.className = "work-section";
+    const addWorker = (worker, icon, label, available) => {
+      const row = document.createElement("div");
+      row.className = "work-worker";
+      const text = document.createElement("span");
+      text.textContent = `${icon} ${label}`;
+      row.appendChild(text);
+      [2, 4, 8].forEach((hours) => {
+        const button = document.createElement("button");
+        button.textContent = `${hours}h`;
+        button.disabled = !available || jobs.length >= 2;
+        button.title = `派遣 ${hours} 小时`;
+        button.addEventListener("click", () => dispatchWorker(worker, hours));
+        row.appendChild(button);
+      });
+      if (worker === "visitor") {
+        const dismiss = document.createElement("button");
+        dismiss.className = "work-dismiss";
+        dismiss.textContent = "请回";
+        dismiss.title = "让访客离开";
+        dismiss.addEventListener("click", () => {
+          if (!G.dismissVisitor(state)) return;
+          toast("访客已经回去了");
+          updateEventChips();
+          renderGrowth();
+          scheduleSave(400);
+        });
+        row.appendChild(dismiss);
+      }
+      workSection.appendChild(row);
+    };
+    if (visitor) addWorker("visitor", visitor.icon, visitor.label, true);
+    if (state.companion && state.companion.adopted) {
+      addWorker(
+        "companion",
+        "🐣",
+        companionHome ? "伙伴 doro（在家）" : "伙伴 doro（打工中）",
+        companionHome
+      );
+    }
+    if (!visitor && !(state.companion && state.companion.adopted)) {
+      const empty = document.createElement("div");
+      empty.className = "work-job";
+      empty.textContent = "等待访客，或去商城领养伙伴 doro";
+      workSection.appendChild(empty);
+    }
+    jobs.forEach((job) => {
+      const row = document.createElement("div");
+      row.className = "work-job";
+      const text = document.createElement("span");
+      text.textContent = `${job.icon} ${job.label} · ${job.hours}h · ${
+        job.ready ? "等待领取" : `${Math.max(1, Math.ceil(job.secondsLeft / 60))} 分钟后回来`
+      } · ${workRewardLabel(job.reward)}`;
+      row.appendChild(text);
+      if (job.ready) {
+        const claim = document.createElement("button");
+        claim.textContent = "领取";
+        claim.addEventListener("click", () => collectWork(false));
+        row.appendChild(claim);
+      }
+      workSection.appendChild(row);
+    });
+    const fragment = document.createElement("button");
+    fragment.className = "work-fragment-button";
+    fragment.textContent = "5 碎片兑换装扮";
+    fragment.disabled = state.work.fragments < 5;
+    fragment.addEventListener("click", exchangeWorkFragments);
+    workSection.appendChild(fragment);
+    el.growthWork.appendChild(workSection);
 
     const achievements = G.achievementList(state);
     el.growthAchCount.textContent = `${achievements.filter((item) => item.claimed).length}/${achievements.length}`;
@@ -2082,6 +2234,8 @@
       if (growthOpen) renderGrowth();
     });
 
+    el.workChip.addEventListener("click", () => openSidePanel("growth"));
+
     el.btnCheckin.addEventListener("click", () => {
       const result = G.doCheckin(state, Date.now());
       if (!result.ok) return;
@@ -2558,9 +2712,11 @@
     startRoam();
     updateEventChips();
     scheduleWish();
+    collectWork(true);
     syncCompanion();
     setInterval(() => {
       G.maybeVisitor(state, Date.now());
+      collectWork(false);
       updateEventChips();
       if (growthOpen) renderGrowth();
     }, 30000);
@@ -2636,6 +2792,12 @@
         forceVisitor: () => {
           G.spawnVisitor(state, Date.now());
           updateEventChips();
+        },
+        finishWork: () => {
+          state.work.jobs.forEach((job) => {
+            job.endsAt = 0;
+          });
+          return collectWork(false);
         },
         closePanels: () => {
           closeQuizPanel();

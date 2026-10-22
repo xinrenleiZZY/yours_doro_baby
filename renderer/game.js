@@ -11,7 +11,7 @@
 })(typeof self !== "undefined" ? self : this, function () {
   "use strict";
 
-  const SAVE_VERSION = 8;
+  const SAVE_VERSION = 9;
 
   // ---- 经济数值 -------------------------------------------------------------
   const BALANCE = {
@@ -83,6 +83,11 @@
       totalEarned: 0,
       totalSpent: 0,
       learned: ["idle_stand", "walk_bag", "sleep_cat", "closeup_soft"],
+    },
+    work: {
+      jobs: [],
+      fragments: 0,
+      completed: 0,
     },
     quiz: {
       examCode: "architect",
@@ -735,6 +740,13 @@
         },
       });
     },
+    // 8 -> 9：伙伴 / 访客派遣打工
+    8: (raw) => {
+      return Object.assign({}, raw, {
+        version: 9,
+        work: raw.work && typeof raw.work === "object" ? raw.work : DEFAULT_STATE.work,
+      });
+    },
   };
 
   function migrate(raw) {
@@ -845,6 +857,38 @@
       raw.companion && typeof raw.companion === "object"
         ? { adopted: raw.companion.adopted === true }
         : { adopted: false };
+    state.work =
+      raw.work && typeof raw.work === "object"
+        ? {
+            jobs: Array.isArray(raw.work.jobs)
+              ? raw.work.jobs
+                  .filter(
+                    (job) =>
+                      job &&
+                      ["visitor", "companion"].includes(job.worker) &&
+                      ["coins", "food", "fragments"].includes(job.reward && job.reward.type) &&
+                      Number.isFinite(Number(job.endsAt))
+                  )
+                  .slice(0, 2)
+                  .map((job) => ({
+                    id: String(job.id || "").slice(0, 30),
+                    worker: job.worker,
+                    label: String(job.label || "打工者").slice(0, 30),
+                    icon: String(job.icon || "💼").slice(0, 4),
+                    hours: [2, 4, 8].includes(Number(job.hours)) ? Number(job.hours) : 2,
+                    startedAt: num(job.startedAt, 0, 0),
+                    endsAt: num(job.endsAt, 0, 0),
+                    reward: {
+                      type: job.reward.type,
+                      amount: num(job.reward.amount, 0, 0, 1e12),
+                      itemId: typeof job.reward.itemId === "string" ? job.reward.itemId.slice(0, 24) : "",
+                    },
+                  }))
+              : [],
+            fragments: num(raw.work.fragments, 0, 0, 1e9),
+            completed: num(raw.work.completed, 0, 0, 1e9),
+          }
+        : { jobs: [], fragments: 0, completed: 0 };
     state.profile = normalizeProfile(raw.profile, state.createdAt);
     const learned = Array.isArray(raw.training && raw.training.learned)
       ? raw.training.learned.filter((name) => typeof name === "string").slice(0, 500)
@@ -900,7 +944,10 @@
           : BALANCE.hungryMultiplier
         : 1;
     const roomBonus = roomBonusValue(state);
-    const companionBonus = state.companion && state.companion.adopted ? FURNITURE.companion.bonus : 0;
+    const companionBonus =
+      state.companion && state.companion.adopted && !workerUnavailable(state, "companion")
+        ? FURNITURE.companion.bonus
+        : 0;
     const luxuryBonus = luxuryIncomeBonus(state);
     return (
       base *
@@ -1816,6 +1863,111 @@
     return visitor;
   }
 
+  function dismissVisitor(state) {
+    if (!state.visitor) return false;
+    state.visitor = null;
+    return true;
+  }
+
+  function workerUnavailable(state, worker) {
+    return (state.work.jobs || []).some((job) => job.worker === worker);
+  }
+
+  function makeWorkReward(state, hours, random) {
+    const rng = typeof random === "function" ? random : Math.random;
+    const roll = rng();
+    if (roll < 0.58) {
+      const amount = Math.max(hours * 120, Math.round(incomePerSecond(state) * hours * 3600 * 0.22));
+      return { type: "coins", amount, itemId: "" };
+    }
+    if (roll < 0.88) {
+      const foods = Object.values(SHOP_ITEMS).filter((item) => item.type === "food");
+      const item = foods[Math.floor(rng() * foods.length) % foods.length];
+      return { type: "food", amount: hours, itemId: item.id };
+    }
+    return { type: "fragments", amount: Math.ceil(hours / 2), itemId: "" };
+  }
+
+  function dispatchWorker(state, worker, hours, now, random) {
+    if (![2, 4, 8].includes(hours)) return { ok: false, reason: "duration" };
+    if (workerUnavailable(state, worker)) return { ok: false, reason: "busy" };
+    if (state.work.jobs.length >= 2) return { ok: false, reason: "full" };
+    let source;
+    if (worker === "companion") {
+      if (!state.companion || !state.companion.adopted) return { ok: false, reason: "missing" };
+      source = { label: "伙伴 doro", icon: "🐣" };
+    } else if (worker === "visitor") {
+      const visitor = visitorStatus(state, now);
+      if (!visitor) return { ok: false, reason: "missing" };
+      source = { label: visitor.label, icon: visitor.icon };
+      state.visitor = null;
+    } else {
+      return { ok: false, reason: "worker" };
+    }
+    const ts = now || Date.now();
+    const job = {
+      id: `job_${ts.toString(36)}_${worker}`,
+      worker,
+      label: source.label,
+      icon: source.icon,
+      hours,
+      startedAt: ts,
+      endsAt: ts + hours * 3600 * 1000,
+      reward: makeWorkReward(state, hours, random),
+    };
+    state.work.jobs.push(job);
+    state.nextVisitorAt = Math.max(state.nextVisitorAt || 0, ts + 20 * 60000);
+    return { ok: true, job };
+  }
+
+  function workStatus(state, now) {
+    const ts = now || Date.now();
+    return (state.work.jobs || []).map((job) => ({
+      ...job,
+      secondsLeft: Math.max(0, Math.ceil((job.endsAt - ts) / 1000)),
+      ready: job.endsAt <= ts,
+    }));
+  }
+
+  function collectFinishedJobs(state, now) {
+    const ts = now || Date.now();
+    const ready = (state.work.jobs || []).filter((job) => job.endsAt <= ts);
+    if (!ready.length) return [];
+    state.work.jobs = state.work.jobs.filter((job) => job.endsAt > ts);
+    return ready.map((job) => {
+      state.work.completed += 1;
+      if (job.reward.type === "coins") {
+        state.coins += job.reward.amount;
+        state.totalEarned += job.reward.amount;
+      } else if (job.reward.type === "food") {
+        state.inventory[job.reward.itemId] = (state.inventory[job.reward.itemId] || 0) + job.reward.amount;
+      } else {
+        state.work.fragments += job.reward.amount;
+      }
+      return { ...job, settled: true };
+    });
+  }
+
+  function exchangeFragments(state, actions, now, random) {
+    const cost = 5;
+    if (state.work.fragments < cost) return { ok: false, reason: "fragments" };
+    const locked = (Array.isArray(actions) ? actions : []).filter(
+      (action) => action.category === "dress" && !state.unlocked.includes(action.name)
+    );
+    state.work.fragments -= cost;
+    if (!locked.length) {
+      const coins = Math.max(1000, Math.round(incomePerSecond(state) * 600));
+      state.coins += coins;
+      state.totalEarned += coins;
+      return { ok: true, type: "coins", amount: coins };
+    }
+    const rng = typeof random === "function" ? random : Math.random;
+    const action = locked[Math.floor(rng() * locked.length) % locked.length];
+    state.unlocked.push(action.name);
+    state.lastTick = now || Date.now();
+    return { ok: true, type: "dress", action };
+  }
+
   function roomBonusValue(state) {
     const owned = (state.room && state.room.furniture) || [];
     return owned.reduce((sum, id) => {
@@ -1916,6 +2068,12 @@
     visitorStatus,
     maybeVisitor,
     acceptVisitor,
+    dismissVisitor,
+    workerUnavailable,
+    dispatchWorker,
+    workStatus,
+    collectFinishedJobs,
+    exchangeFragments,
     roomBonusValue,
     SAVE_VERSION,
     migrate,

@@ -287,13 +287,29 @@ test("存档白名单保留商城 / 日程字段并过滤非法项", () => {
       totalSpent: 19,
       learned: ["idle_stand", "scene_cat"],
     },
+    work: {
+      fragments: 4,
+      completed: 2,
+      jobs: [
+        {
+          id: "job_test",
+          worker: "visitor",
+          label: "猫猫打工",
+          icon: "🐈",
+          hours: 4,
+          startedAt: NOW,
+          endsAt: NOW + 4 * 3600000,
+          reward: { type: "coins", amount: 500, itemId: "" },
+        },
+      ],
+    },
     unlocked: ["dress_santa", "dress_santa3", 5],
     favorites: ["idle_stand", "bad name"],
     recent: ["idle_stand"],
     schedule: [{ id: "a", time: "09:00", text: "喝水", doneDate: "", notifiedDate: "" }],
     shopStats: { purchases: 2, spent: 40 },
   });
-  assert.strictEqual(clean.version, 8);
+  assert.strictEqual(clean.version, 9);
   assert.strictEqual(clean.inventory.fish, 2);
   assert.strictEqual(clean.inventory["bad-key"], undefined);
   assert.strictEqual(clean.perks.lucky_cat, true);
@@ -302,6 +318,8 @@ test("存档白名单保留商城 / 日程字段并过滤非法项", () => {
   assert.strictEqual(clean.profile.personality, "playful");
   assert.strictEqual(clean.training.points, 21);
   assert.deepStrictEqual(clean.training.learned, ["idle_stand", "scene_cat"]);
+  assert.strictEqual(clean.work.fragments, 4);
+  assert.strictEqual(clean.work.jobs[0].reward.amount, 500);
   assert.strictEqual(clean.buffs.double_income, 12345);
   assert.strictEqual(clean.unlocked.length, 2);
   assert.deepStrictEqual(clean.favorites, ["idle_stand"]);
@@ -677,6 +695,60 @@ test("v7 老存档会把已看动作补偿为已学招式", () => {
   assert.ok(state.training.learned.includes("scene_cat"));
   assert.ok(state.training.learned.includes("eat_cake"));
   assert.ok(state.training.learned.includes("sleep_bed"));
+});
+
+test("访客可以派遣打工，离线结束后带回金币", () => {
+  const state = G.hydrate(
+    {
+      version: 9,
+      visitor: { kind: "cat", label: "猫猫来访", icon: "🐈", reward: 80, expiresAt: NOW + 60000 },
+    },
+    NOW
+  );
+  const before = state.coins;
+  const result = G.dispatchWorker(state, "visitor", 2, NOW, () => 0);
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(state.visitor, null);
+  assert.strictEqual(state.work.jobs.length, 1);
+  assert.strictEqual(G.workerUnavailable(state, "visitor"), true);
+  const settled = G.collectFinishedJobs(state, NOW + 2 * 3600000);
+  assert.strictEqual(settled.length, 1);
+  assert.ok(state.coins > before);
+  assert.strictEqual(state.work.jobs.length, 0);
+});
+
+test("伙伴打工可以带回食物或装扮碎片", () => {
+  const state = G.hydrate({ version: 9, companion: { adopted: true } }, NOW);
+  const foodRolls = [0.7, 0.1];
+  const foodJob = G.dispatchWorker(state, "companion", 4, NOW, () => foodRolls.shift()).job;
+  assert.strictEqual(foodJob.reward.type, "food");
+  G.collectFinishedJobs(state, NOW + 4 * 3600000);
+  assert.ok(state.inventory[foodJob.reward.itemId] >= 4);
+
+  const nextState = G.hydrate({ version: 9, companion: { adopted: true } }, NOW);
+  const fragmentJob = G.dispatchWorker(nextState, "companion", 8, NOW, () => 0.95).job;
+  assert.strictEqual(fragmentJob.reward.type, "fragments");
+  G.collectFinishedJobs(nextState, NOW + 8 * 3600000);
+  assert.strictEqual(nextState.work.fragments, 4);
+});
+
+test("访客可以被请走，碎片可以兑换装扮", () => {
+  const state = G.hydrate(
+    {
+      version: 9,
+      visitor: { kind: "cat", label: "猫猫来访", icon: "🐈", reward: 80, expiresAt: NOW + 60000 },
+      work: { fragments: 5, completed: 0, jobs: [] },
+    },
+    NOW
+  );
+  assert.strictEqual(G.dismissVisitor(state), true);
+  assert.strictEqual(state.visitor, null);
+  const dress = { name: "dress_training_test", label: "测试装扮", category: "dress", group: "换装" };
+  const result = G.exchangeFragments(state, [dress], NOW, () => 0);
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(result.type, "dress");
+  assert.ok(state.unlocked.includes(dress.name));
+  assert.strictEqual(state.work.fragments, 0);
 });
 
 console.log(`\n通过 ${passed} / ${passed + failures.length}`);

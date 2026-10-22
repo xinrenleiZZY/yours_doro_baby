@@ -25,7 +25,7 @@ const ACTION_NAMES = JSON.parse(fs.readFileSync(path.join(ROOT, "assets", "actio
 app.setPath("userData", path.join(ROOT, ".tmp-smoke-userdata"));
 
 const BASE_SAVE = {
-  version: 8,
+  version: 9,
   coins: 500,
   totalEarned: 900,
   level: 1,
@@ -49,6 +49,7 @@ const BASE_SAVE = {
     totalSpent: 0,
     learned: ACTION_NAMES.filter((name) => name !== "toilet_reading"),
   },
+  work: { jobs: [], fragments: 0, completed: 0 },
 };
 
 let seed = JSON.parse(JSON.stringify(BASE_SAVE));
@@ -939,6 +940,45 @@ async function runScenarios(win) {
     visitorShown && afterVisitor.coins > beforeVisitor.coins,
     `${beforeVisitor.coins.toFixed(0)}→${afterVisitor.coins.toFixed(0)}`
   );
+
+  await js(win, `window.__doroTest.forceVisitor()`);
+  await js(win, `window.__doroTest.openGrowth()`);
+  await wait(150);
+  const visitorWorkBefore = await getState(win);
+  await js(
+    win,
+    `[...document.querySelectorAll(".work-worker button")].find((button) => button.textContent === "2h").click()`
+  );
+  await wait(180);
+  const visitorWorkAfter = await getState(win);
+  check(
+    "访客可以派去 2 小时打工",
+    visitorWorkAfter.visitor === null &&
+      visitorWorkAfter.work.jobs.length === visitorWorkBefore.work.jobs.length + 1 &&
+      visitorWorkAfter.work.jobs.some((job) => job.worker === "visitor"),
+    `jobs=${visitorWorkAfter.work.jobs.length}`
+  );
+  check(
+    "打工中显示工作提示",
+    await js(win, `document.getElementById("work-chip").classList.contains("show")`)
+  );
+  const completedBefore = visitorWorkAfter.work.completed;
+  await js(win, `window.__doroTest.finishWork()`);
+  await wait(180);
+  const visitorWorkDone = await getState(win);
+  check(
+    "打工结束后自动结算并释放工位",
+    visitorWorkDone.work.jobs.length === 0 && visitorWorkDone.work.completed === completedBefore + 1,
+    `completed=${visitorWorkDone.work.completed}`
+  );
+
+  await js(win, `window.__doroTest.forceVisitor()`);
+  await js(win, `window.__doroTest.openGrowth()`);
+  await wait(120);
+  await js(win, `document.querySelector(".work-dismiss").click()`);
+  await wait(120);
+  check("访客可以被请回", (await getState(win)).visitor === null);
+  await js(win, `document.getElementById("growth-close").click()`);
 
   // 7h. 题库答题
   await js(win, `window.__doroTest.openQuiz()`);
