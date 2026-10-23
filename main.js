@@ -28,14 +28,20 @@ const { UpdaterService } = require("./lib/updater");
 const { StickerStore } = require("./lib/sticker-store");
 const { AiService } = require("./lib/ai-service");
 const { SocialClient } = require("./lib/social-client");
+const { ShopCatalogService } = require("./lib/shop-catalog");
 const G = require("./renderer/game.js");
 const { applyToolCommand } = require("./lib/tool-actions");
+
+// 打包验收或自动化测试可指定独立 profile，避免读写用户正式存档。
+if (process.env.DORO_USER_DATA_DIR) {
+  app.setPath("userData", path.resolve(process.env.DORO_USER_DATA_DIR));
+}
 
 const WINDOW_SIZE = { width: 320, height: 360 };
 // 答题窗口：独立、不透明、可拖动，避免撑大透明的宠物窗口
 const QUIZ_WINDOW_SIZE = { width: 640, height: 720 };
 const CHAT_WINDOW_SIZE = { width: 540, height: 720 };
-const SOCIAL_WINDOW_SIZE = { width: 620, height: 720 };
+const SOCIAL_WINDOW_SIZE = { width: 920, height: 760 };
 const USER_DATA = app.getPath("userData");
 const SAVE_FILE = path.join(USER_DATA, "save.json");
 const SESSION_FILE = path.join(USER_DATA, "session.json");
@@ -48,6 +54,7 @@ const USER_STICKERS_FILE = path.join(USER_DATA, "user-stickers.json");
 const AI_CONFIG_FILE = path.join(USER_DATA, "ai-config.json");
 const AI_HISTORY_FILE = path.join(USER_DATA, "ai-history.json");
 const SOCIAL_PROFILE_FILE = path.join(USER_DATA, "social-profile.json");
+const SHOP_CATALOG_CACHE_FILE = path.join(USER_DATA, "shop-catalog-cache.json");
 const TOOL_WINDOW_SPECS = {
   shop: { width: 620, height: 700, title: "doro 商城" },
   gacha: { width: 500, height: 520, title: "doro 扭蛋机" },
@@ -72,6 +79,11 @@ let uiRestoreBounds = null;
 let lastRenderReloadAt = 0;
 let lastChatReloadAt = 0;
 let systemWatchTimer = null;
+let leaderboardTimer = null;
+let leaderboardSyncing = false;
+let shopEntitlementsTimer = null;
+let shopEntitlementsSyncing = false;
+let shopCatalogTimer = null;
 let rendererCrashNotice = false;
 const runtime = {
   alwaysOnTop: true,
@@ -111,6 +123,16 @@ const socialClient = new SocialClient({
   profileFile: SOCIAL_PROFILE_FILE,
   baseUrl: "http://192.168.0.193:9500",
   log,
+});
+const shopCatalogService = new ShopCatalogService({
+  cacheFile: SHOP_CATALOG_CACHE_FILE,
+  client: socialClient,
+  game: G,
+  log,
+  onUpdate: (snapshot) => {
+    send("shop:catalog-updated", snapshot);
+    broadcastToolWindows("shop:catalog-updated", snapshot);
+  },
 });
 
 /** 每天 08:00 自动检查一次更新；错过的日子不补检。 */
@@ -415,6 +437,98 @@ function socialPublicContext() {
   };
 }
 
+function mergeLeaderboardPrivileges(payload) {
+  if (!payload || (!Array.isArray(payload.awards) && !payload.activeBoosts)) return null;
+  const current = latestToolState || sanitizeSave(readSave());
+  if (!current) return null;
+  const next = sanitizeSave(current);
+  if (!next) return null;
+  const applied = G.applyLeaderboardPrivileges(next, payload);
+  if (!applied.ok) return applied;
+  const clean = sanitizeSave(next);
+  if (!clean || !writeSave(clean).ok) return null;
+  toolStateRevision += 1;
+  latestToolState = clean;
+  const statePayload = {
+    save: clean,
+    now: Date.now(),
+    revision: toolStateRevision,
+    source: "leaderboard-privilege",
+  };
+  send("pet:tool-state", statePayload);
+  broadcastToolWindows("tool:state", statePayload);
+  if (applied.boostChanged && applied.boards.length) {
+    send("pet:tool-speak", {
+      text: `永耀生效：${applied.boards.length} 个榜一增幅，今天也要守住榜首！`,
+      ms: 4200,
+    });
+  }
+  log("info", "更新排行榜榜一权益", {
+    awards: applied.changed,
+    boards: applied.boards,
+  });
+  return applied;
+}
+
+async function syncLeaderboardSnapshot() {
+  if (leaderboardSyncing || !socialClient.snapshot().configured) {
+    return { ok: false, error: "not-registered" };
+  }
+  leaderboardSyncing = true;
+  try {
+    const current = latestToolState || sanitizeSave(readSave());
+    if (!current) return { ok: false, error: "no-save" };
+    const scores = G.leaderboardScores(current, loadActionList(), Date.now());
+    const result = await socialClient.syncLeaderboard(scores);
+    if (result.ok) mergeLeaderboardPrivileges(result);
+    return result;
+  } catch (err) {
+    log("warn", "排行榜分数同步失败", err && err.message ? err.message : String(err));
+    return { ok: false, error: "network" };
+  } finally {
+    leaderboardSyncing = false;
+  }
+}
+
+async function syncShopEntitlementsSnapshot() {
+  if (shopEntitlementsSyncing || !socialClient.snapshot().configured) {
+    return { ok: false, error: "not-registered" };
+  }
+  shopEntitlementsSyncing = true;
+  try {
+    const current = latestToolState || sanitizeSave(readSave());
+    if (!current) return { ok: false, error: "no-save" };
+    const local = G.extractShopEntitlements(current);
+    const result = await socialClient.syncShopEntitlements(local);
+    if (!result.ok) return result;
+    const newest = latestToolState || sanitizeSave(readSave());
+    if (!newest) return result;
+    const next = sanitizeSave(newest);
+    if (!next) return { ok: false, error: "invalid-state" };
+    const merged = G.mergeShopEntitlements(next, result.entitlements);
+    if (merged.changed) {
+      const clean = sanitizeSave(next);
+      if (!clean || !writeSave(clean).ok) return { ok: false, error: "save-failed" };
+      toolStateRevision += 1;
+      latestToolState = clean;
+      const payload = {
+        save: clean,
+        now: Date.now(),
+        revision: toolStateRevision,
+        source: "shop-entitlements",
+      };
+      send("pet:tool-state", payload);
+      broadcastToolWindows("tool:state", payload);
+    }
+    return { ...result, localChanged: merged.changed };
+  } catch (err) {
+    log("warn", "商城权益同步失败", err && err.message ? err.message : String(err));
+    return { ok: false, error: "network" };
+  } finally {
+    shopEntitlementsSyncing = false;
+  }
+}
+
 function broadcastToolWindows(channel, payload, exceptWebContents) {
   toolWindows.forEach((toolWin) => {
     if (!toolWin || toolWin.isDestroyed()) return;
@@ -701,7 +815,7 @@ function createSocialWindow() {
   socialWin = new BrowserWindow({
     width,
     height,
-    minWidth: Math.min(480, width),
+    minWidth: Math.min(680, width),
     minHeight: Math.min(560, height),
     x: area.x + Math.round((area.width - width) / 2),
     y: area.y + Math.round((area.height - height) / 2),
@@ -712,7 +826,7 @@ function createSocialWindow() {
     alwaysOnTop: true,
     show: false,
     backgroundColor: "#fff8f5",
-    title: "doro 好友与资料",
+    title: "doro 社交、聊天与排行榜",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -814,7 +928,7 @@ function buildTrayMenu() {
     { label: win && win.isVisible() ? "先躲起来" : "出来玩", click: toggleWindow },
     { type: "separator" },
     { label: "和 doro 聊天（Ctrl+Alt+C）", click: () => createChatWindow() },
-    { label: "好友与个人资料", click: () => createSocialWindow() },
+    { label: "社交与排行榜", click: () => createSocialWindow() },
     { label: "喂饭（20 金币）", click: () => send("pet:command", "feed") },
     { label: "陪玩（30 金币）", click: () => send("pet:command", "play") },
     { label: "叫它过来（Ctrl+Alt+R）", click: summonToCursor },
@@ -905,6 +1019,7 @@ function registerIpc() {
       crashedLastTime,
       version: app.getVersion(),
       quiz: quizService.status(),
+      shopCatalog: shopCatalogService.snapshot(),
     };
   });
 
@@ -986,10 +1101,12 @@ function registerIpc() {
     if (!isSocialWindowSender(event)) return { ok: false, error: "unauthorized" };
     const urlResult = socialClient.setServerUrl(payload && payload.serverUrl);
     if (!urlResult.ok && urlResult.error !== "already-registered") return urlResult;
-    return socialClient.register({
+    const result = await socialClient.register({
       ...(payload || {}),
       ...socialPublicContext(),
     });
+    if (result.ok) setTimeout(() => syncShopEntitlementsSnapshot().catch(() => {}), 0);
+    return result;
   });
   ipcMain.handle("social:get", (event) =>
     isSocialWindowSender(event) ? socialClient.social() : { ok: false, error: "unauthorized" }
@@ -999,6 +1116,17 @@ function registerIpc() {
       ? socialClient.updateProfile({ ...(payload || {}), ...socialPublicContext() })
       : { ok: false, error: "unauthorized" }
   );
+  ipcMain.handle("social:recovery-get", (event) =>
+    isSocialWindowSender(event) ? socialClient.issueRecovery() : { ok: false, error: "unauthorized" }
+  );
+  ipcMain.handle("social:recover", async (event, payload) => {
+    if (!isSocialWindowSender(event)) return { ok: false, error: "unauthorized" };
+    const urlResult = socialClient.setServerUrl(payload && payload.serverUrl);
+    if (!urlResult.ok && urlResult.error !== "already-registered") return urlResult;
+    const result = await socialClient.recover(payload && payload.gameId, payload && payload.recoveryCode);
+    if (result.ok) setTimeout(() => syncShopEntitlementsSnapshot().catch(() => {}), 0);
+    return result;
+  });
   ipcMain.handle("social:search", (event, query) =>
     isSocialWindowSender(event) ? socialClient.search(query) : { ok: false, error: "unauthorized" }
   );
@@ -1015,11 +1143,73 @@ function registerIpc() {
   ipcMain.handle("social:remove", (event, friendId) =>
     isSocialWindowSender(event) ? socialClient.removeFriend(friendId) : { ok: false, error: "unauthorized" }
   );
+  ipcMain.handle("social:conversations", (event) =>
+    isSocialWindowSender(event) ? socialClient.conversations() : { ok: false, error: "unauthorized" }
+  );
+  ipcMain.handle("social:messages", (event, payload) =>
+    isSocialWindowSender(event)
+      ? socialClient.messages(payload && payload.kind, payload && payload.targetId)
+      : { ok: false, error: "unauthorized" }
+  );
+  ipcMain.handle("social:send-message", (event, payload) =>
+    isSocialWindowSender(event) ? socialClient.sendMessage(payload) : { ok: false, error: "unauthorized" }
+  );
+  ipcMain.handle("social:create-group", (event, payload) =>
+    isSocialWindowSender(event)
+      ? socialClient.createGroup(payload && payload.name, payload && payload.memberIds)
+      : { ok: false, error: "unauthorized" }
+  );
+  ipcMain.handle("social:rename-group", (event, payload) =>
+    isSocialWindowSender(event)
+      ? socialClient.renameGroup(payload && payload.groupId, payload && payload.name)
+      : { ok: false, error: "unauthorized" }
+  );
+  ipcMain.handle("social:add-group-member", (event, payload) =>
+    isSocialWindowSender(event)
+      ? socialClient.addGroupMember(payload && payload.groupId, payload && payload.memberId)
+      : { ok: false, error: "unauthorized" }
+  );
+  ipcMain.handle("social:remove-group-member", (event, payload) =>
+    isSocialWindowSender(event)
+      ? socialClient.removeGroupMember(payload && payload.groupId, payload && payload.memberId)
+      : { ok: false, error: "unauthorized" }
+  );
+  ipcMain.handle("social:leave-group", (event, groupId) =>
+    isSocialWindowSender(event) ? socialClient.leaveGroup(groupId) : { ok: false, error: "unauthorized" }
+  );
+  ipcMain.handle("social:disband-group", (event, groupId) =>
+    isSocialWindowSender(event) ? socialClient.disbandGroup(groupId) : { ok: false, error: "unauthorized" }
+  );
   ipcMain.handle("social:presence", (event, online) =>
     isSocialWindowSender(event)
       ? socialClient.presence(Boolean(online))
       : { ok: false, error: "unauthorized" }
   );
+  ipcMain.handle("social:leaderboard", async (event) => {
+    if (!isSocialWindowSender(event)) return { ok: false, error: "unauthorized" };
+    const synced = await syncLeaderboardSnapshot();
+    const result = await socialClient.leaderboards();
+    if (result.ok) mergeLeaderboardPrivileges(result);
+    return result.ok ? result : synced.ok ? synced : result;
+  });
+  ipcMain.handle("shop:status", (event) => {
+    if (!isSocialWindowSender(event)) return { ok: false, error: "unauthorized" };
+    return {
+      ok: true,
+      catalog: shopCatalogService.snapshot(),
+      configured: socialClient.snapshot().configured,
+    };
+  });
+  ipcMain.handle("shop:sync", async (event) => {
+    if (!isSocialWindowSender(event)) return { ok: false, error: "unauthorized" };
+    const catalog = await shopCatalogService.refresh();
+    const entitlements = await syncShopEntitlementsSnapshot();
+    return {
+      ok: Boolean(catalog && catalog.version && entitlements.ok),
+      catalog,
+      entitlements,
+    };
+  });
   ipcMain.handle("social:copy", (event, text) => {
     if (!isSocialWindowSender(event)) return false;
     clipboard.writeText(String(text || "").slice(0, 100));
@@ -1199,6 +1389,7 @@ function registerIpc() {
       actions: loadActionList(),
       now: Date.now(),
       revision: toolStateRevision,
+      shopCatalog: shopCatalogService.snapshot(),
     };
   });
 
@@ -1260,6 +1451,9 @@ function registerIpc() {
     if (actionsChanged) {
       send("pet:actions-changed", {});
       broadcastToolWindows("tool:actions-changed", {}, event.sender);
+    }
+    if (tool === "shop" && effectiveCommand && effectiveCommand.type === "buy") {
+      setTimeout(() => syncShopEntitlementsSnapshot().catch(() => {}), 0);
     }
     return {
       ...applied,
@@ -1421,6 +1615,7 @@ if (!gotLock) {
   });
 
   app.whenReady().then(() => {
+    shopCatalogService.init();
     beginSession();
     registerIpc();
     createWindow();
@@ -1430,6 +1625,27 @@ if (!gotLock) {
     systemWatchTimer = setInterval(() => {
       send("pet:system-idle", { seconds: powerMonitor.getSystemIdleTime() });
     }, 5000);
+    if (leaderboardTimer) clearInterval(leaderboardTimer);
+    leaderboardTimer = setInterval(() => {
+      syncLeaderboardSnapshot().catch(() => {});
+    }, 60 * 1000);
+    setTimeout(() => {
+      syncLeaderboardSnapshot().catch(() => {});
+    }, 15 * 1000);
+    if (shopEntitlementsTimer) clearInterval(shopEntitlementsTimer);
+    shopEntitlementsTimer = setInterval(() => {
+      syncShopEntitlementsSnapshot().catch(() => {});
+    }, 60 * 1000);
+    setTimeout(() => {
+      syncShopEntitlementsSnapshot().catch(() => {});
+    }, 20 * 1000);
+    if (shopCatalogTimer) clearInterval(shopCatalogTimer);
+    shopCatalogTimer = setInterval(
+      () => {
+        shopCatalogService.refresh().catch(() => {});
+      },
+      15 * 60 * 1000
+    );
     const quizArg = process.argv.find((arg) => arg.startsWith("--quiz="));
     if (quizArg) setTimeout(() => createQuizWindow(quizArg.split("=")[1]), 1200);
     const toolArg = process.argv.find((arg) => arg.startsWith("--tool="));
@@ -1467,5 +1683,8 @@ if (!gotLock) {
     globalShortcut.unregisterAll();
     if (updateTimer) clearTimeout(updateTimer);
     if (systemWatchTimer) clearInterval(systemWatchTimer);
+    if (leaderboardTimer) clearInterval(leaderboardTimer);
+    if (shopEntitlementsTimer) clearInterval(shopEntitlementsTimer);
+    if (shopCatalogTimer) clearInterval(shopCatalogTimer);
   });
 }

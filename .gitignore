@@ -7,9 +7,11 @@ out/
 release/
 
 # 本地调试与测试产物
+.tmp-*/
 .tmp-userdata/
 .tmp-smoke-userdata/
 .tmp-perf-userdata/
+.tmp-package-userdata-*/
 _smoke-report.txt
 _perf-report.json
 _shot_*.png
@@ -27,6 +29,7 @@ doro_dz/
 
 # 本地存档备份（含个人进度，不入库）
 backup/
+save-furniture-cleared-*.json
 
 # 系统垃圾
 .DS_Store

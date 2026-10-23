@@ -7,3 +7,4 @@ services:
       - "9500:9500"
     volumes:
       - ./data:/data
+      - ./shop-catalog.json:/app/shop-catalog.json:ro

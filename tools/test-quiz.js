@@ -34,11 +34,11 @@ test("新档自带题库默认配置", () => {
   assert.deepStrictEqual(state.quiz.totals, { answered: 0, correct: 0, wrong: 0, earned: 0, spent: 0 });
 });
 
-test("每日一题：答对 +100，答错不扣", () => {
+test("每日一题：答对 +10000，答错不扣", () => {
   const state = fresh();
   const ok = G.completeQuiz(state, { mode: "daily", correct: 1, wrong: 0, now: NOW });
-  assert.strictEqual(ok.delta, 100);
-  assert.strictEqual(state.coins, 100);
+  assert.strictEqual(ok.delta, 10000);
+  assert.strictEqual(state.coins, 10000);
   assert.strictEqual(state.quiz.dailyDone, true);
   assert.strictEqual(G.quizDailyStatus(state, NOW).available, false);
 
@@ -48,27 +48,27 @@ test("每日一题：答对 +100，答错不扣", () => {
   assert.strictEqual(bad.coins, 50);
 });
 
-test("随堂小测：答对 +100 / 答错 -10", () => {
+test("随堂小测：答对 +10000 / 答错 -100", () => {
   const state = fresh({ coins: 200 });
   const res = G.completeQuiz(state, { mode: "quiz", correct: 7, wrong: 3, now: NOW });
-  assert.strictEqual(res.delta, 7 * 100 - 3 * 10);
-  assert.strictEqual(state.coins, 200 + 670);
+  assert.strictEqual(res.delta, 7 * 10000 - 3 * 100);
+  assert.strictEqual(state.coins, 69900);
   assert.strictEqual(state.quiz.totals.answered, 10);
   assert.strictEqual(state.quiz.totals.correct, 7);
 });
 
-test("随机刷题：答对 +100 / 答错 -10，且不会把金币扣成负数", () => {
+test("随机刷题：答对 +10000 / 答错 -100，且不会把金币扣成负数", () => {
   const state = fresh({ coins: 5 });
   const res = G.completeQuiz(state, { mode: "random", correct: 0, wrong: 1, now: NOW });
   assert.strictEqual(res.delta, -5);
   assert.strictEqual(state.coins, 0);
 });
 
-test("答题事件：答对 +100 / 答错不扣，并进入冷却", () => {
+test("答题事件：答对 +10000 / 答错不扣，并进入冷却", () => {
   const state = fresh();
   state.quiz.eventReadyAt = NOW;
   const res = G.completeQuiz(state, { mode: "event", correct: 1, wrong: 0, now: NOW });
-  assert.strictEqual(res.delta, 100);
+  assert.strictEqual(res.delta, 10000);
   assert.ok(state.quiz.eventReadyAt > NOW);
   assert.strictEqual(G.quizEventStatus(state, NOW).available, false);
   assert.strictEqual(G.quizEventStatus(state, state.quiz.eventReadyAt).available, true);

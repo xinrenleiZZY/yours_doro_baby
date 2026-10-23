@@ -19,6 +19,11 @@ function test(name, fn) {
 
 const NOW = 1_700_000_000_000;
 
+function sequenceRandom(values) {
+  let index = 0;
+  return () => values[Math.min(index++, values.length - 1)];
+}
+
 console.log("doro 经济逻辑测试");
 
 test("损坏的存档会被兜底成新档", () => {
@@ -214,7 +219,7 @@ test("商城：金币不足时买不了", () => {
 });
 
 test("商城：装扮购买后解锁", () => {
-  const state = G.hydrate({ coins: 1000 }, NOW);
+  const state = G.hydrate({ coins: 100000 }, NOW);
   const action = { category: "dress", name: "dress_santa" };
   assert.strictEqual(G.isUnlocked(state, action), false);
   const bought = G.purchase(
@@ -224,7 +229,250 @@ test("商城：装扮购买后解锁", () => {
   );
   assert.strictEqual(bought.ok, true);
   assert.strictEqual(G.isUnlocked(state, action), true);
-  assert.strictEqual(state.coins, 940);
+  assert.strictEqual(state.coins, 40000);
+});
+
+test("家具与装扮支持 1 / 3 / 7 / 30 日租赁，永久价为日价 1000 倍", () => {
+  assert.strictEqual(G.rentalPrice(80, 1), 80);
+  assert.strictEqual(G.rentalPrice(80, 3), 240);
+  assert.strictEqual(G.rentalPrice(80, 7), 560);
+  assert.strictEqual(G.rentalPrice(80, 30), 2400);
+  assert.strictEqual(G.rentalPrice(80, "permanent"), 80000);
+
+  const state = G.hydrate({ coins: 1000 }, NOW);
+  const action = { category: "dress", name: "dress_rental" };
+  const result = G.purchase(
+    state,
+    {
+      id: "dress:dress_rental",
+      type: "dress",
+      price: 80,
+      action: "dress_rental",
+      rentalDuration: 3,
+    },
+    NOW
+  );
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(result.price, 240);
+  assert.strictEqual(G.isUnlocked(state, action, NOW + 86399999), true);
+  assert.strictEqual(G.isUnlocked(state, action, NOW + 3 * 86400000 + 1), false);
+  assert.strictEqual(state.rentals.dress.dress_rental, NOW + 3 * 86400000);
+});
+
+test("新增叠穿服装可租赁、穿戴、计分并在到期后失效", () => {
+  const state = G.hydrate({ coins: 100000 }, NOW);
+  const item = G.SHOP_ITEMS.fashion_starlight_hat;
+  const bought = G.purchase(state, { ...item, rentalDuration: 7 }, NOW);
+  assert.strictEqual(bought.ok, true);
+  assert.strictEqual(state.settings.equippedFashion, item.id);
+  assert.strictEqual(G.isFashionActive(state, item, NOW + 1000), true);
+  assert.strictEqual(G.fashionScore(state, [], NOW + 1000), item.score);
+  assert.strictEqual(G.toggleFashion(state, item.id, NOW + 1000).equipped, false);
+  assert.strictEqual(G.toggleFashion(state, item.id, NOW + 1000).equipped, true);
+  assert.strictEqual(G.isFashionActive(state, item, NOW + 7 * 86400000 + 1), false);
+  assert.strictEqual(G.toggleFashion(state, item.id, NOW + 7 * 86400000 + 1).ok, false);
+});
+
+test("家具榜只统计有效期内的家具，时装榜使用稳定单件积分", () => {
+  const state = G.hydrate(
+    {
+      room: { furniture: ["rug"] },
+      rentals: {
+        furniture: { lamp: NOW + 1000, plant: NOW - 1 },
+        dress: { dress_a: NOW + 1000, dress_b: NOW - 1 },
+      },
+      unlocked: ["dress_c"],
+    },
+    NOW
+  );
+  const actions = [
+    { name: "dress_a", category: "dress" },
+    { name: "dress_b", category: "dress" },
+    { name: "dress_c", category: "dress" },
+  ];
+  assert.strictEqual(G.furnitureScore(state, NOW), G.FURNITURE.rug.score + G.FURNITURE.lamp.score);
+  assert.strictEqual(G.fashionScore(state, actions, NOW), G.dressScore(0) + G.dressScore(2));
+  assert.strictEqual(G.leaderboardScores(state, actions, NOW).fashion, G.dressScore(0) + G.dressScore(2));
+});
+
+test("旧存档中的伙伴会迁移为永久家具，租赁伙伴也计入家具榜", () => {
+  const legacy = G.hydrate({ version: 12, companion: { adopted: true }, room: { furniture: [] } }, NOW);
+  assert.ok(legacy.room.furniture.includes("companion"));
+  assert.strictEqual(G.ownsFurniture(legacy, "companion", NOW), true);
+
+  const rented = G.hydrate(
+    { rentals: { furniture: { companion: NOW + 1000 }, dress: {} }, room: { furniture: [] } },
+    NOW
+  );
+  assert.strictEqual(G.ownsFurniture(rented, "companion", NOW), true);
+  assert.strictEqual(G.furnitureScore(rented, NOW), G.FURNITURE.companion.score);
+});
+
+test("新增家具和典藏会参与家具榜、典藏榜与产出", () => {
+  const state = G.hydrate(
+    {
+      room: { furniture: ["bookshelf", "gaming_chair"] },
+      perks: { luxury_aurora: true, luxury_eternal_office: true },
+    },
+    NOW
+  );
+  const base = G.incomePerSecond(state);
+  assert.strictEqual(
+    G.furnitureScore(state, NOW),
+    G.FURNITURE.bookshelf.score + G.FURNITURE.gaming_chair.score
+  );
+  assert.strictEqual(
+    G.collectionScore(state),
+    G.SHOP_ITEMS.luxury_aurora.score + G.SHOP_ITEMS.luxury_eternal_office.score
+  );
+  assert.ok(base > G.incomePerSecond(G.hydrate({}, NOW)));
+
+  const cleaned = sanitizeSave(state);
+  assert.strictEqual(cleaned.perks.luxury_aurora, true);
+  assert.strictEqual(cleaned.perks.luxury_eternal_office, true);
+});
+
+test("商城第二批家具、装扮和典藏各新增 10 款并可直接购买", () => {
+  const furnitureIds = [
+    "star_cat_bed",
+    "sakura_swing",
+    "mini_library",
+    "dessert_cart",
+    "whale_fountain",
+    "cloud_game_pod",
+    "moonlight_desk",
+    "orbit_gramophone",
+    "rainbow_greenhouse",
+    "forest_wish_pool",
+  ];
+  const fashionIds = [
+    "fashion_butterfly_clip",
+    "fashion_cloud_earmuffs",
+    "fashion_strawberry_band",
+    "fashion_moon_earrings",
+    "fashion_bell_collar",
+    "fashion_crystal_tiara",
+    "fashion_bunny_pack",
+    "fashion_rainbow_cape",
+    "fashion_star_eye_patch",
+    "fashion_lunar_veil",
+  ];
+  const luxuryIds = [
+    "luxury_stardust_music_box",
+    "luxury_moon_castle",
+    "luxury_time_garden",
+    "luxury_phoenix_throne",
+    "luxury_nebula_library",
+    "luxury_interstellar_post",
+    "luxury_dream_park",
+    "luxury_sun_temple",
+    "luxury_cosmic_cafe_end",
+    "luxury_doro_universe",
+  ];
+
+  assert.strictEqual(Object.keys(G.FURNITURE).length, 31);
+  assert.strictEqual(Object.values(G.SHOP_ITEMS).filter((item) => item.type === "fashion").length, 20);
+  assert.strictEqual(Object.values(G.SHOP_ITEMS).filter((item) => item.type === "luxury").length, 32);
+  furnitureIds.forEach((id) => assert.ok(G.FURNITURE[id], `缺少家具 ${id}`));
+  fashionIds.forEach((id) => assert.strictEqual(G.SHOP_ITEMS[id].type, "fashion", `缺少装扮 ${id}`));
+  luxuryIds.forEach((id) => assert.strictEqual(G.SHOP_ITEMS[id].type, "luxury", `缺少典藏 ${id}`));
+
+  const state = G.hydrate({ coins: 2000000000000 }, NOW);
+  assert.strictEqual(
+    G.purchase(
+      state,
+      {
+        id: "furniture:forest_wish_pool",
+        type: "furniture",
+        furnitureId: "forest_wish_pool",
+        price: 55000000,
+      },
+      NOW
+    ).ok,
+    true
+  );
+  assert.strictEqual(
+    G.purchase(state, { ...G.SHOP_ITEMS.fashion_lunar_veil, rentalDuration: 1 }, NOW).ok,
+    true
+  );
+  assert.strictEqual(
+    G.purchase(state, { ...G.SHOP_ITEMS.luxury_doro_universe, rentalDuration: "permanent" }, NOW).ok,
+    true
+  );
+  assert.ok(state.room.furniture.includes("forest_wish_pool"));
+  assert.ok(G.rentalActive(state, "dress", "fashion_lunar_veil", NOW));
+  assert.strictEqual(state.perks.luxury_doro_universe, true);
+});
+
+test("商城权益可从本地提取并与 Docker 云端记录合并", () => {
+  const state = G.hydrate(
+    {
+      perks: { luxury_cushion: true, theme_night: true },
+      room: { furniture: ["bookshelf"] },
+      rentals: { furniture: { gaming_chair: NOW + 1000 }, dress: { dress_santa: NOW + 2000 } },
+      unlocked: ["dress_bow"],
+    },
+    NOW
+  );
+  const local = G.extractShopEntitlements(state);
+  assert.strictEqual(local.items.luxury_cushion.permanent, true);
+  assert.strictEqual(local.items.theme_night.permanent, true);
+  assert.strictEqual(local.furniture.bookshelf.permanent, true);
+  assert.strictEqual(local.furniture.gaming_chair.expiresAt, NOW + 1000);
+  assert.strictEqual(local.dress.dress_bow.permanent, true);
+
+  const merged = G.mergeShopEntitlements(state, {
+    items: { luxury_aurora: { permanent: true, expiresAt: 0 } },
+    furniture: {
+      bookshelf: { permanent: true, expiresAt: 0 },
+      gaming_chair: { permanent: false, expiresAt: NOW + 5000 },
+    },
+    dress: { dress_moon: { permanent: false, expiresAt: NOW + 3000 } },
+  });
+  assert.ok(merged.changed > 0);
+  assert.strictEqual(state.perks.luxury_aurora, true);
+  assert.strictEqual(state.rentals.furniture.gaming_chair, NOW + 5000);
+  assert.strictEqual(state.rentals.dress.dress_moon, NOW + 3000);
+  assert.ok(state.room.furniture.includes("bookshelf"));
+});
+
+test("榜一限定典藏永久保留，永耀提供当日分数与产出增幅", () => {
+  const state = G.hydrate({ coins: 10 }, NOW);
+  const baseline = G.incomePerSecond(state);
+  const result = G.applyChampionAwards(state, ["rank_level_crown", "rank_level_crown", "not-a-real-award"]);
+  assert.deepStrictEqual(result.changed, ["rank_level_crown"]);
+  assert.strictEqual(state.perks.rank_level_crown, true);
+  assert.strictEqual(G.collectionScore(state), G.SHOP_ITEMS.rank_level_crown.score);
+  assert.strictEqual(G.purchase(state, G.SHOP_ITEMS.rank_level_crown, NOW).reason, "not-sale");
+  assert.ok(Math.abs(G.incomePerSecond(state) - baseline * 1.05) < 1e-9);
+
+  const boost = G.applyLeaderboardPrivileges(state, {
+    awards: [],
+    activeBoosts: {
+      period: G.dayKey(),
+      activeUntil: Date.now() + 60 * 60 * 1000,
+      boards: ["level"],
+    },
+  });
+  assert.strictEqual(boost.ok, true);
+  assert.deepStrictEqual(boost.boards, ["level"]);
+  assert.ok(Math.abs(G.incomePerSecond(state) - baseline * 2.05) < 1e-9);
+  assert.strictEqual(G.incomeBreakdown(state).championPermanentBonus, 0.05);
+  assert.strictEqual(G.incomeBreakdown(state).championBonus, 1);
+
+  const stacked = G.applyLeaderboardPrivileges(state, {
+    activeBoosts: {
+      period: G.dayKey(),
+      activeUntil: Date.now() + 60 * 60 * 1000,
+      boards: ["level", "furniture", "level"],
+    },
+  });
+  assert.deepStrictEqual(stacked.boards, ["level", "furniture"]);
+  assert.ok(Math.abs(G.incomePerSecond(state) - baseline * 4.05) < 1e-9);
+
+  state.leaderboardBoosts.activeUntil = Date.now() - 1;
+  assert.deepStrictEqual(G.activeChampionBoards(state), []);
+  assert.ok(Math.abs(G.incomePerSecond(state) - baseline * 1.05) < 1e-9);
 });
 
 test("咖啡让产出 ×1.5，招财猫永久 +10%", () => {
@@ -266,7 +514,12 @@ test("v1 老存档迁移后带上商城与日程字段", () => {
 test("存档白名单保留商城 / 日程字段并过滤非法项", () => {
   const clean = sanitizeSave({
     coins: 10,
-    settings: { baseAction: "idle_stand", theme: "night", analytics: true },
+    settings: {
+      baseAction: "idle_stand",
+      theme: "night",
+      analytics: true,
+      equippedFashion: "fashion_starlight_hat",
+    },
     daily: { date: "2026-10-19", progress: { feeds: 2 }, claimed: ["feed1"] },
     achievements: ["first_pet"],
     metrics: { days: { "2026-10-19": 120 } },
@@ -275,7 +528,17 @@ test("存档白名单保留商城 / 日程字段并过滤非法项", () => {
     stickerHidden: ["closeup_soft", "bad name"],
     inventory: { fish: 2, "bad-key": 3 },
     buffs: { double_income: 12345 },
-    perks: { lucky_cat: true, luxury_hourglass: true },
+    perks: {
+      lucky_cat: true,
+      luxury_hourglass: true,
+      luxury_moon_observatory: true,
+      rank_fashion_crown: true,
+    },
+    leaderboardBoosts: {
+      period: "2026-10-22",
+      activeUntil: NOW + 3600000,
+      boards: ["level", "collection", "bad"],
+    },
     profile: {
       personality: "playful",
       likes: ["cake", "gameboy"],
@@ -313,11 +576,16 @@ test("存档白名单保留商城 / 日程字段并过滤非法项", () => {
     schedule: [{ id: "a", time: "09:00", text: "喝水", doneDate: "", notifiedDate: "" }],
     shopStats: { purchases: 2, spent: 40 },
   });
-  assert.strictEqual(clean.version, 12);
+  assert.strictEqual(clean.version, 14);
   assert.strictEqual(clean.inventory.fish, 2);
   assert.strictEqual(clean.inventory["bad-key"], undefined);
   assert.strictEqual(clean.perks.lucky_cat, true);
   assert.strictEqual(clean.perks.luxury_hourglass, true);
+  assert.strictEqual(clean.perks.luxury_moon_observatory, true);
+  assert.strictEqual(clean.perks.rank_fashion_crown, true);
+  assert.strictEqual(clean.leaderboardBoosts.period, "2026-10-22");
+  assert.strictEqual(clean.leaderboardBoosts.activeUntil, NOW + 3600000);
+  assert.deepStrictEqual(clean.leaderboardBoosts.boards, ["level", "collection"]);
   assert.deepStrictEqual(clean.profile.likes, ["cake", "gameboy"]);
   assert.strictEqual(clean.profile.personality, "playful");
   assert.strictEqual(clean.training.points, 21);
@@ -337,6 +605,7 @@ test("存档白名单保留商城 / 日程字段并过滤非法项", () => {
   assert.strictEqual(clean.settings.baseAction, "idle_stand");
   assert.strictEqual(clean.settings.theme, "night");
   assert.strictEqual(clean.settings.analytics, true);
+  assert.strictEqual(clean.settings.equippedFashion, "fashion_starlight_hat");
   assert.strictEqual(clean.daily.progress.feeds, 2);
   assert.deepStrictEqual(clean.daily.claimed, ["feed1"]);
   assert.deepStrictEqual(clean.achievements, ["first_pet"]);
@@ -516,20 +785,91 @@ test("扭蛋扣 500 金币并返回结果", () => {
   assert.strictEqual(state.gacha.pulls, 1);
 });
 
-test("扭蛋包含四档金币大奖并提供 80 抽保底", () => {
+test("扭蛋包含四档金币大奖并在 80 抽从三档保底中随机", () => {
   const top = G.hydrate({ coins: 500 }, NOW);
   const topResult = G.pullGacha(top, [], NOW, () => 0);
   assert.strictEqual(topResult.amount, 10000000);
   assert.strictEqual(topResult.tier, "mythic");
 
-  const guaranteed = G.hydrate({ coins: 500, gacha: { pulls: 79 } }, NOW);
-  const guaranteeResult = G.pullGacha(guaranteed, [], NOW, () => 0.5);
-  assert.strictEqual(guaranteeResult.amount, 5000);
-  assert.strictEqual(guaranteeResult.guaranteed, true);
+  const guaranteedAmounts = [0, 0.34, 0.67].map((roll) => {
+    const guaranteed = G.hydrate({ coins: 500, gacha: { pulls: 79 } }, NOW);
+    const result = G.pullGacha(guaranteed, [], NOW, () => roll);
+    assert.strictEqual(result.guaranteed, true);
+    return result.amount;
+  });
+  assert.deepStrictEqual(guaranteedAmounts, [500000, 50000, 5000]);
+  assert.deepStrictEqual(
+    G.GACHA_PITY_PRIZES.map((prize) => prize.amount),
+    [500000, 50000, 5000]
+  );
   assert.deepStrictEqual(
     G.GACHA_TOP_PRIZES.map((prize) => prize.amount),
     [10000000, 500000, 50000, 5000]
   );
+});
+
+test("扭蛋永久旧装扮不超过 5%，普通分支概率合计为 100%", () => {
+  const rateSum = Object.values(G.GACHA_RATES).reduce((sum, value) => sum + value, 0);
+  const topRate = G.GACHA_TOP_PRIZES[G.GACHA_TOP_PRIZES.length - 1].until / 1000000;
+  assert.strictEqual(Math.round(rateSum * 1e9) / 1e9, 1);
+  assert.ok((1 - topRate) * G.GACHA_RATES.legacyOutfitUnlock <= 0.05);
+  assert.strictEqual(G.GACHA_RATES.timedFurniture, 0.1);
+  assert.strictEqual(G.GACHA_RATES.timedOutfit, 0.08);
+});
+
+test("限时家具与装扮按价格加权，价格越高概率越低", () => {
+  assert.ok(G.gachaPriceWeight(500) > G.gachaPriceWeight(55000000));
+  assert.ok(G.gachaPriceWeight(80) > G.gachaPriceWeight(65000));
+
+  const state = G.hydrate({ coins: 1000 }, NOW);
+  const action = { name: "dress_santa", label: "圣诞装扮", category: "dress" };
+  const result = G.pullGacha(state, [action], NOW, sequenceRandom([0.999999, 0.82, 0]));
+  assert.strictEqual(result.type, "dress");
+  assert.strictEqual(result.action, action.name);
+  assert.ok(state.unlocked.includes(action.name));
+  assert.strictEqual(state.rentals.dress[action.name], undefined);
+});
+
+test("扭蛋可抽出 1–7 天限时家具，重复获得会续期并在到期后失效", () => {
+  const state = G.hydrate({ coins: 1000 }, NOW);
+  const furniture = Object.values(G.FURNITURE).find((item) => item.id !== "companion");
+  const first = G.pullGacha(state, [], NOW, sequenceRandom([0.999999, 0.65, 0, 0.5]));
+  assert.deepStrictEqual(G.GACHA_LIMITED_DAYS, [1, 2, 3, 4, 5, 6, 7]);
+  assert.strictEqual(first.type, "furniture");
+  assert.strictEqual(first.durationDays, 4);
+  assert.strictEqual(first.label, `${furniture.icon} ${furniture.name}（限时 4 天）`);
+  assert.strictEqual(state.rentals.furniture[furniture.id], NOW + 4 * 86400000);
+  assert.strictEqual(G.ownsFurniture(state, furniture.id, NOW + 1), true);
+  assert.strictEqual(G.ownsFurniture(state, furniture.id, NOW + 4 * 86400000 + 1), false);
+
+  const extended = G.pullGacha(state, [], NOW, sequenceRandom([0.999999, 0.65, 0, 0]));
+  assert.strictEqual(extended.durationDays, 1);
+  assert.strictEqual(state.rentals.furniture[furniture.id], NOW + 5 * 86400000);
+
+  const ownedState = G.hydrate({ coins: 500, room: { furniture: [furniture.id] } }, NOW);
+  const replacement = G.pullGacha(ownedState, [], NOW, sequenceRandom([0.999999, 0.65, 0, 0]));
+  assert.strictEqual(replacement.type, "furniture");
+  assert.notStrictEqual(replacement.furnitureId, furniture.id);
+});
+
+test("扭蛋可抽出 1–7 天限时装扮，并按租赁有效期解锁和失效", () => {
+  const state = G.hydrate({ coins: 1000 }, NOW);
+  const action = { name: "dress_santa", label: "圣诞装扮", category: "dress" };
+  const result = G.pullGacha(state, [action], NOW, sequenceRandom([0.999999, 0.75, 0, 0.999999]));
+  assert.strictEqual(result.type, "dress");
+  assert.strictEqual(result.rewardCategory, "outfit");
+  assert.strictEqual(result.durationDays, 7);
+  assert.strictEqual(result.action, action.name);
+  assert.strictEqual(state.rentals.dress[action.name], NOW + 7 * 86400000);
+  assert.strictEqual(G.isUnlocked(state, action, NOW + 1), true);
+  assert.strictEqual(G.isUnlocked(state, action, NOW + 7 * 86400000 + 1), false);
+
+  const fashion = G.SHOP_ITEMS.fashion_starlight_hat;
+  const fashionResult = G.pullGacha(state, [], NOW, sequenceRandom([0.999999, 0.75, 0, 0]));
+  assert.strictEqual(fashionResult.type, "fashion");
+  assert.strictEqual(fashionResult.durationDays, 1);
+  assert.strictEqual(state.rentals.dress[fashion.id], NOW + 86400000);
+  assert.strictEqual(state.settings.equippedFashion, fashion.id);
 });
 
 test("十连抽按优惠价格执行十次并计入保底", () => {
@@ -542,13 +882,33 @@ test("十连抽按优惠价格执行十次并计入保底", () => {
   assert.ok(result.results.every((entry) => entry.amount === 10000000));
 });
 
+test("扭蛋记录在最前面追加、最多保存 50 条并可通过存档白名单", () => {
+  const existing = Array.from({ length: 60 }, (_, index) => ({
+    at: NOW - index,
+    type: "coins",
+    label: `旧记录 ${index}`,
+    tier: "common",
+    amount: 100,
+  }));
+  const state = G.hydrate({ coins: 500, gacha: { pulls: 79, history: existing } }, NOW);
+  assert.strictEqual(state.gacha.history.length, 50);
+  const result = G.pullGacha(state, [], NOW, () => 0);
+  assert.strictEqual(state.gacha.history.length, 50);
+  assert.strictEqual(state.gacha.history[0].label, result.label);
+  assert.strictEqual(state.gacha.history[0].guaranteed, true);
+  const sanitized = sanitizeSave(state);
+  assert.strictEqual(sanitized.gacha.history.length, 50);
+  assert.strictEqual(sanitized.gacha.history[0].label, result.label);
+});
+
 test("小游戏结算金币并进入冷却", () => {
   const state = G.hydrate({}, NOW);
   const reward = G.finishMinigame(state, 10, NOW);
-  assert.ok(reward >= 5);
+  assert.strictEqual(reward, 10 * G.MINIGAME_COIN_VALUE);
+  assert.strictEqual(state.coins, 100000);
   assert.strictEqual(G.minigameStatus(state, NOW).ready, false);
   assert.strictEqual(G.minigameStatus(state, NOW + G.MINIGAME_COOLDOWN_MS + 1).ready, true);
-  assert.ok(G.finishMinigame(state, -5, NOW) >= 5);
+  assert.strictEqual(G.finishMinigame(state, -5, NOW), 0);
 });
 
 test("访客能生成并接待奖励", () => {
@@ -563,7 +923,7 @@ test("访客能生成并接待奖励", () => {
 });
 
 test("家具与伙伴提升产出", () => {
-  const state = G.hydrate({ coins: 10000, mood: 100, satiety: 80 }, NOW);
+  const state = G.hydrate({ coins: 10000000, mood: 100, satiety: 80 }, NOW);
   const base = G.incomePerSecond(state);
   assert.strictEqual(
     G.purchase(state, { id: "furniture:rug", type: "furniture", furnitureId: "rug", price: 500 }, NOW).ok,
@@ -895,6 +1255,16 @@ test("v10 老存档迁移后补齐亲密度与日记", () => {
   assert.strictEqual(state.version, G.SAVE_VERSION);
   assert.strictEqual(state.intimacy.points, 0);
   assert.deepStrictEqual(state.diary.entries, []);
+});
+
+test("v13 老存档迁移后补齐永耀状态", () => {
+  const state = G.hydrate({ version: 13 }, NOW);
+  assert.strictEqual(state.version, G.SAVE_VERSION);
+  assert.deepStrictEqual(state.leaderboardBoosts, {
+    period: "",
+    activeUntil: 0,
+    boards: [],
+  });
 });
 
 console.log(`\n通过 ${passed} / ${passed + failures.length}`);

@@ -1,6 +1,9 @@
 node_modules/
+.tmp-*/
+social-server/data/
 assets/pet/
 assets/icons/
+assets/fashion/
 doro_dz/
 *.webp
 *.gif

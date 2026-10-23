@@ -15,6 +15,13 @@
       <header>
         <span>商城</span>
         <em id="shop-balance">0 金币</em>
+        <select id="shop-duration" class="shop-duration" title="购买时长">
+          <option value="1">1 日</option>
+          <option value="3">3 日</option>
+          <option value="7">7 日</option>
+          <option value="30">30 日</option>
+          <option value="permanent">永久</option>
+        </select>
         <button id="shop-close" title="关闭">✕</button>
       </header>
       <div class="lib-tabs" id="shop-tabs"></div>
@@ -29,7 +36,7 @@
       </header>
       <div class="gacha-body">
         <div id="gacha-machine" class="gacha-machine"><span>🎰</span></div>
-        <p class="gacha-desc">500 / 次 · 十连 4500 · 最高 1 千万金币</p>
+        <p class="gacha-desc">500 / 次 · 十连 4500 · 家具 / 装扮限时 1–7 天</p>
         <div class="gacha-stats">
           <span>已抽 <b id="gacha-pulls">0</b></span>
           <span>距保底 <b id="gacha-pity">80</b></span>
@@ -37,9 +44,34 @@
         <div class="gacha-actions">
           <button id="gacha-pull">抽一次</button>
           <button id="gacha-ten">十连抽 <em>4500</em></button>
+          <button id="gacha-history-open" type="button">抽奖记录 <em id="gacha-history-count">0</em></button>
         </div>
         <div id="gacha-result" class="gacha-result" aria-live="polite"></div>
       </div>
+      <section id="gacha-history-page" class="gacha-history-page" aria-label="抽奖记录" hidden>
+        <div class="gacha-history-head">
+          <button id="gacha-history-back" type="button">← 返回</button>
+          <b>抽奖记录</b>
+          <span id="gacha-history-page-count">0 / 50</span>
+          <button id="gacha-history-clear" type="button">清空</button>
+        </div>
+        <div class="gacha-history-table-wrap">
+          <table class="gacha-history-table">
+            <thead>
+              <tr>
+                <th scope="col">时间</th>
+                <th scope="col">奖励</th>
+              </tr>
+            </thead>
+            <tbody id="gacha-history-list"></tbody>
+          </table>
+        </div>
+        <div class="gacha-history-pager">
+          <button id="gacha-history-prev" type="button">上一页</button>
+          <span id="gacha-history-page-number">第 1 / 1 页</span>
+          <button id="gacha-history-next" type="button">下一页</button>
+        </div>
+      </section>
     </div>
 
     <div id="minigame" class="interactive" role="dialog" aria-label="接金币小游戏">

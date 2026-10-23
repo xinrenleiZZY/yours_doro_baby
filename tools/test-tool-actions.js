@@ -61,7 +61,7 @@ test("商城不能伪造商品价格或购买不存在商品", () => {
 });
 
 test("装扮按动作清单价格解锁", () => {
-  const state = G.hydrate({ coins: 10000 }, NOW);
+  const state = G.hydrate({ coins: 100000 }, NOW);
   const result = applyToolCommand(
     state,
     actions,
@@ -71,7 +71,59 @@ test("装扮按动作清单价格解锁", () => {
   );
   assert.strictEqual(result.ok, true);
   assert.ok(result.state.unlocked.includes("dress_one"));
-  assert.strictEqual(result.state.coins, 10000 - G.dressPrice(0));
+  assert.strictEqual(result.state.coins, 100000 - G.dressPrice(0) * G.PERMANENT_PRICE_MULTIPLIER);
+});
+
+test("独立商城租赁会校验时长并写入到期时间", () => {
+  const state = G.hydrate({ coins: 10000 }, NOW);
+  const result = applyToolCommand(
+    state,
+    actions,
+    "shop",
+    { type: "buy", item: { kind: "dress", action: "dress_one", rentalDuration: 7 } },
+    NOW
+  );
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(result.state.coins, 10000 - G.dressPrice(0) * 7);
+  assert.strictEqual(result.state.rentals.dress.dress_one, NOW + 7 * 86400000);
+  assert.ok(!result.state.unlocked.includes("dress_one"));
+
+  const furniture = applyToolCommand(
+    state,
+    actions,
+    "shop",
+    { type: "buy", item: { kind: "furniture", id: "rug", rentalDuration: 3 } },
+    NOW
+  );
+  assert.strictEqual(furniture.ok, true);
+  assert.strictEqual(furniture.state.rentals.furniture.rug, NOW + 3 * 86400000);
+  assert.ok(!furniture.state.room.furniture.includes("rug"));
+});
+
+test("独立商城可购买并穿脱叠层服装", () => {
+  const state = G.hydrate({ coins: 100000 }, NOW);
+  const bought = applyToolCommand(
+    state,
+    actions,
+    "shop",
+    {
+      type: "buy",
+      item: { kind: "catalog", id: "fashion_starlight_hat", rentalDuration: 3 },
+    },
+    NOW
+  );
+  assert.strictEqual(bought.ok, true);
+  assert.strictEqual(bought.state.settings.equippedFashion, "fashion_starlight_hat");
+  assert.strictEqual(bought.state.rentals.dress.fashion_starlight_hat, NOW + 3 * 86400000);
+  const removed = applyToolCommand(
+    bought.state,
+    actions,
+    "shop",
+    { type: "equip-fashion", id: "fashion_starlight_hat" },
+    NOW
+  );
+  assert.strictEqual(removed.ok, true);
+  assert.strictEqual(removed.state.settings.equippedFashion, "");
 });
 
 test("未拥有的主题不能直接切换", () => {
@@ -97,12 +149,23 @@ test("独立扭蛋窗支持十连抽", () => {
   assert.strictEqual(result.state.gacha.pulls, 10);
 });
 
+test("扭蛋抽奖记录会逐条保存并可以清空", () => {
+  const state = G.hydrate({ coins: 10000 }, NOW);
+  const pulled = applyToolCommand(state, actions, "gacha", { type: "pull-ten" }, NOW);
+  assert.strictEqual(pulled.state.gacha.history.length, 10);
+  assert.ok(pulled.state.gacha.history.every((entry) => entry.label && entry.at === NOW));
+  const cleared = applyToolCommand(pulled.state, actions, "gacha", { type: "clear-history" }, NOW);
+  assert.strictEqual(cleared.ok, true);
+  assert.deepStrictEqual(cleared.state.gacha.history, []);
+  assert.strictEqual(cleared.state.gacha.pulls, 10);
+});
+
 test("小游戏结算有冷却和分数上限", () => {
   const state = G.hydrate({ coins: 0 }, NOW);
   const result = applyToolCommand(state, actions, "minigame", { type: "finish", score: 9999 }, NOW);
   assert.strictEqual(result.ok, true);
   assert.strictEqual(result.result.score, 500);
-  assert.strictEqual(result.result.reward, 1000);
+  assert.strictEqual(result.result.reward, 500 * G.MINIGAME_COIN_VALUE);
   const again = applyToolCommand(
     result.state,
     actions,

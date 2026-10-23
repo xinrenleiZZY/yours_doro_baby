@@ -6,14 +6,14 @@
       http-equiv="Content-Security-Policy"
       content="default-src 'none'; img-src 'self' data: file:; style-src 'self'; script-src 'self';"
     />
-    <title>doro 好友与个人资料</title>
+    <title>doro 社交、聊天与排行榜</title>
     <link rel="stylesheet" href="social-window.css" />
   </head>
   <body>
     <div class="social-app">
       <header class="titlebar">
         <div>
-          <strong>好友与个人资料</strong>
+          <strong>doro 社交、聊天与排行榜</strong>
           <span id="connection-status"><i></i><span id="connection-text">正在连接局域网服务…</span></span>
         </div>
         <button id="close" title="关闭">✕</button>
@@ -31,52 +31,191 @@
           /></label>
           <label><span>简介</span><textarea id="setup-bio" maxlength="120" rows="2"></textarea></label>
           <button id="register" class="primary">创建身份</button>
+          <div class="recovery-box">
+            <b>恢复已有身份</b>
+            <p>在新电脑输入游戏 ID 和之前保存的恢复码，可恢复永久商城权益。</p>
+            <input id="recovery-id" maxlength="40" placeholder="游戏 ID，例如 doro_1a2b3c4d" />
+            <input id="recovery-code" maxlength="40" placeholder="恢复码，例如 ABCD-EFGH-IJKL-MNOP" />
+            <button id="recover-account" class="secondary">恢复身份</button>
+          </div>
         </section>
 
         <section id="app" hidden>
-          <section class="card profile-card">
-            <div class="profile-head">
-              <span id="profile-avatar" class="avatar">🐣</span>
-              <div>
-                <h2 id="profile-nickname">doro 玩家</h2>
-                <button id="copy-id" class="game-id" type="button"></button>
+          <nav class="view-tabs" aria-label="社交功能">
+            <button class="active" data-view="friends">好友与资料</button>
+            <button data-view="chat">聊天</button>
+            <button data-view="groups">群组</button>
+            <button data-view="ranking">排行榜</button>
+          </nav>
+
+          <section id="friends-view" class="social-view">
+            <section class="card profile-card">
+              <div class="profile-head">
+                <span id="profile-avatar" class="avatar">🐣</span>
+                <div>
+                  <h2 id="profile-nickname">doro 玩家</h2>
+                  <button id="copy-id" class="game-id" type="button"></button>
+                </div>
               </div>
-            </div>
-            <p id="profile-bio" class="bio"></p>
-            <div class="profile-meta" id="profile-meta"></div>
-            <div class="edit-grid">
-              <input id="edit-nickname" maxlength="20" placeholder="昵称" />
-              <input id="edit-bio" maxlength="120" placeholder="一句简介" />
-              <button id="save-profile" class="primary">保存资料</button>
+              <p id="profile-bio" class="bio"></p>
+              <div class="profile-meta" id="profile-meta"></div>
+              <div class="edit-grid">
+                <input id="edit-nickname" maxlength="20" placeholder="昵称" />
+                <input id="edit-bio" maxlength="120" placeholder="一句简介" />
+                <button id="save-profile" class="primary">保存资料</button>
+              </div>
+              <div class="recovery-actions">
+                <button id="show-recovery" class="secondary">显示账号恢复码</button>
+                <code id="recovery-value" hidden></code>
+                <button id="copy-recovery" class="secondary" hidden>复制</button>
+              </div>
+            </section>
+
+            <section class="card shop-cloud-card">
+              <div class="card-title">
+                <h3>商城云存档</h3>
+                <span>Docker + 本地缓存</span>
+              </div>
+              <p class="ranking-rules">
+                永久购买和租赁到期时间会同步到局域网服务；金币、心情、等级和动作进度仍只保存在本机。
+              </p>
+              <div class="ranking-source">
+                <span id="shop-cloud-status">等待同步</span>
+                <button id="shop-cloud-sync" class="secondary">立即同步</button>
+              </div>
+            </section>
+
+            <section class="card">
+              <div class="card-title">
+                <h3>添加好友</h3>
+                <span>搜索昵称或游戏 ID</span>
+              </div>
+              <div class="search-row">
+                <input id="search-input" maxlength="40" placeholder="例如 doro_1a2b3c4d" />
+                <button id="search-button">搜索</button>
+              </div>
+              <div id="search-results" class="list"></div>
+            </section>
+
+            <section class="card">
+              <div class="card-title">
+                <h3>好友申请</h3>
+                <span id="request-count"></span>
+              </div>
+              <div id="requests" class="list"></div>
+            </section>
+
+            <section class="card">
+              <div class="card-title">
+                <h3>我的好友</h3>
+                <span id="friend-count"></span>
+              </div>
+              <div id="friends" class="list"></div>
+            </section>
+          </section>
+
+          <section id="chat-view" class="social-view" hidden>
+            <div class="chat-layout">
+              <aside class="card conversation-panel">
+                <div class="card-title">
+                  <h3>最近会话</h3>
+                  <button id="conversation-refresh" class="text-button" type="button">刷新</button>
+                </div>
+                <div id="conversation-list" class="conversation-list"></div>
+              </aside>
+
+              <section class="card chat-panel">
+                <div id="chat-empty" class="chat-empty">
+                  <span>💬</span>
+                  <b>选择一位好友或一个群</b>
+                  <small>私聊仅对好友开放，群聊仅对群成员开放</small>
+                </div>
+                <div id="chat-thread" class="chat-thread" hidden>
+                  <header class="chat-head">
+                    <span id="chat-avatar" class="avatar small">🐣</span>
+                    <div>
+                      <h3 id="chat-title">会话</h3>
+                      <small id="chat-meta"></small>
+                    </div>
+                  </header>
+                  <div id="message-list" class="message-list" aria-live="polite"></div>
+                  <form id="message-form" class="message-form">
+                    <textarea
+                      id="message-input"
+                      maxlength="500"
+                      rows="1"
+                      placeholder="输入消息，Enter 发送，Shift+Enter 换行"
+                    ></textarea>
+                    <button id="send-message" class="primary" type="submit">发送</button>
+                  </form>
+                </div>
+              </section>
             </div>
           </section>
 
-          <section class="card">
-            <div class="card-title">
-              <h3>添加好友</h3>
-              <span>搜索昵称或游戏 ID</span>
-            </div>
-            <div class="search-row">
-              <input id="search-input" maxlength="40" placeholder="例如 doro_1a2b3c4d" />
-              <button id="search-button">搜索</button>
-            </div>
-            <div id="search-results" class="list"></div>
+          <section id="groups-view" class="social-view" hidden>
+            <section class="card group-create-card">
+              <div class="card-title">
+                <h3>创建群组</h3>
+                <span>最多 50 人 · 仅房主可管理成员</span>
+              </div>
+              <div class="group-create-row">
+                <input id="group-name" maxlength="30" placeholder="给群起个名字" />
+                <button id="create-group" class="primary">创建</button>
+              </div>
+              <p class="ranking-rules">创建后可在下方的群卡片中邀请好友、改名或退出。</p>
+              <div id="group-friend-picker" class="friend-picker"></div>
+            </section>
+
+            <section class="card">
+              <div class="card-title">
+                <h3>我的群组</h3>
+                <span id="group-count"></span>
+              </div>
+              <div id="group-list" class="group-list"></div>
+            </section>
           </section>
 
-          <section class="card">
-            <div class="card-title">
-              <h3>好友申请</h3>
-              <span id="request-count"></span>
-            </div>
-            <div id="requests" class="list"></div>
-          </section>
+          <section id="ranking-view" class="social-view" hidden>
+            <section class="card ranking-hero">
+              <div class="card-title">
+                <h3>每日排行榜</h3>
+                <span id="leaderboard-countdown">北京时间 00:00 定榜</span>
+              </div>
+              <p class="ranking-rules">
+                家具、时装只计算有效租赁或永久拥有期间；等级按累计等级计算。榜一永久获得对应限定典藏增幅，重复夺冠不叠加。
+              </p>
+              <div class="ranking-source">
+                <span id="leaderboard-status">等待同步</span>
+                <button id="leaderboard-refresh" class="secondary">刷新榜单</button>
+              </div>
+            </section>
 
-          <section class="card">
-            <div class="card-title">
-              <h3>我的好友</h3>
-              <span id="friend-count"></span>
+            <div class="board-tabs" id="leaderboard-tabs" role="tablist">
+              <button class="active" data-board="level">等级榜</button>
+              <button data-board="furniture">家具榜</button>
+              <button data-board="fashion">时装榜</button>
+              <button data-board="collection">典藏榜</button>
             </div>
-            <div id="friends" class="list"></div>
+
+            <section class="card ranking-card">
+              <div class="card-title">
+                <h3 id="leaderboard-title">等级榜</h3>
+                <span id="leaderboard-rule">累计等级</span>
+              </div>
+              <div id="leaderboard-self" class="rank-self"></div>
+              <div id="leaderboard-winner" class="last-winner"></div>
+              <div id="leaderboard-list" class="leaderboard-list"></div>
+            </section>
+
+            <section class="card reward-card">
+              <div class="card-title">
+                <h3>榜一限定典藏</h3>
+                <span>每日结算 · 永久保留</span>
+              </div>
+              <div id="leaderboard-reward"></div>
+              <div id="leaderboard-awards" class="award-list"></div>
+            </section>
           </section>
         </section>
       </main>

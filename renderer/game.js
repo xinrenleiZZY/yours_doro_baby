@@ -11,7 +11,7 @@
 })(typeof self !== "undefined" ? self : this, function () {
   "use strict";
 
-  const SAVE_VERSION = 12;
+  const SAVE_VERSION = 14;
 
   // ---- 经济数值 -------------------------------------------------------------
   const BALANCE = {
@@ -53,6 +53,8 @@
     buffs: {},
     perks: {},
     unlocked: [],
+    rentals: { furniture: {}, dress: {} },
+    leaderboardBoosts: { period: "", activeUntil: 0, boards: [] },
     favorites: [],
     recent: [],
     stickerRandom: {},
@@ -71,7 +73,7 @@
     wish: null,
     checkin: { lastDate: "", streak: 0 },
     bank: { amount: 0, dueAt: 0 },
-    gacha: { pulls: 0 },
+    gacha: { pulls: 0, history: [] },
     minigame: { lastPlayedAt: 0 },
     visitor: null,
     nextVisitorAt: 0,
@@ -133,9 +135,20 @@
       followCursor: false,
       dnd: false,
       roamSpeed: 55,
+      equippedFashion: "",
       quizApiBase: "http://192.168.0.193:9300",
       updateFeedUrl: "http://192.168.0.193:9400/updates",
       updateAutoCheck: true,
+    },
+    // 13 -> 14：榜一典藏「永耀」当日积分与产出增幅
+    13: (raw) => {
+      return Object.assign({}, raw, {
+        version: 14,
+        leaderboardBoosts:
+          raw.leaderboardBoosts && typeof raw.leaderboardBoosts === "object"
+            ? raw.leaderboardBoosts
+            : { period: "", activeUntil: 0, boards: [] },
+      });
     },
   };
 
@@ -287,6 +300,7 @@
       name: "招财猫",
       type: "permanent",
       price: 2000,
+      bonus: 0.1,
       icon: "🐱",
       desc: "永久 +10% 产出",
     },
@@ -317,11 +331,272 @@
       icon: "🌸",
       desc: "更浓的樱花粉面板",
     },
+    fashion_starlight_hat: {
+      id: "fashion_starlight_hat",
+      name: "星辉礼帽",
+      type: "fashion",
+      price: 1500,
+      score: 120,
+      icon: "🎩",
+      overlay: "fashion/starlight_hat.svg",
+      overlayTop: 2,
+      overlayLeft: 50,
+      overlayWidth: 48,
+      desc: "可叠穿星辉礼帽，时装积分 +120",
+    },
+    fashion_round_glasses: {
+      id: "fashion_round_glasses",
+      name: "圆框眼镜",
+      type: "fashion",
+      price: 1800,
+      score: 150,
+      icon: "👓",
+      overlay: "fashion/round_glasses.svg",
+      overlayTop: 30,
+      overlayLeft: 50,
+      overlayWidth: 40,
+      desc: "可叠穿圆框眼镜，时装积分 +150",
+    },
+    fashion_red_scarf: {
+      id: "fashion_red_scarf",
+      name: "暖红围巾",
+      type: "fashion",
+      price: 2200,
+      score: 180,
+      icon: "🧣",
+      overlay: "fashion/red_scarf.svg",
+      overlayTop: 52,
+      overlayLeft: 50,
+      overlayWidth: 54,
+      desc: "可叠穿暖红围巾，时装积分 +180",
+    },
+    fashion_cat_backpack: {
+      id: "fashion_cat_backpack",
+      name: "猫猫背包",
+      type: "fashion",
+      price: 2600,
+      score: 220,
+      icon: "🎒",
+      overlay: "fashion/cat_backpack.svg",
+      overlayTop: 45,
+      overlayLeft: 72,
+      overlayWidth: 26,
+      desc: "可叠穿猫猫背包，时装积分 +220",
+    },
+    fashion_flower_crown: {
+      id: "fashion_flower_crown",
+      name: "春日花环",
+      type: "fashion",
+      price: 3200,
+      score: 260,
+      icon: "🌼",
+      overlay: "fashion/flower_crown.svg",
+      overlayTop: 6,
+      overlayLeft: 50,
+      overlayWidth: 50,
+      desc: "可叠穿春日花环，时装积分 +260",
+    },
+    fashion_music_headset: {
+      id: "fashion_music_headset",
+      name: "音乐耳机",
+      type: "fashion",
+      price: 3800,
+      score: 300,
+      icon: "🎧",
+      overlay: "fashion/music_headset.svg",
+      overlayTop: 14,
+      overlayLeft: 50,
+      overlayWidth: 55,
+      desc: "可叠穿音乐耳机，时装积分 +300",
+    },
+    fashion_angel_wings: {
+      id: "fashion_angel_wings",
+      name: "小天使翅膀",
+      type: "fashion",
+      price: 4500,
+      score: 360,
+      icon: "🪽",
+      overlay: "fashion/angel_wings.svg",
+      overlayTop: 35,
+      overlayLeft: 50,
+      overlayWidth: 76,
+      desc: "可叠穿小天使翅膀，时装积分 +360",
+    },
+    fashion_bow_tie: {
+      id: "fashion_bow_tie",
+      name: "绅士领结",
+      type: "fashion",
+      price: 5200,
+      score: 420,
+      icon: "🎀",
+      overlay: "fashion/bow_tie.svg",
+      overlayTop: 55,
+      overlayLeft: 50,
+      overlayWidth: 32,
+      desc: "可叠穿绅士领结，时装积分 +420",
+    },
+    fashion_detective_hat: {
+      id: "fashion_detective_hat",
+      name: "侦探帽",
+      type: "fashion",
+      price: 6500,
+      score: 500,
+      icon: "🕵️",
+      overlay: "fashion/detective_hat.svg",
+      overlayTop: -2,
+      overlayLeft: 50,
+      overlayWidth: 52,
+      desc: "可叠穿侦探帽，时装积分 +500",
+    },
+    fashion_space_helmet: {
+      id: "fashion_space_helmet",
+      name: "太空头盔",
+      type: "fashion",
+      price: 8000,
+      score: 600,
+      icon: "🧑‍🚀",
+      overlay: "fashion/space_helmet.svg",
+      overlayTop: 4,
+      overlayLeft: 50,
+      overlayWidth: 62,
+      desc: "可叠穿太空头盔，时装积分 +600",
+    },
+    fashion_butterfly_clip: {
+      id: "fashion_butterfly_clip",
+      name: "蝶翼发夹",
+      type: "fashion",
+      price: 11000,
+      score: 720,
+      icon: "🦋",
+      overlay: "fashion/butterfly_clip.svg",
+      overlayTop: 4,
+      overlayLeft: 50,
+      overlayWidth: 34,
+      desc: "可叠穿蝶翼发夹，时装积分 +720",
+    },
+    fashion_cloud_earmuffs: {
+      id: "fashion_cloud_earmuffs",
+      name: "云朵耳罩",
+      type: "fashion",
+      price: 13500,
+      score: 820,
+      icon: "☁️",
+      overlay: "fashion/cloud_earmuffs.svg",
+      overlayTop: 22,
+      overlayLeft: 50,
+      overlayWidth: 66,
+      desc: "可叠穿云朵耳罩，时装积分 +820",
+    },
+    fashion_strawberry_band: {
+      id: "fashion_strawberry_band",
+      name: "草莓发带",
+      type: "fashion",
+      price: 16000,
+      score: 920,
+      icon: "🍓",
+      overlay: "fashion/strawberry_band.svg",
+      overlayTop: 3,
+      overlayLeft: 50,
+      overlayWidth: 56,
+      desc: "可叠穿草莓发带，时装积分 +920",
+    },
+    fashion_moon_earrings: {
+      id: "fashion_moon_earrings",
+      name: "月光耳坠",
+      type: "fashion",
+      price: 19000,
+      score: 1050,
+      icon: "🌙",
+      overlay: "fashion/moon_earrings.svg",
+      overlayTop: 38,
+      overlayLeft: 82,
+      overlayWidth: 20,
+      desc: "可叠穿月光耳坠，时装积分 +1050",
+    },
+    fashion_bell_collar: {
+      id: "fashion_bell_collar",
+      name: "铃铛项圈",
+      type: "fashion",
+      price: 23000,
+      score: 1200,
+      icon: "🔔",
+      overlay: "fashion/bell_collar.svg",
+      overlayTop: 58,
+      overlayLeft: 50,
+      overlayWidth: 38,
+      desc: "可叠穿铃铛项圈，时装积分 +1200",
+    },
+    fashion_crystal_tiara: {
+      id: "fashion_crystal_tiara",
+      name: "水晶小皇冠",
+      type: "fashion",
+      price: 28000,
+      score: 1380,
+      icon: "👑",
+      overlay: "fashion/crystal_tiara.svg",
+      overlayTop: -1,
+      overlayLeft: 50,
+      overlayWidth: 42,
+      desc: "可叠穿水晶小皇冠，时装积分 +1380",
+    },
+    fashion_bunny_pack: {
+      id: "fashion_bunny_pack",
+      name: "兔兔背包",
+      type: "fashion",
+      price: 34000,
+      score: 1580,
+      icon: "🐰",
+      overlay: "fashion/bunny_pack.svg",
+      overlayTop: 44,
+      overlayLeft: 18,
+      overlayWidth: 28,
+      desc: "可叠穿兔兔背包，时装积分 +1580",
+    },
+    fashion_rainbow_cape: {
+      id: "fashion_rainbow_cape",
+      name: "彩虹披风",
+      type: "fashion",
+      price: 42000,
+      score: 1820,
+      icon: "🌈",
+      overlay: "fashion/rainbow_cape.svg",
+      overlayTop: 38,
+      overlayLeft: 50,
+      overlayWidth: 88,
+      desc: "可叠穿彩虹披风，时装积分 +1820",
+    },
+    fashion_star_eye_patch: {
+      id: "fashion_star_eye_patch",
+      name: "星星眼罩",
+      type: "fashion",
+      price: 52000,
+      score: 2100,
+      icon: "⭐",
+      overlay: "fashion/star_eye_patch.svg",
+      overlayTop: 28,
+      overlayLeft: 58,
+      overlayWidth: 38,
+      desc: "可叠穿星星眼罩，时装积分 +2100",
+    },
+    fashion_lunar_veil: {
+      id: "fashion_lunar_veil",
+      name: "月纱头饰",
+      type: "fashion",
+      price: 65000,
+      score: 2450,
+      icon: "🎐",
+      overlay: "fashion/lunar_veil.svg",
+      overlayTop: 8,
+      overlayLeft: 50,
+      overlayWidth: 60,
+      desc: "可叠穿月纱头饰，时装积分 +2450",
+    },
     luxury_cushion: {
       id: "luxury_cushion",
       name: "鎏金软垫",
       type: "luxury",
       price: 66000,
+      score: 100,
       bonus: 0.08,
       icon: "🛋️",
       desc: "永久 +8% 产出，典藏级舒适",
@@ -331,6 +606,7 @@
       name: "星辉水晶灯",
       type: "luxury",
       price: 188000,
+      score: 300,
       bonus: 0.12,
       icon: "🔮",
       desc: "永久 +12% 产出，房间里会发光",
@@ -340,6 +616,7 @@
       name: "私人摸鱼办公室",
       type: "luxury",
       price: 520000,
+      score: 800,
       bonus: 0.18,
       icon: "🏢",
       desc: "永久 +18% 产出，带门禁的那种",
@@ -349,6 +626,7 @@
       name: "doro 小庄园",
       type: "luxury",
       price: 1280000,
+      score: 2000,
       bonus: 0.3,
       icon: "🏡",
       desc: "永久 +30% 产出，从桌宠升级为地主",
@@ -358,9 +636,280 @@
       name: "时间沙漏",
       type: "luxury",
       price: 2500000,
+      score: 5000,
       bonus: 0.45,
       icon: "⏳",
       desc: "永久 +45% 产出，摸鱼时间也是资产",
+    },
+    luxury_cloud_sofa: {
+      id: "luxury_cloud_sofa",
+      name: "云端懒人沙发",
+      type: "luxury",
+      price: 5000000,
+      score: 8000,
+      bonus: 0.55,
+      icon: "☁️",
+      desc: "永久 +55% 产出，坐下去就起不来了",
+    },
+    luxury_meteor_clock: {
+      id: "luxury_meteor_clock",
+      name: "流星座钟",
+      type: "luxury",
+      price: 9000000,
+      score: 12000,
+      bonus: 0.62,
+      icon: "☄️",
+      desc: "永久 +62% 产出，每一秒都带一点星尘",
+    },
+    luxury_moon_observatory: {
+      id: "luxury_moon_observatory",
+      name: "月球摸鱼台",
+      type: "luxury",
+      price: 20000000,
+      score: 25000,
+      bonus: 0.75,
+      icon: "🌕",
+      desc: "永久 +75% 产出，离地球很远，离下班很近",
+    },
+    luxury_aurora: {
+      id: "luxury_aurora",
+      name: "极光屏风",
+      type: "luxury",
+      price: 35000000,
+      score: 40000,
+      bonus: 0.85,
+      icon: "🌌",
+      desc: "永久 +85% 产出，把极光搬进摸鱼房间",
+    },
+    luxury_night_train: {
+      id: "luxury_night_train",
+      name: "月夜列车模型",
+      type: "luxury",
+      price: 70000000,
+      score: 70000,
+      bonus: 1,
+      icon: "🚂",
+      desc: "永久 +100% 产出，开往不用打卡的远方",
+    },
+    luxury_cosmic_cafe: {
+      id: "luxury_cosmic_cafe",
+      name: "宇宙咖啡馆",
+      type: "luxury",
+      price: 150000000,
+      score: 150000,
+      bonus: 1.2,
+      icon: "🪐",
+      desc: "永久 +120% 产出，在星环旁边慢慢喝",
+    },
+    luxury_eternal_office: {
+      id: "luxury_eternal_office",
+      name: "永恒摸鱼神殿",
+      type: "luxury",
+      price: 500000000,
+      score: 500000,
+      bonus: 1.8,
+      icon: "🏛️",
+      desc: "永久 +180% 产出，传说级摸鱼资产",
+    },
+    luxury_meteor_shower: {
+      id: "luxury_meteor_shower",
+      name: "流星雨穹顶",
+      type: "luxury",
+      price: 300000000,
+      score: 280000,
+      bonus: 1.5,
+      icon: "🌠",
+      desc: "永久 +150% 产出，每天都有流星许愿",
+    },
+    luxury_crystal_palace: {
+      id: "luxury_crystal_palace",
+      name: "水晶宫温室",
+      type: "luxury",
+      price: 500000000,
+      score: 450000,
+      bonus: 1.7,
+      icon: "🏰",
+      desc: "永久 +170% 产出，晶莹剔透的摸鱼宫殿",
+    },
+    luxury_dragon_pearl: {
+      id: "luxury_dragon_pearl",
+      name: "龙珠夜明珠",
+      type: "luxury",
+      price: 800000000,
+      score: 700000,
+      bonus: 1.95,
+      icon: "🐉",
+      desc: "永久 +195% 产出，传说龙族也在摸鱼",
+    },
+    luxury_sakura_gate: {
+      id: "luxury_sakura_gate",
+      name: "千年樱花门",
+      type: "luxury",
+      price: 1200000000,
+      score: 1000000,
+      bonus: 2.2,
+      icon: "⛩️",
+      desc: "永久 +220% 产出，穿过花门就是下班",
+    },
+    luxury_black_hole: {
+      id: "luxury_black_hole",
+      name: "迷你黑洞摆件",
+      type: "luxury",
+      price: 2000000000,
+      score: 1600000,
+      bonus: 2.5,
+      icon: "🌑",
+      desc: "永久 +250% 产出，把加班吸走",
+    },
+    luxury_phoenix_feather: {
+      id: "luxury_phoenix_feather",
+      name: "不死鸟羽冠",
+      type: "luxury",
+      price: 3000000000,
+      score: 2400000,
+      bonus: 2.8,
+      icon: "🪶",
+      desc: "永久 +280% 产出，摸鱼之魂永不熄灭",
+    },
+    luxury_ocean_crown: {
+      id: "luxury_ocean_crown",
+      name: "深海王冠",
+      type: "luxury",
+      price: 5000000000,
+      score: 3800000,
+      bonus: 3.2,
+      icon: "🔱",
+      desc: "永久 +320% 产出，统治整片摸鱼海",
+    },
+    luxury_clock_tower: {
+      id: "luxury_clock_tower",
+      name: "永恒钟楼",
+      type: "luxury",
+      price: 8000000000,
+      score: 6000000,
+      bonus: 3.6,
+      icon: "🕰️",
+      desc: "永久 +360% 产出，把下班时间永远定格",
+    },
+    luxury_galaxy_ark: {
+      id: "luxury_galaxy_ark",
+      name: "银河方舟",
+      type: "luxury",
+      price: 12000000000,
+      score: 9000000,
+      bonus: 4,
+      icon: "🚀",
+      desc: "永久 +400% 产出，载着 doro 离开工位",
+    },
+    luxury_infinite_lounge: {
+      id: "luxury_infinite_lounge",
+      name: "无限摸鱼厅",
+      type: "luxury",
+      price: 20000000000,
+      score: 14000000,
+      bonus: 4.5,
+      icon: "♾️",
+      desc: "永久 +450% 产出，传说中永远不用加班的地方",
+    },
+    luxury_stardust_music_box: {
+      id: "luxury_stardust_music_box",
+      name: "星屑音乐盒",
+      type: "luxury",
+      price: 30000000000,
+      score: 19000000,
+      bonus: 5,
+      icon: "🎼",
+      desc: "永久 +500% 产出，每一枚齿轮都落满星光",
+    },
+    luxury_moon_castle: {
+      id: "luxury_moon_castle",
+      name: "月光城堡",
+      type: "luxury",
+      price: 45000000000,
+      score: 27000000,
+      bonus: 5.6,
+      icon: "🏰",
+      desc: "永久 +560% 产出，把整座城堡泡在月色里",
+    },
+    luxury_time_garden: {
+      id: "luxury_time_garden",
+      name: "时空花园",
+      type: "luxury",
+      price: 68000000000,
+      score: 38000000,
+      bonus: 6.2,
+      icon: "🌷",
+      desc: "永久 +620% 产出，花开时时间会偷偷暂停",
+    },
+    luxury_phoenix_throne: {
+      id: "luxury_phoenix_throne",
+      name: "凤凰王座",
+      type: "luxury",
+      price: 100000000000,
+      score: 52000000,
+      bonus: 6.8,
+      icon: "🔥",
+      desc: "永久 +680% 产出，坐下的瞬间浴火重生",
+    },
+    luxury_nebula_library: {
+      id: "luxury_nebula_library",
+      name: "星云图书馆",
+      type: "luxury",
+      price: 150000000000,
+      score: 72000000,
+      bonus: 7.4,
+      icon: "📖",
+      desc: "永久 +740% 产出，每本书都藏着一片星云",
+    },
+    luxury_interstellar_post: {
+      id: "luxury_interstellar_post",
+      name: "星际邮局",
+      type: "luxury",
+      price: 220000000000,
+      score: 100000000,
+      bonus: 8,
+      icon: "📮",
+      desc: "永久 +800% 产出，把加班通知寄往宇宙尽头",
+    },
+    luxury_dream_park: {
+      id: "luxury_dream_park",
+      name: "梦境游乐园",
+      type: "luxury",
+      price: 320000000000,
+      score: 135000000,
+      bonus: 8.7,
+      icon: "🎡",
+      desc: "永久 +870% 产出，摩天轮每转一圈都在摸鱼",
+    },
+    luxury_sun_temple: {
+      id: "luxury_sun_temple",
+      name: "太阳神殿",
+      type: "luxury",
+      price: 450000000000,
+      score: 180000000,
+      bonus: 9.4,
+      icon: "☀️",
+      desc: "永久 +940% 产出，让阳光替 doro 打卡",
+    },
+    luxury_cosmic_cafe_end: {
+      id: "luxury_cosmic_cafe_end",
+      name: "宇宙尽头咖啡厅",
+      type: "luxury",
+      price: 650000000000,
+      score: 240000000,
+      bonus: 10.2,
+      icon: "☕",
+      desc: "永久 +1020% 产出，宇宙尽头也没有下班提醒",
+    },
+    luxury_doro_universe: {
+      id: "luxury_doro_universe",
+      name: "doro 永恒宇宙",
+      type: "luxury",
+      price: 1000000000000,
+      score: 330000000,
+      bonus: 11.5,
+      icon: "🌌",
+      desc: "永久 +1150% 产出，让整片宇宙陪 doro 一起摸鱼",
     },
     profile_personality: {
       id: "profile_personality",
@@ -380,8 +929,63 @@
       icon: "💡",
       desc: "保留性格，重新抽取喜欢与不喜欢",
     },
+    rank_level_crown: {
+      id: "rank_level_crown",
+      name: "摸鱼等级王冠",
+      type: "champion",
+      leaderboard: "level",
+      score: 1000,
+      permanentBonus: 0.05,
+      dailyIncomeBonus: 1,
+      icon: "👑",
+      desc: "永久产出 +5%；永耀：当天等级榜分数 +20%，产出 +100%",
+    },
+    rank_furniture_trophy: {
+      id: "rank_furniture_trophy",
+      name: "家具大师奖杯",
+      type: "champion",
+      leaderboard: "furniture",
+      score: 1000,
+      permanentBonus: 0,
+      dailyIncomeBonus: 2,
+      icon: "🏆",
+      desc: "永耀：当天家具榜分数 +20%，产出 +200%",
+    },
+    rank_fashion_crown: {
+      id: "rank_fashion_crown",
+      name: "时装之星皇冠",
+      type: "champion",
+      leaderboard: "fashion",
+      score: 1000,
+      permanentBonus: 0,
+      dailyIncomeBonus: 2,
+      icon: "💎",
+      desc: "永耀：当天时装榜分数 +20%，产出 +200%",
+    },
+    rank_collection_obelisk: {
+      id: "rank_collection_obelisk",
+      name: "典藏守护方尖碑",
+      type: "champion",
+      leaderboard: "collection",
+      score: 1000,
+      permanentBonus: 0,
+      dailyIncomeBonus: 2,
+      icon: "🗿",
+      desc: "永耀：当天典藏榜分数 +20%，产出 +200%",
+    },
   };
 
+  const CHAMPION_BY_BOARD = Object.fromEntries(
+    Object.values(SHOP_ITEMS)
+      .filter((item) => item.type === "champion")
+      .map((item) => [item.leaderboard, item])
+  );
+  const CHAMPION_ITEM_IDS = Object.freeze(
+    Object.keys(CHAMPION_BY_BOARD).map((board) => CHAMPION_BY_BOARD[board].id)
+  );
+  const LEADERBOARD_BOARD_IDS = Object.freeze(["level", "furniture", "fashion", "collection"]);
+  const CHAMPION_SCORE_MULTIPLIER = 1.2;
+  const CHAMPION_INCOME_BONUS = 2;
   const PREFERENCE_ITEM_IDS = ["fish", "milk_tea", "cake", "hotpot", "wand", "bubble", "gameboy"];
   const STARTER_ACTIONS = ["idle_stand", "walk_bag", "sleep_cat", "closeup_soft"];
   const TRAINING_COSTS = {
@@ -499,6 +1103,8 @@
   const GACHA_PRICE = 500;
   const GACHA_TEN_PRICE = 4500;
   const GACHA_PITY_PULLS = 80;
+  const GACHA_LIMITED_DAYS = Object.freeze([1, 2, 3, 4, 5, 6, 7]);
+  const DAY_MS = 86400000;
   const GACHA_TOP_PRIZES = [
     {
       amount: 10000000,
@@ -525,36 +1131,328 @@
       until: 8606,
     },
   ];
+  const GACHA_PITY_PRIZES = Object.freeze(GACHA_TOP_PRIZES.filter((prize) => prize.amount !== 10000000));
+  // 分支占比仅作用于未命中金币大奖的普通抽取，合计必须为 1。
+  const GACHA_RATES = Object.freeze({
+    commonCoins: 0.4,
+    consumable: 0.2,
+    timedFurniture: 0.1,
+    timedOutfit: 0.08,
+    legacyOutfitUnlock: 0.05,
+    theme: 0.1,
+    coinFallback: 0.07,
+  });
+  const GACHA_BRANCH_ENDS = Object.freeze({
+    commonCoins: GACHA_RATES.commonCoins,
+    consumable: GACHA_RATES.commonCoins + GACHA_RATES.consumable,
+    timedFurniture: GACHA_RATES.commonCoins + GACHA_RATES.consumable + GACHA_RATES.timedFurniture,
+    timedOutfit:
+      GACHA_RATES.commonCoins + GACHA_RATES.consumable + GACHA_RATES.timedFurniture + GACHA_RATES.timedOutfit,
+    legacyOutfitUnlock:
+      GACHA_RATES.commonCoins +
+      GACHA_RATES.consumable +
+      GACHA_RATES.timedFurniture +
+      GACHA_RATES.timedOutfit +
+      GACHA_RATES.legacyOutfitUnlock,
+    theme:
+      GACHA_RATES.commonCoins +
+      GACHA_RATES.consumable +
+      GACHA_RATES.timedFurniture +
+      GACHA_RATES.timedOutfit +
+      GACHA_RATES.legacyOutfitUnlock +
+      GACHA_RATES.theme,
+  });
   const BANK_HOURS = 8;
   const BANK_RATE = 0.15;
   const MINIGAME_COOLDOWN_MS = 5 * 60000;
+  const MINIGAME_COIN_VALUE = 10000;
 
   const FURNITURE = {
-    cat_tree: { id: "cat_tree", name: "猫爬架", icon: "🐈", price: 800, bonus: 0.05, desc: "+5% 产出" },
-    rug: { id: "rug", name: "小地毯", icon: "🧶", price: 500, bonus: 0.02, desc: "+2% 产出" },
-    plant: { id: "plant", name: "绿植", icon: "🪴", price: 1200, bonus: 0.04, desc: "+4% 产出" },
-    lamp: { id: "lamp", name: "落地灯", icon: "💡", price: 2000, bonus: 0.06, desc: "+6% 产出" },
+    cat_tree: {
+      id: "cat_tree",
+      name: "猫爬架",
+      icon: "🐈",
+      price: 800,
+      score: 80,
+      bonus: 0.05,
+      desc: "+5% 产出",
+    },
+    rug: { id: "rug", name: "小地毯", icon: "🧶", price: 500, score: 30, bonus: 0.02, desc: "+2% 产出" },
+    plant: { id: "plant", name: "绿植", icon: "🪴", price: 1200, score: 60, bonus: 0.04, desc: "+4% 产出" },
+    lamp: { id: "lamp", name: "落地灯", icon: "💡", price: 2000, score: 100, bonus: 0.06, desc: "+6% 产出" },
     companion: {
       id: "companion",
       name: "伙伴 doro",
       icon: "🐣",
       price: 3000,
+      score: 200,
       bonus: 0.08,
       desc: "领养小伙伴，+8% 产出",
     },
+    bookshelf: {
+      id: "bookshelf",
+      name: "星海书架",
+      icon: "📚",
+      price: 5000,
+      score: 180,
+      bonus: 0.09,
+      desc: "永久 +9% 产出",
+    },
+    gaming_chair: {
+      id: "gaming_chair",
+      name: "猫爪电竞椅",
+      icon: "💺",
+      price: 12000,
+      score: 300,
+      bonus: 0.12,
+      desc: "永久 +12% 产出",
+    },
+    fish_tank: {
+      id: "fish_tank",
+      name: "摸鱼水族箱",
+      icon: "🐠",
+      price: 30000,
+      score: 500,
+      bonus: 0.16,
+      desc: "永久 +16% 产出",
+    },
+    cloud_bed: {
+      id: "cloud_bed",
+      name: "云朵吊床",
+      icon: "🛖",
+      price: 80000,
+      score: 800,
+      bonus: 0.22,
+      desc: "永久 +22% 产出",
+    },
+    zen_garden: {
+      id: "zen_garden",
+      name: "禅意庭院",
+      icon: "🎐",
+      price: 180000,
+      score: 1200,
+      bonus: 0.28,
+      desc: "永久 +28% 产出",
+    },
+    golden_desk: {
+      id: "golden_desk",
+      name: "黄金摸鱼桌",
+      icon: "🪙",
+      price: 500000,
+      score: 2000,
+      bonus: 0.35,
+      desc: "永久 +35% 产出",
+    },
+    neon_sign: {
+      id: "neon_sign",
+      name: "摸鱼霓虹灯",
+      icon: "🪧",
+      price: 260000,
+      score: 1600,
+      bonus: 0.3,
+      desc: "永久 +30% 产出",
+    },
+    cat_wheel: {
+      id: "cat_wheel",
+      name: "猫咪跑轮",
+      icon: "🎡",
+      price: 360000,
+      score: 2200,
+      bonus: 0.34,
+      desc: "永久 +34% 产出",
+    },
+    retro_tv: {
+      id: "retro_tv",
+      name: "复古电视",
+      icon: "📺",
+      price: 480000,
+      score: 3000,
+      bonus: 0.38,
+      desc: "永久 +38% 产出",
+    },
+    coffee_bar: {
+      id: "coffee_bar",
+      name: "家庭咖啡吧",
+      icon: "☕",
+      price: 650000,
+      score: 4000,
+      bonus: 0.42,
+      desc: "永久 +42% 产出",
+    },
+    moon_window: {
+      id: "moon_window",
+      name: "月景落地窗",
+      icon: "🌙",
+      price: 850000,
+      score: 5200,
+      bonus: 0.46,
+      desc: "永久 +46% 产出",
+    },
+    record_player: {
+      id: "record_player",
+      name: "黑胶唱片机",
+      icon: "🎶",
+      price: 1100000,
+      score: 6800,
+      bonus: 0.5,
+      desc: "永久 +50% 产出",
+    },
+    mecha_model: {
+      id: "mecha_model",
+      name: "机甲模型柜",
+      icon: "🤖",
+      price: 1500000,
+      score: 8800,
+      bonus: 0.55,
+      desc: "永久 +55% 产出",
+    },
+    snow_globe: {
+      id: "snow_globe",
+      name: "星雪水晶球",
+      icon: "🔮",
+      price: 2000000,
+      score: 11000,
+      bonus: 0.6,
+      desc: "永久 +60% 产出",
+    },
+    star_projector: {
+      id: "star_projector",
+      name: "星海投影仪",
+      icon: "🌠",
+      price: 3000000,
+      score: 16000,
+      bonus: 0.68,
+      desc: "永久 +68% 产出",
+    },
+    doro_throne: {
+      id: "doro_throne",
+      name: "doro 黄金王座",
+      icon: "👑",
+      price: 5000000,
+      score: 26000,
+      bonus: 0.8,
+      desc: "永久 +80% 产出",
+    },
+    star_cat_bed: {
+      id: "star_cat_bed",
+      name: "星梦猫窝",
+      icon: "🌌",
+      price: 6500000,
+      score: 34000,
+      bonus: 0.85,
+      desc: "永久 +85% 产出",
+    },
+    sakura_swing: {
+      id: "sakura_swing",
+      name: "樱花秋千",
+      icon: "🌸",
+      price: 8000000,
+      score: 42000,
+      bonus: 0.9,
+      desc: "永久 +90% 产出",
+    },
+    mini_library: {
+      id: "mini_library",
+      name: "迷你图书馆",
+      icon: "📚",
+      price: 10000000,
+      score: 52000,
+      bonus: 0.96,
+      desc: "永久 +96% 产出",
+    },
+    dessert_cart: {
+      id: "dessert_cart",
+      name: "奶油甜品车",
+      icon: "🍰",
+      price: 13000000,
+      score: 65000,
+      bonus: 1.02,
+      desc: "永久 +102% 产出",
+    },
+    whale_fountain: {
+      id: "whale_fountain",
+      name: "鲸鱼喷泉",
+      icon: "🐋",
+      price: 16000000,
+      score: 80000,
+      bonus: 1.08,
+      desc: "永久 +108% 产出",
+    },
+    cloud_game_pod: {
+      id: "cloud_game_pod",
+      name: "云端游戏舱",
+      icon: "🎮",
+      price: 20000000,
+      score: 100000,
+      bonus: 1.15,
+      desc: "永久 +115% 产出",
+    },
+    moonlight_desk: {
+      id: "moonlight_desk",
+      name: "月光书桌",
+      icon: "🌙",
+      price: 25000000,
+      score: 122000,
+      bonus: 1.22,
+      desc: "永久 +122% 产出",
+    },
+    orbit_gramophone: {
+      id: "orbit_gramophone",
+      name: "星轨留声机",
+      icon: "🎵",
+      price: 32000000,
+      score: 150000,
+      bonus: 1.3,
+      desc: "永久 +130% 产出",
+    },
+    rainbow_greenhouse: {
+      id: "rainbow_greenhouse",
+      name: "彩虹温室",
+      icon: "🌈",
+      price: 42000000,
+      score: 185000,
+      bonus: 1.4,
+      desc: "永久 +140% 产出",
+    },
+    forest_wish_pool: {
+      id: "forest_wish_pool",
+      name: "森林许愿池",
+      icon: "⛲",
+      price: 55000000,
+      score: 230000,
+      bonus: 1.52,
+      desc: "永久 +152% 产出",
+    },
   };
 
-  const DRESS_BASE_PRICE = 80;
-  const DRESS_PRICE_STEP = 20;
+  let DRESS_BASE_PRICE = 80;
+  let DRESS_PRICE_STEP = 20;
+  const DRESS_PRICE_OVERRIDES = {};
+  const DRESS_SCORE_OVERRIDES = {};
+  const DRESS_LISTED_OVERRIDES = {};
+  const CATALOG_ITEM_TYPES = new Set([
+    "food",
+    "toy",
+    "buff",
+    "permanent",
+    "theme",
+    "luxury",
+    "profile",
+    "fashion",
+  ]);
+  const dynamicShopIds = new Set();
+  const dynamicFurnitureIds = new Set();
+  const RENTAL_DAYS = [1, 3, 7, 30];
+  const PERMANENT_PRICE_MULTIPLIER = 1000;
   const SCHEDULE_MAX = 20;
 
   // ---- 题库 -------------------------------------------------------------
   // 每种模式的奖励规则：答对 / 答错分别对金币的影响。模拟考试不涉及金币。
   const QUIZ_RULES = {
-    daily: { correct: 100, wrong: 0 },
-    quiz: { correct: 100, wrong: -10 },
-    random: { correct: 100, wrong: -10 },
-    event: { correct: 100, wrong: 0 },
+    daily: { correct: 10000, wrong: 0 },
+    quiz: { correct: 10000, wrong: -100 },
+    random: { correct: 10000, wrong: -100 },
+    event: { correct: 10000, wrong: 0 },
     exam: { correct: 0, wrong: 0 },
   };
   const QUIZ_EVENT_COOLDOWN_MS = 20 * 60000;
@@ -689,6 +1587,180 @@
     return next;
   }
 
+  function validCatalogId(id) {
+    return (
+      typeof id === "string" &&
+      /^[a-z][a-z0-9_]{0,39}$/.test(id) &&
+      !["__proto__", "constructor", "prototype"].includes(id)
+    );
+  }
+
+  function applyCatalog(catalog) {
+    dynamicShopIds.forEach((id) => delete SHOP_ITEMS[id]);
+    dynamicFurnitureIds.forEach((id) => delete FURNITURE[id]);
+    dynamicShopIds.clear();
+    dynamicFurnitureIds.clear();
+    Object.keys(DRESS_PRICE_OVERRIDES).forEach((name) => delete DRESS_PRICE_OVERRIDES[name]);
+    Object.keys(DRESS_SCORE_OVERRIDES).forEach((name) => delete DRESS_SCORE_OVERRIDES[name]);
+    Object.keys(DRESS_LISTED_OVERRIDES).forEach((name) => delete DRESS_LISTED_OVERRIDES[name]);
+
+    const input = catalog && typeof catalog === "object" ? catalog : {};
+    const dressConfig = input.dresses && typeof input.dresses === "object" ? input.dresses : {};
+    if (Number.isFinite(Number(dressConfig.basePrice))) {
+      DRESS_BASE_PRICE = Math.max(1, Math.min(1000000, Math.round(Number(dressConfig.basePrice))));
+    }
+    if (Number.isFinite(Number(dressConfig.priceStep))) {
+      DRESS_PRICE_STEP = Math.max(0, Math.min(100000, Math.round(Number(dressConfig.priceStep))));
+    }
+    Object.entries(
+      dressConfig.overrides && typeof dressConfig.overrides === "object" ? dressConfig.overrides : {}
+    )
+      .slice(0, 500)
+      .forEach(([name, value]) => {
+        if (!validCatalogId(name) || !value || typeof value !== "object") return;
+        if (Number.isFinite(Number(value.price))) {
+          DRESS_PRICE_OVERRIDES[name] = Math.max(1, Math.round(Number(value.price)));
+        }
+        if (Number.isFinite(Number(value.score))) {
+          DRESS_SCORE_OVERRIDES[name] = Math.max(0, Math.round(Number(value.score)));
+        }
+        if (value.listed === false) DRESS_LISTED_OVERRIDES[name] = false;
+      });
+
+    Object.entries(input.items && typeof input.items === "object" ? input.items : {})
+      .slice(0, 300)
+      .forEach(([id, value]) => {
+        if (!validCatalogId(id) || !value || typeof value !== "object") return;
+        if (!CATALOG_ITEM_TYPES.has(value.type)) return;
+        const item = { ...value, id, listed: value.listed !== false };
+        item.price = Math.max(1, Math.round(Number(item.price) || 1));
+        if (Object.prototype.hasOwnProperty.call(item, "score")) {
+          item.score = Math.max(0, Math.round(Number(item.score) || 0));
+        }
+        if (Object.prototype.hasOwnProperty.call(item, "bonus")) {
+          item.bonus = Math.max(0, Math.min(20, Number(item.bonus) || 0));
+        }
+        if (item.type === "fashion") {
+          if (!/^fashion\/[a-z0-9_]{1,50}\.svg$/.test(String(item.overlay || ""))) return;
+          item.overlayTop = Math.max(-20, Math.min(100, Number(item.overlayTop) || 0));
+          item.overlayLeft = Math.max(0, Math.min(100, Number(item.overlayLeft) || 50));
+          item.overlayWidth = Math.max(5, Math.min(150, Number(item.overlayWidth) || 50));
+        }
+        if (!SHOP_ITEMS[id]) dynamicShopIds.add(id);
+        SHOP_ITEMS[id] = item;
+      });
+
+    Object.entries(input.furniture && typeof input.furniture === "object" ? input.furniture : {})
+      .slice(0, 300)
+      .forEach(([id, value]) => {
+        if (!validCatalogId(id) || !value || typeof value !== "object") return;
+        const item = { ...value, id, listed: value.listed !== false };
+        item.price = Math.max(1, Math.round(Number(item.price) || 1));
+        item.score = Math.max(0, Math.round(Number(item.score) || 0));
+        item.bonus = Math.max(0, Math.min(20, Number(item.bonus) || 0));
+        if (!FURNITURE[id]) dynamicFurnitureIds.add(id);
+        FURNITURE[id] = item;
+      });
+    return { version: String(input.version || "builtin"), items: SHOP_ITEMS, furniture: FURNITURE };
+  }
+
+  function normalizeEntitlementMap(input) {
+    const result = {};
+    Object.entries(input && typeof input === "object" ? input : {})
+      .slice(0, 500)
+      .forEach(([id, value]) => {
+        if (!validCatalogId(id) || !value || typeof value !== "object") return;
+        const permanent = value.permanent === true;
+        const expiresAt = Math.max(0, Number(value.expiresAt) || 0);
+        if (!permanent && !expiresAt) return;
+        result[id] = { permanent, expiresAt };
+      });
+    return result;
+  }
+
+  function extractShopEntitlements(state) {
+    const result = { version: 1, items: {}, furniture: {}, dress: {} };
+    Object.values(SHOP_ITEMS).forEach((item) => {
+      if (item.type === "permanent" || item.type === "luxury" || item.type === "champion") {
+        if (state.perks && state.perks[item.id]) {
+          result.items[item.id] = { permanent: true, expiresAt: 0 };
+        }
+      } else if (item.type === "theme" && state.perks && state.perks[`theme_${item.theme}`]) {
+        result.items[item.id] = { permanent: true, expiresAt: 0 };
+      }
+    });
+    ((state.room && state.room.furniture) || []).forEach((id) => {
+      if (FURNITURE[id]) result.furniture[id] = { permanent: true, expiresAt: 0 };
+    });
+    Object.entries((state.rentals && state.rentals.furniture) || {}).forEach(([id, expiresAt]) => {
+      if (!FURNITURE[id] || !Number(expiresAt)) return;
+      const current = result.furniture[id] || { permanent: false, expiresAt: 0 };
+      result.furniture[id] = {
+        permanent: current.permanent,
+        expiresAt: Math.max(current.expiresAt, Number(expiresAt)),
+      };
+    });
+    (state.unlocked || []).forEach((name) => {
+      if (/^[a-z][a-z0-9_]{0,39}$/.test(name)) {
+        result.dress[name] = { permanent: true, expiresAt: 0 };
+      }
+    });
+    Object.entries((state.rentals && state.rentals.dress) || {}).forEach(([name, expiresAt]) => {
+      if (!Number(expiresAt)) return;
+      const current = result.dress[name] || { permanent: false, expiresAt: 0 };
+      result.dress[name] = {
+        permanent: current.permanent,
+        expiresAt: Math.max(current.expiresAt, Number(expiresAt)),
+      };
+    });
+    return result;
+  }
+
+  function mergeShopEntitlements(state, remote) {
+    const input = remote && typeof remote === "object" ? remote : {};
+    const items = normalizeEntitlementMap(input.items);
+    const furniture = normalizeEntitlementMap(input.furniture);
+    const dress = normalizeEntitlementMap(input.dress);
+    let changed = 0;
+    Object.entries(items).forEach(([id, entitlement]) => {
+      const item = SHOP_ITEMS[id];
+      if (!item || !entitlement.permanent) return;
+      const key = item.type === "theme" ? `theme_${item.theme}` : item.id;
+      if (!state.perks[key]) {
+        state.perks[key] = true;
+        changed += 1;
+      }
+    });
+    if (!state.room) state.room = { furniture: [] };
+    Object.entries(furniture).forEach(([id, entitlement]) => {
+      if (!FURNITURE[id]) return;
+      if (entitlement.permanent && !state.room.furniture.includes(id)) {
+        state.room.furniture.push(id);
+        changed += 1;
+      }
+      if (entitlement.expiresAt > Number(state.rentals.furniture[id] || 0)) {
+        state.rentals.furniture[id] = entitlement.expiresAt;
+        changed += 1;
+      }
+      if (entitlement.permanent && id === "companion" && state.companion && !state.companion.adopted) {
+        state.companion.adopted = true;
+        changed += 1;
+      }
+    });
+    Object.entries(dress).forEach(([name, entitlement]) => {
+      if (!/^[a-z][a-z0-9_]{0,39}$/.test(name)) return;
+      if (entitlement.permanent && !state.unlocked.includes(name)) {
+        state.unlocked.push(name);
+        changed += 1;
+      }
+      if (entitlement.expiresAt > Number(state.rentals.dress[name] || 0)) {
+        state.rentals.dress[name] = entitlement.expiresAt;
+        changed += 1;
+      }
+    });
+    return { ok: changed > 0, changed };
+  }
+
   function freshState(now) {
     const state = JSON.parse(JSON.stringify(DEFAULT_STATE));
     state.lastTick = now;
@@ -745,7 +1817,7 @@
         wish: raw.wish || null,
         checkin: raw.checkin || { lastDate: "", streak: 0 },
         bank: raw.bank || { amount: 0, dueAt: 0 },
-        gacha: raw.gacha || { pulls: 0 },
+        gacha: raw.gacha || { pulls: 0, history: [] },
         minigame: raw.minigame || { lastPlayedAt: 0 },
         visitor: raw.visitor || null,
         nextVisitorAt: raw.nextVisitorAt || 0,
@@ -840,6 +1912,22 @@
         stickerHidden: Array.isArray(raw.stickerHidden) ? raw.stickerHidden : [],
       });
     },
+    // 12 -> 13：家具 / 装扮限时租赁与排行榜分数
+    12: (raw) => {
+      return Object.assign({}, raw, {
+        version: 13,
+        rentals:
+          raw.rentals && typeof raw.rentals === "object"
+            ? {
+                furniture:
+                  raw.rentals.furniture && typeof raw.rentals.furniture === "object"
+                    ? raw.rentals.furniture
+                    : {},
+                dress: raw.rentals.dress && typeof raw.rentals.dress === "object" ? raw.rentals.dress : {},
+              }
+            : { furniture: {}, dress: {} },
+      });
+    },
   };
 
   function migrate(raw) {
@@ -874,6 +1962,35 @@
     state.unlocked = Array.isArray(raw.unlocked)
       ? raw.unlocked.filter((name) => typeof name === "string").slice(0, 500)
       : [];
+    state.rentals = {
+      furniture: Object.fromEntries(
+        Object.entries((raw.rentals && raw.rentals.furniture) || {})
+          .filter(
+            ([id, expiresAt]) =>
+              /^[a-z0-9_]{1,40}$/.test(id) && Number.isFinite(Number(expiresAt)) && Number(expiresAt) > 0
+          )
+          .slice(0, 100)
+      ),
+      dress: Object.fromEntries(
+        Object.entries((raw.rentals && raw.rentals.dress) || {})
+          .filter(
+            ([id, expiresAt]) =>
+              /^[a-z0-9_]{1,40}$/.test(id) && Number.isFinite(Number(expiresAt)) && Number(expiresAt) > 0
+          )
+          .slice(0, 200)
+      ),
+    };
+    state.leaderboardBoosts = {
+      period: /^\d{4}-\d{2}-\d{2}$/.test(
+        String((raw.leaderboardBoosts && raw.leaderboardBoosts.period) || "")
+      )
+        ? String(raw.leaderboardBoosts.period)
+        : "",
+      activeUntil: num(raw.leaderboardBoosts && raw.leaderboardBoosts.activeUntil, 0, 0),
+      boards: Array.isArray(raw.leaderboardBoosts && raw.leaderboardBoosts.boards)
+        ? [...new Set(raw.leaderboardBoosts.boards.filter((board) => LEADERBOARD_BOARD_IDS.includes(board)))]
+        : [],
+    };
     state.favorites = Array.isArray(raw.favorites)
       ? raw.favorites.filter((name) => typeof name === "string").slice(0, 200)
       : [];
@@ -947,8 +2064,26 @@
       raw.bank && typeof raw.bank === "object"
         ? { amount: num(raw.bank.amount, 0, 0), dueAt: num(raw.bank.dueAt, 0, 0) }
         : { amount: 0, dueAt: 0 };
-    state.gacha =
-      raw.gacha && typeof raw.gacha === "object" ? { pulls: num(raw.gacha.pulls, 0, 0) } : { pulls: 0 };
+    state.gacha = {
+      pulls: raw.gacha && typeof raw.gacha === "object" ? num(raw.gacha.pulls, 0, 0) : 0,
+      history: Array.isArray(raw.gacha && raw.gacha.history)
+        ? raw.gacha.history
+            .filter((entry) => entry && typeof entry === "object" && typeof entry.label === "string")
+            .slice(0, 50)
+            .map((entry) => ({
+              at: num(entry.at, 0, 0, Number.MAX_SAFE_INTEGER),
+              type: String(entry.type || "").slice(0, 20),
+              label: String(entry.label).slice(0, 100),
+              tier: ["common", "rare", "jackpot", "super", "legendary", "mythic"].includes(entry.tier)
+                ? entry.tier
+                : "common",
+              amount: num(entry.amount, 0, 0, 10000000),
+              durationDays: num(entry.durationDays, 0, 0, 7),
+              itemId: String(entry.itemId || "").slice(0, 50),
+              guaranteed: entry.guaranteed === true,
+            }))
+        : [],
+    };
     state.minigame =
       raw.minigame && typeof raw.minigame === "object"
         ? { lastPlayedAt: num(raw.minigame.lastPlayedAt, 0, 0) }
@@ -958,12 +2093,26 @@
     if (!state.nextVisitorAt) state.nextVisitorAt = now + 10 * 60000;
     state.room =
       raw.room && Array.isArray(raw.room.furniture)
-        ? { furniture: raw.room.furniture.slice(0, 20) }
+        ? { furniture: raw.room.furniture.slice(0, 100) }
         : { furniture: [] };
     state.companion =
       raw.companion && typeof raw.companion === "object"
         ? { adopted: raw.companion.adopted === true }
         : { adopted: false };
+    // v12 以前的伙伴只记录 adopted；补进房间资产，升级后不会消失。
+    if (state.companion.adopted && !state.room.furniture.includes("companion")) {
+      state.room.furniture.push("companion");
+    }
+    state.room.furniture = [
+      ...new Set(
+        state.room.furniture.filter(
+          (id) =>
+            typeof id === "string" &&
+            /^[a-z][a-z0-9_]{0,39}$/.test(id) &&
+            !["__proto__", "constructor", "prototype"].includes(id)
+        )
+      ),
+    ].slice(0, 100);
     state.work =
       raw.work && typeof raw.work === "object"
         ? {
@@ -1046,6 +2195,11 @@
     }
     state.settings.analytics = state.settings.analytics === true;
     state.settings.roamSpeed = num(state.settings.roamSpeed, 55, 20, 200);
+    state.settings.equippedFashion =
+      typeof state.settings.equippedFashion === "string" &&
+      /^fashion_[a-z0-9_]{1,32}$/.test(state.settings.equippedFashion)
+        ? state.settings.equippedFashion
+        : "";
     if (state.lastTick > now) state.lastTick = now;
     return state;
   }
@@ -1056,11 +2210,37 @@
       .reduce((sum, item) => sum + (Number(item.bonus) || 0), 0);
   }
 
+  function permanentIncomeBonus(state) {
+    return Object.values(SHOP_ITEMS)
+      .filter((item) => item.type === "permanent" && state.perks && state.perks[item.id])
+      .reduce((sum, item) => sum + (Number(item.bonus) || 0), 0);
+  }
+
+  function activeChampionBoards(state, now) {
+    const boost = state.leaderboardBoosts;
+    if (!boost || Number(boost.activeUntil) <= (now || Date.now())) return [];
+    return LEADERBOARD_BOARD_IDS.filter((board) => (boost.boards || []).includes(board));
+  }
+
+  function championPermanentIncomeBonus(state) {
+    return Object.values(CHAMPION_BY_BOARD).reduce(
+      (sum, item) => sum + (state.perks && state.perks[item.id] ? Number(item.permanentBonus) || 0 : 0),
+      0
+    );
+  }
+
+  function championIncomeBonus(state, now) {
+    return activeChampionBoards(state, now).reduce(
+      (sum, board) =>
+        sum + (Number(CHAMPION_BY_BOARD[board] && CHAMPION_BY_BOARD[board].dailyIncomeBonus) || 0),
+      0
+    );
+  }
+
   /** 当前每秒实际产出的金币（含等级、心情、饱食度、性格与典藏影响）。 */
   function incomePerSecond(state) {
     const base = state.level * BALANCE.baseIncomePerLevel;
     const moodFactor = 1 + BALANCE.moodBonus * (state.mood / 100);
-    const perkFactor = state.perks && state.perks.lucky_cat ? 1.1 : 1;
     const personalityFactor = personalityOf(state).income;
     const prestigeFactor = 1 + (state.prestige ? state.prestige.count : 0) * PRESTIGE_BONUS;
     const buffUntil = (state.buffs && state.buffs.double_income) || 0;
@@ -1073,19 +2253,21 @@
         : 1;
     const roomBonus = roomBonusValue(state);
     const companionBonus =
-      state.companion && state.companion.adopted && !workerUnavailable(state, "companion")
+      ownsFurniture(state, "companion") && !workerUnavailable(state, "companion")
         ? FURNITURE.companion.bonus
         : 0;
     const luxuryBonus = luxuryIncomeBonus(state);
+    const permanentBonus = permanentIncomeBonus(state);
+    const championPermanentBonus = championPermanentIncomeBonus(state);
+    const championBonus = championIncomeBonus(state);
     return (
       base *
       moodFactor *
       feedFactor *
-      perkFactor *
       buffFactor *
       personalityFactor *
       prestigeFactor *
-      (1 + roomBonus + companionBonus + luxuryBonus)
+      (1 + roomBonus + companionBonus + luxuryBonus + permanentBonus + championPermanentBonus + championBonus)
     );
   }
 
@@ -1097,6 +2279,10 @@
       personalityFactor: personalityOf(state).income,
       prestigeFactor: 1 + (state.prestige ? state.prestige.count : 0) * PRESTIGE_BONUS,
       luxuryBonus: luxuryIncomeBonus(state),
+      permanentBonus: permanentIncomeBonus(state),
+      championPermanentBonus: championPermanentIncomeBonus(state),
+      championBonus: championIncomeBonus(state),
+      championBoards: activeChampionBoards(state),
       hungry: state.satiety < BALANCE.hungryThreshold,
       starving: state.satiety <= BALANCE.emptyThreshold,
     };
@@ -1404,9 +2590,11 @@
   }
 
   /** 换装需要商城解锁；普通动作需要训练学会；自定义表情包默认可用。 */
-  function isUnlocked(state, action) {
+  function isUnlocked(state, action, now) {
     if (!action) return false;
-    if (action.category === "dress") return (state.unlocked || []).includes(action.name);
+    if (action.category === "dress") {
+      return (state.unlocked || []).includes(action.name) || rentalActive(state, "dress", action.name, now);
+    }
     if (intimacyActionUnlocked(state, action.name)) return true;
     return isActionLearned(state, action);
   }
@@ -1476,8 +2664,150 @@
     else delete state.stickerLabels[name];
   }
 
-  function dressPrice(index) {
-    return DRESS_BASE_PRICE + index * DRESS_PRICE_STEP;
+  function dressPrice(index, name) {
+    const override = name && DRESS_PRICE_OVERRIDES[name];
+    return Number.isFinite(Number(override))
+      ? Math.max(1, Math.round(Number(override)))
+      : DRESS_BASE_PRICE + index * DRESS_PRICE_STEP;
+  }
+
+  function rentalPrice(basePrice, duration) {
+    const base = Math.max(1, Math.round(Number(basePrice) || 0));
+    if (duration === "permanent") return base * PERMANENT_PRICE_MULTIPLIER;
+    const days = Math.max(1, Math.min(30, Math.round(Number(duration) || 1)));
+    return base * days;
+  }
+
+  function rentalExpiresAt(state, kind, id) {
+    const key = kind === "dress" ? "dress" : "furniture";
+    return Number((state.rentals && state.rentals[key] && state.rentals[key][id]) || 0);
+  }
+
+  function rentalActive(state, kind, id, now) {
+    return rentalExpiresAt(state, kind, id) > (now || Date.now());
+  }
+
+  function isFashionActive(state, item, now) {
+    if (!item || item.type !== "fashion") return false;
+    return (state.unlocked || []).includes(item.id) || rentalActive(state, "dress", item.id, now);
+  }
+
+  function toggleFashion(state, id, now) {
+    const item = SHOP_ITEMS[String(id || "")];
+    if (!isFashionActive(state, item, now)) {
+      return { ok: false, reason: "not-owned" };
+    }
+    state.settings.equippedFashion = state.settings.equippedFashion === item.id ? "" : item.id;
+    return { ok: true, equipped: state.settings.equippedFashion === item.id, item };
+  }
+
+  function ownsFurniture(state, id, now) {
+    return Boolean(
+      (state.room && state.room.furniture.includes(id)) ||
+      (id === "companion" && state.companion && state.companion.adopted) ||
+      rentalActive(state, "furniture", id, now)
+    );
+  }
+
+  function activeFurnitureIds(state, now) {
+    const ids = new Set((state.room && state.room.furniture) || []);
+    if (state.companion && state.companion.adopted) ids.add("companion");
+    Object.entries((state.rentals && state.rentals.furniture) || {}).forEach(([id, expiresAt]) => {
+      if (Number(expiresAt) > (now || Date.now())) ids.add(id);
+    });
+    return [...ids].filter((id) => FURNITURE[id]);
+  }
+
+  function furnitureScore(state, now) {
+    return activeFurnitureIds(state, now).reduce((sum, id) => sum + (FURNITURE[id].score || 0), 0);
+  }
+
+  function dressScore(index, name) {
+    const override = name && DRESS_SCORE_OVERRIDES[name];
+    return Number.isFinite(Number(override))
+      ? Math.max(0, Math.round(Number(override)))
+      : 20 + Math.max(0, Math.round(Number(index) || 0)) * 5;
+  }
+
+  function dressListed(name) {
+    return DRESS_LISTED_OVERRIDES[name] !== false;
+  }
+
+  function fashionScore(state, actions, now) {
+    const dresses = (Array.isArray(actions) ? actions : []).filter(
+      (action) => action && action.category === "dress"
+    );
+    const scoreByName = new Map(
+      dresses.map((action, index) => [action.name, dressScore(index, action.name)])
+    );
+    const ids = new Set(state.unlocked || []);
+    Object.entries((state.rentals && state.rentals.dress) || {}).forEach(([id, expiresAt]) => {
+      if (Number(expiresAt) > (now || Date.now())) ids.add(id);
+    });
+    const dressScoreValue = [...ids].reduce((sum, name) => sum + (scoreByName.get(name) || 0), 0);
+    const fashionScoreValue = Object.values(SHOP_ITEMS)
+      .filter((item) => item.type === "fashion" && isFashionActive(state, item, now))
+      .reduce((sum, item) => sum + (Number(item.score) || 0), 0);
+    return dressScoreValue + fashionScoreValue;
+  }
+
+  function collectionScore(state) {
+    return Object.values(SHOP_ITEMS)
+      .filter((item) => ["luxury", "champion"].includes(item.type) && state.perks[item.id])
+      .reduce((sum, item) => sum + (item.score || 0), 0);
+  }
+
+  function leaderboardScores(state, actions, now) {
+    return {
+      level: Math.max(
+        1,
+        (Number(state.level) || 1) + (Number(state.prestige && state.prestige.legacyLevel) || 0)
+      ),
+      furniture: furnitureScore(state, now),
+      fashion: fashionScore(state, actions, now),
+      collection: collectionScore(state),
+    };
+  }
+
+  function applyChampionAwards(state, awards) {
+    const changed = [];
+    const valid = new Set(CHAMPION_ITEM_IDS);
+    (Array.isArray(awards) ? awards : []).forEach((award) => {
+      const id = typeof award === "string" ? award : award && award.id;
+      if (!valid.has(id) || !state.perks || state.perks[id]) return;
+      state.perks[id] = true;
+      changed.push(id);
+    });
+    return { ok: changed.length > 0, changed };
+  }
+
+  function applyLeaderboardPrivileges(state, payload) {
+    const awards = applyChampionAwards(state, payload && payload.awards);
+    let boostChanged = false;
+    const input = payload && payload.activeBoosts;
+    if (input && typeof input === "object") {
+      const next = {
+        period: /^\d{4}-\d{2}-\d{2}$/.test(String(input.period || "")) ? String(input.period) : "",
+        activeUntil: Math.max(0, Number(input.activeUntil) || 0),
+        boards: [
+          ...new Set(
+            (Array.isArray(input.boards) ? input.boards : []).filter((board) =>
+              LEADERBOARD_BOARD_IDS.includes(board)
+            )
+          ),
+        ],
+      };
+      if (JSON.stringify(next) !== JSON.stringify(state.leaderboardBoosts)) {
+        state.leaderboardBoosts = next;
+        boostChanged = true;
+      }
+    }
+    return {
+      ok: awards.ok || boostChanged,
+      changed: awards.changed,
+      boostChanged,
+      boards: activeChampionBoards(state),
+    };
   }
 
   function activeBuff(state, key, now) {
@@ -1487,24 +2817,55 @@
 
   function purchase(state, item, now) {
     if (!item || !item.id) return { ok: false, reason: "bad-item" };
-    if (item.type === "dress" && isUnlocked(state, { category: "dress", name: item.action })) {
+    if (item.type === "champion") return { ok: false, reason: "not-sale" };
+    if (!state.rentals || typeof state.rentals !== "object") {
+      state.rentals = { furniture: {}, dress: {} };
+    }
+    if (!state.rentals.furniture || typeof state.rentals.furniture !== "object") {
+      state.rentals.furniture = {};
+    }
+    if (!state.rentals.dress || typeof state.rentals.dress !== "object") {
+      state.rentals.dress = {};
+    }
+    const ts = now || Date.now();
+    const requestedDuration =
+      item.rentalDuration === "permanent" || RENTAL_DAYS.includes(Number(item.rentalDuration))
+        ? item.rentalDuration === "permanent"
+          ? "permanent"
+          : Number(item.rentalDuration)
+        : "permanent";
+    const isPurchasableRental = ["dress", "fashion", "furniture", "companion"].includes(item.type);
+    const isTimed = isPurchasableRental && requestedDuration !== "permanent";
+    if (item.type === "dress" && (state.unlocked || []).includes(item.action)) {
+      return { ok: false, reason: "owned" };
+    }
+    if (item.type === "fashion" && (state.unlocked || []).includes(item.id)) {
       return { ok: false, reason: "owned" };
     }
     if (item.type === "permanent" && state.perks[item.id]) return { ok: false, reason: "owned" };
     if (item.type === "theme" && state.perks[`theme_${item.theme}`]) return { ok: false, reason: "owned" };
-    if (item.type === "furniture" && state.room && state.room.furniture.includes(item.furnitureId)) {
+    if (
+      (item.type === "furniture" && state.room && state.room.furniture.includes(item.furnitureId)) ||
+      (item.furnitureId === "companion" && state.companion && state.companion.adopted)
+    ) {
       return { ok: false, reason: "owned" };
     }
-    if (item.type === "companion" && state.companion && state.companion.adopted) {
+    if (
+      item.type === "companion" &&
+      ((state.room && state.room.furniture.includes("companion")) ||
+        (state.companion && state.companion.adopted))
+    ) {
       return { ok: false, reason: "owned" };
     }
     if (item.type === "luxury" && state.perks[item.id]) return { ok: false, reason: "owned" };
-    if (!canAfford(state, item.price)) return { ok: false, reason: "coin" };
+    const price = ["dress", "fashion", "furniture", "companion"].includes(item.type)
+      ? rentalPrice(item.price, requestedDuration)
+      : item.price;
+    if (!canAfford(state, price)) return { ok: false, reason: "coin", price };
 
-    const ts = now || Date.now();
-    state.coins -= item.price;
+    state.coins -= price;
     state.shopStats.purchases += 1;
-    state.shopStats.spent += item.price;
+    state.shopStats.spent += price;
     if (item.type === "food" || item.type === "toy") {
       state.inventory[item.id] = (state.inventory[item.id] || 0) + 1;
     } else if (item.type === "buff") {
@@ -1516,13 +2877,46 @@
       state.perks[`theme_${item.theme}`] = true;
       state.settings.theme = item.theme;
     } else if (item.type === "furniture") {
-      if (!state.room) state.room = { furniture: [] };
-      state.room.furniture.push(item.furnitureId);
+      if (isTimed) {
+        if (!state.rentals) state.rentals = { furniture: {}, dress: {} };
+        const current = rentalExpiresAt(state, "furniture", item.furnitureId);
+        state.rentals.furniture[item.furnitureId] =
+          Math.max(ts, current) + Number(requestedDuration) * 86400000;
+      } else {
+        if (!state.room) state.room = { furniture: [] };
+        if (!state.room.furniture.includes(item.furnitureId)) state.room.furniture.push(item.furnitureId);
+        delete state.rentals.furniture[item.furnitureId];
+      }
     } else if (item.type === "companion") {
-      if (!state.companion) state.companion = { adopted: false };
-      state.companion.adopted = true;
+      if (isTimed) {
+        if (!state.rentals) state.rentals = { furniture: {}, dress: {} };
+        const current = rentalExpiresAt(state, "furniture", "companion");
+        state.rentals.furniture.companion = Math.max(ts, current) + Number(requestedDuration) * 86400000;
+      } else {
+        if (!state.companion) state.companion = { adopted: false };
+        state.companion.adopted = true;
+        if (!state.room.furniture.includes("companion")) state.room.furniture.push("companion");
+        delete state.rentals.furniture.companion;
+      }
     } else if (item.type === "dress") {
-      if (!state.unlocked.includes(item.action)) state.unlocked.push(item.action);
+      if (isTimed) {
+        if (!state.rentals) state.rentals = { furniture: {}, dress: {} };
+        const current = rentalExpiresAt(state, "dress", item.action);
+        state.rentals.dress[item.action] = Math.max(ts, current) + Number(requestedDuration) * 86400000;
+      } else if (!state.unlocked.includes(item.action)) {
+        state.unlocked.push(item.action);
+        delete state.rentals.dress[item.action];
+      }
+    } else if (item.type === "fashion") {
+      if (isTimed) {
+        if (!state.rentals) state.rentals = { furniture: {}, dress: {} };
+        const current = rentalExpiresAt(state, "dress", item.id);
+        state.rentals.dress[item.id] = Math.max(ts, current) + Number(requestedDuration) * 86400000;
+      } else if (!state.unlocked.includes(item.id)) {
+        state.unlocked.push(item.id);
+        delete state.rentals.dress[item.id];
+      }
+      state.settings.equippedFashion = item.id;
     } else if (item.type === "luxury") {
       state.perks[item.id] = true;
     } else if (item.type === "profile") {
@@ -1532,6 +2926,8 @@
     return {
       ok: true,
       item,
+      price,
+      rentalDuration: isPurchasableRental ? (isTimed ? requestedDuration : "permanent") : undefined,
       profile: item.type === "profile" ? profileDetails(state) : undefined,
     };
   }
@@ -2032,91 +3428,264 @@
     return { ok: true, payout: status.payout };
   }
 
-  function rollGachaReward(state, actions, random) {
+  function randomEntry(list, rng) {
+    if (!Array.isArray(list) || !list.length) return null;
+    const roll = clamp(Number(rng()) || 0, 0, 0.999999999);
+    return list[Math.floor(roll * list.length)];
+  }
+
+  function gachaPriceWeight(price) {
+    return 1 / Math.sqrt(Math.max(1, Number(price) || 1));
+  }
+
+  function gachaWeightedEntry(list, rng, weightOf) {
+    if (!Array.isArray(list) || !list.length) return null;
+    const weighted = list
+      .map((value) => ({ value, weight: Math.max(0, Number(weightOf(value)) || 0) }))
+      .filter((entry) => entry.weight > 0);
+    const total = weighted.reduce((sum, entry) => sum + entry.weight, 0);
+    if (!weighted.length || total <= 0) return null;
+    let roll = clamp(Number(rng()) || 0, 0, 0.999999999) * total;
+    for (const entry of weighted) {
+      roll -= entry.weight;
+      if (roll < 0) return entry.value;
+    }
+    return weighted[weighted.length - 1].value;
+  }
+
+  function gachaLimitedDays(rng) {
+    return GACHA_LIMITED_DAYS[
+      Math.floor(clamp(Number(rng()) || 0, 0, 0.999999999) * GACHA_LIMITED_DAYS.length)
+    ];
+  }
+
+  function addGachaRental(state, kind, id, days, now) {
+    const key = kind === "dress" ? "dress" : "furniture";
+    if (!state.rentals || typeof state.rentals !== "object") {
+      state.rentals = { furniture: {}, dress: {} };
+    }
+    if (!state.rentals[key] || typeof state.rentals[key] !== "object") state.rentals[key] = {};
+    const current = rentalExpiresAt(state, key, id);
+    const expiresAt = Math.max(Number(now) || Date.now(), current) + days * DAY_MS;
+    state.rentals[key][id] = expiresAt;
+    return expiresAt;
+  }
+
+  function grantGachaFurniture(state, item, rng, now) {
+    const days = gachaLimitedDays(rng);
+    const expiresAt = addGachaRental(state, "furniture", item.id, days, now);
+    return {
+      ok: true,
+      type: "furniture",
+      rewardCategory: "furniture",
+      label: `${item.icon} ${item.name}（限时 ${days} 天）`,
+      furnitureId: item.id,
+      durationDays: days,
+      expiresAt,
+      temporary: true,
+      tier: "rare",
+    };
+  }
+
+  function grantGachaOutfit(state, source, rng, now) {
+    const days = gachaLimitedDays(rng);
+    const item = source.item;
+    const kind = source.kind;
+    const id = kind === "fashion" ? item.id : item.name;
+    const expiresAt = addGachaRental(state, "dress", id, days, now);
+    if (kind === "fashion") state.settings.equippedFashion = item.id;
+    return {
+      ok: true,
+      type: kind === "fashion" ? "fashion" : "dress",
+      rewardCategory: "outfit",
+      label: `${item.icon || "👗"} ${item.label || item.name}（限时 ${days} 天）`,
+      action: kind === "dress" ? item.name : undefined,
+      itemId: kind === "fashion" ? item.id : undefined,
+      durationDays: days,
+      expiresAt,
+      temporary: true,
+      tier: "rare",
+    };
+  }
+
+  function recordGachaHistory(state, result, now) {
+    if (!state.gacha || typeof state.gacha !== "object") state.gacha = { pulls: 0, history: [] };
+    const history = Array.isArray(state.gacha.history) ? state.gacha.history : [];
+    const entry = {
+      at: Number(now) || Date.now(),
+      type: String(result.type || "reward").slice(0, 20),
+      label: String(result.label || "扭蛋奖励").slice(0, 100),
+      tier: result.tier || "common",
+      amount: Math.max(0, Number(result.amount) || 0),
+      durationDays: Math.max(0, Math.min(7, Number(result.durationDays) || 0)),
+      itemId: String(result.itemId || result.furnitureId || result.action || result.theme || "").slice(0, 50),
+      guaranteed: result.guaranteed === true,
+    };
+    state.gacha.history = [entry, ...history].slice(0, 50);
+    return result;
+  }
+
+  function rollGachaReward(state, actions, random, now) {
     const rng = typeof random === "function" ? random : Math.random;
     const pullNumber = (state.gacha.pulls || 0) + 1;
     state.gacha.pulls = pullNumber;
     const pity = pullNumber % GACHA_PITY_PULLS === 0;
-    const topRoll = pity ? 8605 : Math.floor(rng() * 1000000);
-    const top = GACHA_TOP_PRIZES.find((entry) => topRoll < entry.until);
+    let top;
+    if (pity) {
+      top = randomEntry(GACHA_PITY_PRIZES, rng);
+    } else {
+      const topRoll = Math.floor(rng() * 1000000);
+      top = GACHA_TOP_PRIZES.find((entry) => topRoll < entry.until);
+    }
     if (top) {
       state.coins += top.amount;
       state.totalEarned += top.amount;
-      return {
-        ok: true,
-        type: "coins",
-        label: `${top.tierLabel} · 金币 +${top.amount.toLocaleString("zh-CN")}`,
-        amount: top.amount,
-        tier: top.tier,
-        tierLabel: top.tierLabel,
-        guaranteed: pity,
-      };
+      return recordGachaHistory(
+        state,
+        {
+          ok: true,
+          type: "coins",
+          label: `${top.tierLabel} · 金币 +${top.amount.toLocaleString("zh-CN")}`,
+          amount: top.amount,
+          tier: top.tier,
+          tierLabel: top.tierLabel,
+          guaranteed: pity,
+        },
+        now
+      );
     }
 
     const roll = rng();
     const items = Object.values(SHOP_ITEMS).filter((item) => item.type === "food" || item.type === "toy");
-    const lockedDress = (actions || []).filter(
-      (a) => a.category === "dress" && !state.unlocked.includes(a.name)
+    const dressActions = (Array.isArray(actions) ? actions : []).filter(
+      (action) => action && action.category === "dress"
     );
+    const lockedDress = dressActions
+      .map((action, index) => ({
+        kind: "dress",
+        id: action.name,
+        item: action,
+        price: dressPrice(index, action.name),
+      }))
+      .filter((source) => source.id && dressListed(source.id) && !state.unlocked.includes(source.id));
+    const permanentFurniture = new Set((state.room && state.room.furniture) || []);
+    const timedFurniture = Object.values(FURNITURE).filter(
+      (item) => item.id !== "companion" && item.listed !== false && !permanentFurniture.has(item.id)
+    );
+    const timedOutfits = [
+      ...lockedDress,
+      ...Object.values(SHOP_ITEMS)
+        .filter(
+          (item) => item.type === "fashion" && item.listed !== false && !state.unlocked.includes(item.id)
+        )
+        .map((item) => ({ kind: "fashion", id: item.id, item, price: item.price })),
+    ];
     const themes = Object.values(SHOP_ITEMS).filter(
       (item) => item.type === "theme" && !state.perks[`theme_${item.theme}`]
     );
 
-    if (roll < 0.45) {
+    if (roll < GACHA_BRANCH_ENDS.commonCoins) {
       const amount = 100 + Math.floor(rng() * 401);
       state.coins += amount;
       state.totalEarned += amount;
-      return { ok: true, type: "coins", label: `金币 +${amount}`, amount, tier: "common" };
+      return recordGachaHistory(
+        state,
+        { ok: true, type: "coins", label: `金币 +${amount}`, amount, tier: "common" },
+        now
+      );
     }
-    if (roll < 0.72 && items.length) {
-      const item = items[Math.floor(rng() * items.length) % items.length];
+    if (roll < GACHA_BRANCH_ENDS.consumable && items.length) {
+      const item = randomEntry(items, rng);
       state.inventory[item.id] = (state.inventory[item.id] || 0) + 1;
-      return { ok: true, type: "item", label: `${item.icon} ${item.name}`, tier: "common" };
+      return recordGachaHistory(
+        state,
+        { ok: true, type: "item", label: `${item.icon} ${item.name}`, tier: "common" },
+        now
+      );
     }
-    if (roll < 0.9 && lockedDress.length) {
-      const action = lockedDress[Math.floor(rng() * lockedDress.length) % lockedDress.length];
+    if (roll < GACHA_BRANCH_ENDS.timedFurniture && timedFurniture.length) {
+      return recordGachaHistory(
+        state,
+        grantGachaFurniture(
+          state,
+          gachaWeightedEntry(timedFurniture, rng, (item) => gachaPriceWeight(item.price)),
+          rng,
+          now
+        ),
+        now
+      );
+    }
+    if (roll < GACHA_BRANCH_ENDS.timedOutfit && timedOutfits.length) {
+      return recordGachaHistory(
+        state,
+        grantGachaOutfit(
+          state,
+          gachaWeightedEntry(timedOutfits, rng, (source) => gachaPriceWeight(source.price)),
+          rng,
+          now
+        ),
+        now
+      );
+    }
+    if (roll < GACHA_BRANCH_ENDS.legacyOutfitUnlock && lockedDress.length) {
+      const source = gachaWeightedEntry(lockedDress, rng, (entry) => gachaPriceWeight(entry.price));
+      const action = source.item;
       state.unlocked.push(action.name);
-      return {
-        ok: true,
-        type: "dress",
-        label: `解锁「${action.label}」`,
-        action: action.name,
-        tier: "rare",
-      };
+      return recordGachaHistory(
+        state,
+        {
+          ok: true,
+          type: "dress",
+          label: `解锁「${action.label}」`,
+          action: action.name,
+          tier: "rare",
+        },
+        now
+      );
     }
     if (themes.length) {
-      const theme = themes[Math.floor(rng() * themes.length) % themes.length];
+      const theme = randomEntry(themes, rng);
       state.perks[`theme_${theme.theme}`] = true;
       state.settings.theme = theme.theme;
-      return {
-        ok: true,
-        type: "theme",
-        label: `${theme.icon} ${theme.name}`,
-        theme: theme.theme,
-        tier: "rare",
-      };
+      return recordGachaHistory(
+        state,
+        {
+          ok: true,
+          type: "theme",
+          label: `${theme.icon} ${theme.name}`,
+          theme: theme.theme,
+          tier: "rare",
+        },
+        now
+      );
     }
     const amount = 300;
     state.coins += amount;
     state.totalEarned += amount;
-    return { ok: true, type: "coins", label: `金币 +${amount}`, amount, tier: "common" };
+    return recordGachaHistory(
+      state,
+      { ok: true, type: "coins", label: `金币 +${amount}`, amount, tier: "common" },
+      now
+    );
   }
 
-  /** 扭蛋：普通奖 + 四档金币大奖；每 80 抽至少获得 5000 金币。 */
+  /** 扭蛋：普通奖 + 四档金币大奖；每 80 抽从 50万 / 5万 / 5000 金币中随机保底。 */
   function pullGacha(state, actions, now, random) {
+    const ts = Number.isFinite(Number(now)) ? Number(now) : Date.now();
     if (state.coins < GACHA_PRICE) return { ok: false, reason: "coin" };
     state.coins -= GACHA_PRICE;
-    return rollGachaReward(state, actions, random);
+    return rollGachaReward(state, actions, random, ts);
   }
 
   function pullGachaMany(state, actions, count, now, random) {
+    const ts = Number.isFinite(Number(now)) ? Number(now) : Date.now();
     const draws = Math.max(1, Math.min(10, Math.round(Number(count) || 1)));
     const cost = draws === 10 ? GACHA_TEN_PRICE : draws * GACHA_PRICE;
     if (state.coins < cost) return { ok: false, reason: "coin", cost };
     state.coins -= cost;
     const results = [];
     for (let index = 0; index < draws; index += 1) {
-      results.push(rollGachaReward(state, actions, random));
+      results.push(rollGachaReward(state, actions, random, ts));
     }
     return { ok: true, cost, count: draws, results };
   }
@@ -2134,11 +3703,12 @@
 
   function finishMinigame(state, score, now) {
     const ts = now || Date.now();
-    const reward = Math.max(5, Math.round((Number(score) || 0) * 2));
+    const collected = Math.max(0, Math.round(Number(score) || 0));
+    const reward = collected * MINIGAME_COIN_VALUE;
     state.coins += reward;
     state.totalEarned += reward;
     state.minigame = { lastPlayedAt: ts };
-    awardTrainingPoints(state, minigameTrainingGain(score), "minigame");
+    awardTrainingPoints(state, minigameTrainingGain(collected), "minigame");
     return reward;
   }
 
@@ -2215,7 +3785,7 @@
     if (state.work.jobs.length >= 2) return { ok: false, reason: "full" };
     let source;
     if (worker === "companion") {
-      if (!state.companion || !state.companion.adopted) return { ok: false, reason: "missing" };
+      if (!ownsFurniture(state, "companion", now)) return { ok: false, reason: "missing" };
       source = { label: "伙伴 doro", icon: "🐣" };
     } else if (worker === "visitor") {
       const visitor = visitorStatus(state, now);
@@ -2290,7 +3860,7 @@
   }
 
   function roomBonusValue(state) {
-    const owned = (state.room && state.room.furniture) || [];
+    const owned = activeFurnitureIds(state);
     return owned.reduce((sum, id) => {
       const item = FURNITURE[id];
       return sum + (item && item.id !== "companion" ? item.bonus : 0);
@@ -2311,8 +3881,16 @@
     DIALOGUE,
     GROUP_WEIGHT,
     PERSONALITIES,
+    applyCatalog,
+    extractShopEntitlements,
+    mergeShopEntitlements,
     actionKind,
     SHOP_ITEMS,
+    CHAMPION_BY_BOARD,
+    CHAMPION_ITEM_IDS,
+    LEADERBOARD_BOARD_IDS,
+    CHAMPION_SCORE_MULTIPLIER,
+    CHAMPION_INCOME_BONUS,
     PREFERENCE_ITEM_IDS,
     DAILY_TASKS,
     ACHIEVEMENTS,
@@ -2326,13 +3904,20 @@
     GACHA_PRICE,
     GACHA_TEN_PRICE,
     GACHA_PITY_PULLS,
+    GACHA_PITY_PRIZES,
+    GACHA_RATES,
+    GACHA_LIMITED_DAYS,
     GACHA_TOP_PRIZES,
+    gachaPriceWeight,
     BANK_HOURS,
     BANK_RATE,
     MINIGAME_COOLDOWN_MS,
+    MINIGAME_COIN_VALUE,
     FURNITURE,
     DRESS_BASE_PRICE,
     DRESS_PRICE_STEP,
+    RENTAL_DAYS,
+    PERMANENT_PRICE_MULTIPLIER,
     SCHEDULE_MAX,
     QUIZ_RULES,
     QUIZ_EVENT_COOLDOWN_MS,
@@ -2361,6 +3946,24 @@
     setStickerRandom,
     setStickerLabel,
     dressPrice,
+    dressScore,
+    dressListed,
+    rentalPrice,
+    rentalExpiresAt,
+    rentalActive,
+    isFashionActive,
+    toggleFashion,
+    ownsFurniture,
+    activeFurnitureIds,
+    furnitureScore,
+    fashionScore,
+    collectionScore,
+    leaderboardScores,
+    applyChampionAwards,
+    applyLeaderboardPrivileges,
+    activeChampionBoards,
+    championPermanentIncomeBonus,
+    championIncomeBonus,
     activeBuff,
     purchase,
     useItem,
@@ -2423,6 +4026,7 @@
     incomePerSecond,
     incomeBreakdown,
     luxuryIncomeBonus,
+    permanentIncomeBonus,
     tick,
     settleOffline,
     feed,

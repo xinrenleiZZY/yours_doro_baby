@@ -1,6 +1,7 @@
 FROM node:22-alpine
 WORKDIR /app
 COPY server.js .
+COPY shop-catalog.json .
 RUN mkdir -p /data
 ENV PORT=9500
 ENV DATA_FILE=/data/social.json

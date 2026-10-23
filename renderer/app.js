@@ -83,6 +83,7 @@
     libraryNext: $("library-next"),
     shop: $("shop"),
     shopBalance: $("shop-balance"),
+    shopDuration: $("shop-duration"),
     shopTabs: $("shop-tabs"),
     shopList: $("shop-list"),
     schedule: $("schedule"),
@@ -186,6 +187,7 @@
   let toolStateRevision = 0;
   let updateStatus = null;
   let shopTab = "食物";
+  let shopDuration = "1";
   const libState = { group: "全部", query: "", page: 0 };
   let libraryWindowSize = { width: 600, height: 400 };
   let currentAction = null;
@@ -362,7 +364,7 @@
     if (el.quizChip) {
       const quizEvent = G.quizEventStatus(state, Date.now());
       if (quizEvent.available) {
-        el.quizChip.textContent = "📚 题库事件：答对 +100（去答题）";
+        el.quizChip.textContent = "📚 题库事件：答对 +10000（去答题）";
         el.quizChip.classList.add("show", "quiz");
       } else {
         el.quizChip.classList.remove("show");
@@ -388,7 +390,7 @@
 
   function syncCompanion() {
     const existing = document.getElementById("companion-pet");
-    const adopted = state.companion && state.companion.adopted && !G.workerUnavailable(state, "companion");
+    const adopted = G.ownsFurniture(state, "companion") && !G.workerUnavailable(state, "companion");
     if (adopted && !existing) {
       const img = new Image();
       img.id = "companion-pet";
@@ -398,6 +400,53 @@
     } else if (!adopted && existing) {
       existing.remove();
     }
+  }
+
+  function syncFashionOverlay() {
+    const existing = document.getElementById("fashion-overlay");
+    const item = G.SHOP_ITEMS[state.settings.equippedFashion];
+    const active = G.isFashionActive(state, item);
+    if (!active || !item.overlay) {
+      if (existing) existing.remove();
+      return;
+    }
+    let image = existing;
+    if (!image) {
+      image = new Image();
+      image.id = "fashion-overlay";
+      image.alt = "";
+      image.draggable = false;
+      el.petStack.appendChild(image);
+    }
+    const src = /^(file:|data:|https?:)/.test(item.overlay) ? item.overlay : `../assets/${item.overlay}`;
+    if (image.getAttribute("src") !== src) image.src = src;
+    image.style.left = `${Number(item.overlayLeft) || 50}%`;
+    image.style.top = `${Number(item.overlayTop) || 0}%`;
+    image.style.width = `${Number(item.overlayWidth) || 50}%`;
+  }
+
+  function toggleFashion(id) {
+    const result = G.toggleFashion(state, id, Date.now());
+    if (!result.ok) {
+      toast("这件服装已过期或尚未拥有");
+      return;
+    }
+    syncFashionOverlay();
+    renderShop();
+    toast(result.equipped ? `穿上了「${result.item.name}」` : `脱下了「${result.item.name}」`);
+    speak(result.equipped ? "新衣服怎么样？" : "换回原来的样子啦", 1800);
+    scheduleSave(500);
+  }
+
+  function enforceActionAccess() {
+    const action = byName.get(baseAction);
+    if (!action || G.isUnlocked(state, action)) return;
+    baseAction = IDLE_ACTION;
+    state.settings.baseAction = baseAction;
+    if (!currentAction || currentAction === action.name) setAction(baseAction, { force: true });
+    toast("租赁时装已到期，已换回基础动作");
+    renderLibrary();
+    scheduleSave(500);
   }
 
   // ------------------------------------------------------------- 鼠标命中区域
@@ -633,6 +682,23 @@
       el.panelHint.textContent = `饿得不行了，产出只剩 ${Math.round(G.BALANCE.starvingMultiplier * 100)}%，快喂点饭！`;
     } else if (hint.hungry) {
       el.panelHint.textContent = `肚子饿了，产出只剩 ${Math.round(G.BALANCE.hungryMultiplier * 100)}%`;
+    } else if (hint.championBoards.length) {
+      const labels = {
+        level: "等级榜",
+        furniture: "家具榜",
+        fashion: "时装榜",
+        collection: "典藏榜",
+      };
+      const daily = hint.championBoards
+        .map(
+          (board) =>
+            `${labels[board]} +${Math.round((G.CHAMPION_BY_BOARD[board].dailyIncomeBonus || 0) * 100)}%`
+        )
+        .join("、");
+      const permanent = hint.championPermanentBonus
+        ? ` · 藏品永久 +${Math.round(hint.championPermanentBonus * 100)}%`
+        : "";
+      el.panelHint.textContent = `👑 永耀：${daily}${permanent}`;
     } else if (baseAction !== IDLE_ACTION)
       el.panelHint.textContent = `当前常驻动作：${actionInfo(baseAction).label}`;
     else el.panelHint.textContent = "右键 doro 可以打开菜单";
@@ -718,7 +784,7 @@
 
   function dressIndex(name) {
     return actions
-      .filter((action) => action.category === "dress")
+      .filter((action) => action.category === "dress" && G.dressListed(action.name))
       .findIndex((action) => action.name === name);
   }
 
@@ -772,7 +838,8 @@
     items.slice(start, start + LIB_PAGE_SIZE).forEach((action) => {
       const button = document.createElement("button");
       const unlocked = G.isUnlocked(state, action);
-      const price = action.category === "dress" ? G.dressPrice(Math.max(0, dressIndex(action.name))) : 0;
+      const price =
+        action.category === "dress" ? G.dressPrice(Math.max(0, dressIndex(action.name)), action.name) : 0;
       const trainingLock = G.isTrainingEligible(action) && !G.isUnlocked(state, action);
       const trainingPrice = trainingLock ? G.trainingCost(action) : 0;
       button.className = `lib-item${action.name === baseAction ? " active" : ""}${unlocked ? "" : " locked"}`;
@@ -1081,7 +1148,7 @@
           : `已存 ${G.formatCoins(bank.amount)}，约 ${Math.ceil(bank.secondsLeft / 3600)} 小时后可取 ${G.formatCoins(bank.payout)}`
         : `8 小时 15% 利息，最低 200 金币`;
 
-    const room = (state.room && state.room.furniture) || [];
+    const room = G.activeFurnitureIds(state);
     el.growthRoom.textContent = room.length
       ? `房间：${room.map((id) => (G.FURNITURE[id] ? G.FURNITURE[id].icon : "")).join(" ")}（合计 +${Math.round(
           G.roomBonusValue(state) * 100
@@ -1090,8 +1157,7 @@
 
     const jobs = G.workStatus(state);
     const visitor = G.visitorStatus(state);
-    const companionHome =
-      state.companion && state.companion.adopted && !G.workerUnavailable(state, "companion");
+    const companionHome = G.ownsFurniture(state, "companion") && !G.workerUnavailable(state, "companion");
     el.growthWorkCount.textContent = `${jobs.length}/2 工位 · 碎片 ${state.work.fragments}`;
     el.growthWork.innerHTML = "";
     const workSection = document.createElement("div");
@@ -1127,7 +1193,7 @@
       workSection.appendChild(row);
     };
     if (visitor) addWorker("visitor", visitor.icon, visitor.label, true);
-    if (state.companion && state.companion.adopted) {
+    if (G.ownsFurniture(state, "companion")) {
       addWorker(
         "companion",
         "🐣",
@@ -1135,7 +1201,7 @@
         companionHome
       );
     }
-    if (!visitor && !(state.companion && state.companion.adopted)) {
+    if (!visitor && !G.ownsFurniture(state, "companion")) {
       const empty = document.createElement("div");
       empty.className = "work-job";
       empty.textContent = "等待访客，或去商城领养伙伴 doro";
@@ -1238,7 +1304,7 @@
     el.minigameStatus.textContent = mini.running
       ? "进行中…"
       : status.ready
-        ? "15 秒，点金币得分"
+        ? `15 秒，每枚金币 +${G.MINIGAME_COIN_VALUE.toLocaleString("zh-CN")}`
         : `冷却 ${Math.ceil(status.secondsLeft / 60)} 分钟`;
     el.minigameStart.disabled = mini.running || !status.ready;
     el.minigameScore.textContent = String(mini.score);
@@ -1487,12 +1553,17 @@
     applyTheme();
     applyVisualScale();
     syncCompanion();
+    syncFashionOverlay();
     updateHud(0);
     updateMenu();
     updateEventChips();
     if (growthOpen) renderGrowth();
     if (G.isStickerHidden(state, byName.get(baseAction))) baseAction = IDLE_ACTION;
-    if (!byName.has(currentAction) || G.isStickerHidden(state, byName.get(currentAction))) {
+    if (
+      !byName.has(currentAction) ||
+      !G.isUnlocked(state, byName.get(currentAction)) ||
+      G.isStickerHidden(state, byName.get(currentAction))
+    ) {
       setAction(baseAction, { force: true });
     } else {
       const action = byName.get(currentAction);
@@ -1518,7 +1589,7 @@
   }
 
   // ------------------------------------------------------------- 商城
-  const SHOP_TABS = ["食物", "玩具", "增益", "主题", "家具", "装扮", "典藏"];
+  const SHOP_TABS = ["食物", "家具", "装扮", "典藏", "玩具", "增益", "主题"];
 
   function dressShopItems() {
     return actions
@@ -1528,45 +1599,108 @@
         name: action.label,
         type: "dress",
         action: action.name,
-        price: G.dressPrice(index),
+        price: G.dressPrice(index, action.name),
+        score: G.dressScore(index, action.name),
         icon: "👗",
-        desc: G.isUnlocked(state, action) ? "已解锁" : "解锁后可在动作库选用",
+        desc: "时装榜积分 +" + G.dressScore(index, action.name),
       }));
   }
 
+  function fashionShopItems() {
+    return Object.values(G.SHOP_ITEMS)
+      .filter((item) => item.type === "fashion" && item.listed !== false)
+      .map((item) => ({ ...item, id: `fashion:${item.id}`, fashionId: item.id }));
+  }
+
   function shopCatalog(tab) {
-    if (tab === "装扮") return dressShopItems();
+    if (tab === "装扮") return [...fashionShopItems(), ...dressShopItems()];
     if (tab === "家具") {
-      return Object.values(G.FURNITURE).map((item) => ({
-        id: `furniture:${item.id}`,
-        name: item.name,
-        type: item.id === "companion" ? "companion" : "furniture",
-        furnitureId: item.id,
-        price: item.price,
-        icon: item.icon,
-        desc: item.desc,
-      }));
+      return Object.values(G.FURNITURE)
+        .filter((item) => item.listed !== false)
+        .map((item) => ({
+          id: `furniture:${item.id}`,
+          name: item.name,
+          type: item.id === "companion" ? "companion" : "furniture",
+          furnitureId: item.id,
+          price: item.price,
+          score: item.score,
+          icon: item.icon,
+          desc: item.desc,
+        }));
     }
     const map = {
       食物: ["food"],
       玩具: ["toy"],
       增益: ["buff", "permanent"],
       主题: ["theme"],
-      典藏: ["luxury", "profile"],
+      典藏: ["luxury", "champion", "profile"],
     };
-    return Object.values(G.SHOP_ITEMS).filter((item) => (map[tab] || []).includes(item.type));
+    return Object.values(G.SHOP_ITEMS).filter(
+      (item) => item.listed !== false && (map[tab] || []).includes(item.type)
+    );
   }
 
   function shopOwned(item) {
-    if (item.type === "dress") return G.isUnlocked(state, { category: "dress", name: item.action }) ? 1 : 0;
+    if (item.type === "dress") {
+      return state.unlocked.includes(item.action) || G.rentalActive(state, "dress", item.action) ? 1 : 0;
+    }
+    if (item.type === "fashion") {
+      return G.isFashionActive(state, G.SHOP_ITEMS[item.fashionId]) ? 1 : 0;
+    }
     if (item.type === "permanent") return state.perks[item.id] ? 1 : 0;
     if (item.type === "luxury") return state.perks[item.id] ? 1 : 0;
+    if (item.type === "champion") return state.perks[item.id] ? 1 : 0;
     if (item.type === "theme") return state.perks[`theme_${item.theme}`] ? 1 : 0;
     if (item.type === "furniture") {
-      return state.room && state.room.furniture.includes(item.furnitureId) ? 1 : 0;
+      return G.ownsFurniture(state, item.furnitureId) ? 1 : 0;
     }
-    if (item.type === "companion") return state.companion && state.companion.adopted ? 1 : 0;
+    if (item.type === "companion") return G.ownsFurniture(state, "companion") ? 1 : 0;
     return state.inventory[item.id] || 0;
+  }
+
+  function shopPermanentOwned(item) {
+    if (item.type === "dress") return state.unlocked.includes(item.action);
+    if (item.type === "fashion") return state.unlocked.includes(item.fashionId);
+    if (item.type === "furniture") return state.room.furniture.includes(item.furnitureId);
+    if (item.type === "companion") return Boolean(state.companion && state.companion.adopted);
+    if (["permanent", "luxury", "champion"].includes(item.type)) return Boolean(state.perks[item.id]);
+    if (item.type === "theme") return Boolean(state.perks[`theme_${item.theme}`]);
+    return false;
+  }
+
+  function isRentalItem(item) {
+    return ["dress", "fashion", "furniture", "companion"].includes(item.type);
+  }
+
+  function rentalKindOf(item) {
+    return item.type === "dress" || item.type === "fashion" ? "dress" : "furniture";
+  }
+
+  function rentalIdOf(item) {
+    return item.type === "dress"
+      ? item.action
+      : item.type === "fashion"
+        ? item.fashionId
+        : item.furnitureId || item.id;
+  }
+
+  function rentalRemaining(stateItem, now) {
+    const until = G.rentalExpiresAt(state, rentalKindOf(stateItem), rentalIdOf(stateItem));
+    if (until <= now) return "";
+    const minutes = Math.max(1, Math.ceil((until - now) / 60000));
+    return minutes >= 1440
+      ? `${Math.ceil(minutes / 1440)} 天`
+      : minutes >= 60
+        ? `${Math.ceil(minutes / 60)} 小时`
+        : `${minutes} 分钟`;
+  }
+
+  function currentShopPrice(item) {
+    return isRentalItem(item) ? G.rentalPrice(item.price, shopDuration) : item.price;
+  }
+
+  function durationText() {
+    return shopDuration === "permanent" ? "永久" : `${shopDuration} 日`;
   }
 
   function applyTheme() {
@@ -1599,6 +1733,11 @@
 
   function renderShop() {
     el.shopBalance.textContent = `${G.formatCoins(state.coins)} 金币`;
+    const supportsRental = shopTab === "家具" || shopTab === "装扮";
+    if (el.shopDuration) {
+      el.shopDuration.hidden = !supportsRental;
+      el.shopDuration.value = shopDuration;
+    }
     el.shopTabs.innerHTML = "";
     SHOP_TABS.forEach((tab) => {
       const button = document.createElement("button");
@@ -1614,6 +1753,10 @@
     el.shopList.innerHTML = "";
     shopCatalog(shopTab).forEach((item) => {
       const owned = shopOwned(item);
+      const permanentOwned = shopPermanentOwned(item);
+      const timedOwned =
+        isRentalItem(item) && !permanentOwned && G.rentalActive(state, rentalKindOf(item), rentalIdOf(item));
+      const priceValue = currentShopPrice(item);
       const row = document.createElement("div");
       row.className = "shop-item";
 
@@ -1634,35 +1777,49 @@
       const desc = document.createElement("div");
       desc.className = "shop-desc";
       const buffUntil = item.type === "buff" ? G.activeBuff(state, item.buff) : 0;
+      const remaining = timedOwned ? rentalRemaining(item, Date.now()) : "";
       desc.textContent =
-        buffUntil > Date.now()
-          ? `${item.desc}（剩余 ${Math.ceil((buffUntil - Date.now()) / 60000)} 分钟）`
-          : item.desc;
+        item.type === "champion"
+          ? `${item.desc} · 每日榜一限定，不可购买`
+          : buffUntil > Date.now()
+            ? `${item.desc}（剩余 ${Math.ceil((buffUntil - Date.now()) / 60000)} 分钟）`
+            : timedOwned
+              ? `${item.desc} · 有效期内剩余 ${remaining}`
+              : item.score
+                ? `${item.desc} · 榜单积分 +${item.score}`
+                : item.desc;
       main.append(name, desc);
 
       const price = document.createElement("span");
       price.className = "shop-price";
-      price.textContent = `${G.formatCoins(item.price)} 币`;
+      price.textContent =
+        item.type === "champion"
+          ? "榜单限定"
+          : `${G.formatCoins(priceValue)} 币${isRentalItem(item) ? ` / ${durationText()}` : ""}`;
 
-      const ownedPermanently =
-        item.type === "dress" ||
-        item.type === "permanent" ||
-        item.type === "luxury" ||
-        item.type === "furniture" ||
-        item.type === "companion";
       const buy = document.createElement("button");
-      if (item.type === "theme") {
+      if (item.type === "champion") {
+        buy.textContent = permanentOwned ? "已获得" : "榜单限定";
+        buy.disabled = true;
+      } else if (item.type === "theme") {
         const equipped = state.settings.theme === item.theme;
         buy.textContent = equipped ? "使用中" : owned ? "使用" : "购买";
-        buy.disabled = equipped || (!owned && state.coins < item.price);
+        buy.disabled = equipped || (!owned && state.coins < priceValue);
         buy.addEventListener("click", () => (owned ? equipTheme(item.theme) : buyShopItem(item)));
       } else {
-        buy.textContent = ownedPermanently && owned ? "已拥有" : "购买";
-        buy.disabled = (ownedPermanently && owned > 0) || state.coins < item.price;
+        buy.textContent = permanentOwned ? "已永久" : timedOwned ? "续费" : "购买";
+        buy.disabled = permanentOwned || state.coins < priceValue;
         buy.addEventListener("click", () => buyShopItem(item));
       }
 
       row.append(icon, main, price, buy);
+      if (item.type === "fashion" && owned > 0) {
+        const wear = document.createElement("button");
+        wear.className = "use";
+        wear.textContent = state.settings.equippedFashion === item.fashionId ? "脱下" : "穿戴";
+        wear.addEventListener("click", () => toggleFashion(item.fashionId));
+        row.appendChild(wear);
+      }
       if ((item.type === "food" || item.type === "toy") && owned > 0) {
         const use = document.createElement("button");
         use.className = "use";
@@ -1675,21 +1832,25 @@
   }
 
   function buyShopItem(item) {
-    const result = G.purchase(state, item, Date.now());
+    const duration = isRentalItem(item) ? shopDuration : undefined;
+    const result = G.purchase(state, duration ? { ...item, rentalDuration: duration } : item, Date.now());
     if (!result.ok) {
       toast(result.reason === "coin" ? "金币不够，再搬会儿砖吧" : "已经拥有啦");
       return;
     }
-    toast(`买到了：${item.name}`);
+    const timed = result.rentalDuration && result.rentalDuration !== "permanent";
+    toast(timed ? `租到了：${item.name}（${result.rentalDuration} 日）` : `买到了：${item.name}`);
     playSound("buy");
     if (item.type === "dress") {
-      speak(`解锁了「${item.name}」，去动作库换上吧`, 2600);
+      speak(timed ? `租到了「${item.name}」，有效期内可以去动作库换上` : `永久解锁了「${item.name}」`, 2600);
       renderLibrary();
     } else if (item.type === "companion") {
       syncCompanion();
       speak("伙伴来啦，以后一起搬砖", 2400);
     } else if (item.type === "furniture") {
       speak(`「${item.name}」放好啦`, 2000);
+    } else if (item.type === "fashion") {
+      speak(`穿上了「${item.name}」，怎么样？`, 2200);
     } else if (item.type === "theme") {
       applyTheme();
       speak(`${item.name} 已启用`, 2200);
@@ -1706,6 +1867,7 @@
     }
     updateHud(0);
     renderShop();
+    syncFashionOverlay();
     updateMenu();
     if (growthOpen) renderGrowth();
     scheduleSave(800);
@@ -1864,6 +2026,9 @@
       const before = state.coins;
       G.tick(state, elapsed);
       api.syncToolState(state, toolStateRevision);
+      syncCompanion();
+      syncFashionOverlay();
+      enforceActionAccess();
       const currentHour = new Date().getHours();
       if (currentHour !== lastHourlyCheck) {
         lastHourlyCheck = currentHour;
@@ -2610,6 +2775,12 @@
     $("library-close").addEventListener("click", closeLibrary);
 
     $("shop-close").addEventListener("click", closeSidePanels);
+    if (el.shopDuration) {
+      el.shopDuration.addEventListener("change", () => {
+        shopDuration = el.shopDuration.value === "permanent" ? "permanent" : el.shopDuration.value;
+        renderShop();
+      });
+    }
     $("schedule-close").addEventListener("click", closeSidePanels);
     $("config-close").addEventListener("click", closeSidePanels);
     $("growth-close").addEventListener("click", closeSidePanels);
@@ -2969,6 +3140,13 @@
       speak(payload.text, payload.ms || 2000);
     });
 
+    api.onShopCatalogUpdated((payload) => {
+      if (!payload || !payload.catalog) return;
+      G.applyCatalog(payload.catalog);
+      if (shopOpen) renderShop();
+      renderLibrary();
+    });
+
     window.addEventListener("beforeunload", () => {
       saveNow();
     });
@@ -2982,6 +3160,9 @@
   // ------------------------------------------------------------- 启动
   async function init() {
     const loaded = await api.load();
+    if (loaded.shopCatalog && loaded.shopCatalog.catalog) {
+      G.applyCatalog(loaded.shopCatalog.catalog);
+    }
     state = G.hydrate(loaded.save, loaded.now);
     applyTheme();
     applyVisualScale();
@@ -3040,6 +3221,7 @@
     scheduleWish();
     collectWork(true);
     syncCompanion();
+    syncFashionOverlay();
     setInterval(() => {
       G.maybeVisitor(state, Date.now());
       collectWork(false);
@@ -3118,6 +3300,12 @@
         forceVisitor: () => {
           G.spawnVisitor(state, Date.now());
           updateEventChips();
+        },
+        equipFashionForTest: (id) => {
+          if (!state.unlocked.includes(id)) state.unlocked.push(id);
+          state.settings.equippedFashion = id;
+          syncFashionOverlay();
+          return Boolean(document.getElementById("fashion-overlay"));
         },
         finishWork: () => {
           state.work.jobs.forEach((job) => {

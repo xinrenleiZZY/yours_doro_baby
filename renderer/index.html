@@ -90,7 +90,7 @@
       <div class="menu-title">陪伴</div>
       <div class="menu-group">
         <button data-cmd="chat"><span>和 doro 聊天</span><em>AI</em></button>
-        <button data-cmd="social"><span>好友与个人资料</span><em>局域网</em></button>
+        <button data-cmd="social"><span>社交与排行榜</span><em>局域网</em></button>
       </div>
       <div class="menu-title">换个动作</div>
       <div class="menu-group">
@@ -111,7 +111,7 @@
       <div class="menu-title">学习</div>
       <div class="menu-group">
         <button data-cmd="quiz"><span>题库答题</span><em id="menu-quiz-summary"></em></button>
-        <button data-cmd="daily-question"><span>每日一题</span><em>答对 +100</em></button>
+        <button data-cmd="daily-question"><span>每日一题</span><em>答对 +10000</em></button>
       </div>
       <div class="menu-title">设置</div>
       <div class="menu-group">
@@ -273,7 +273,7 @@
       </header>
       <div class="gacha-body">
         <div id="gacha-machine" class="gacha-machine"><span>🎰</span></div>
-        <p class="gacha-desc">500 / 次 · 十连 4500 · 最高 1 千万金币</p>
+        <p class="gacha-desc">500 / 次 · 十连 4500 · 家具 / 装扮限时 1–7 天</p>
         <div class="gacha-stats">
           <span>已抽 <b id="gacha-pulls">0</b></span>
           <span>距保底 <b id="gacha-pity">80</b></span>
@@ -303,6 +303,13 @@
       <header>
         <span>商城</span>
         <em id="shop-balance">0 金币</em>
+        <select id="shop-duration" class="shop-duration" title="购买时长">
+          <option value="1">1 日</option>
+          <option value="3">3 日</option>
+          <option value="7">7 日</option>
+          <option value="30">30 日</option>
+          <option value="permanent">永久</option>
+        </select>
         <button id="shop-close" title="收起">✕</button>
       </header>
       <div class="lib-tabs" id="shop-tabs"></div>

@@ -42,6 +42,22 @@ body.tool-window select {
   -webkit-app-region: no-drag;
 }
 
+body.tool-window .shop-duration {
+  max-width: 96px;
+  height: 30px;
+  padding: 3px 7px;
+  border: 1px solid rgba(226, 96, 154, 0.25);
+  border-radius: 9px;
+  outline: none;
+  background: #fff;
+  color: var(--pink-deep);
+  font: 11px var(--font);
+}
+
+body.tool-window .shop-duration[hidden] {
+  display: none;
+}
+
 body.tool-window .shop-list,
 body.tool-window .sticker-grid {
   min-height: 0;
@@ -51,6 +67,11 @@ body.tool-window .lib-tabs {
   flex: none;
   max-height: 58px;
   overflow-y: auto;
+}
+
+body.tool-window #shop-tabs {
+  max-height: none;
+  overflow: visible;
 }
 
 body.tool-window .shop-item {

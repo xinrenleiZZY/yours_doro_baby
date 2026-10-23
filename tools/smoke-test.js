@@ -98,6 +98,133 @@ const socialFixture = {
   incoming: [],
   outgoing: [],
 };
+const socialGroupsFixture = [
+  {
+    id: "grp_123456789abc",
+    name: "摸鱼小队",
+    ownerId: socialFixture.profile.gameId,
+    owner: socialFixture.profile,
+    memberIds: [socialFixture.profile.gameId, socialFixture.friends[0].gameId],
+    members: [socialFixture.profile, socialFixture.friends[0]],
+    memberCount: 2,
+    isOwner: true,
+    createdAt: Date.now() - 3600000,
+    updatedAt: Date.now() - 60000,
+  },
+];
+const socialMessagesFixture = [
+  {
+    id: "msg_test_direct",
+    kind: "direct",
+    senderId: socialFixture.friends[0].gameId,
+    peerId: socialFixture.profile.gameId,
+    text: "今天也在认真摸鱼",
+    createdAt: Date.now() - 120000,
+    mine: false,
+    sender: socialFixture.friends[0],
+  },
+];
+const leaderboardFixture = {
+  ok: true,
+  period: {
+    day: "2026-10-22",
+    nextResetAt: Date.now() + 6 * 3600 * 1000,
+    timezone: "Asia/Shanghai",
+  },
+  boards: {
+    level: {
+      entries: [
+        {
+          rank: 1,
+          gameId: "doro_1a2b3c4d",
+          nickname: "测试小鱼",
+          avatar: "🐣",
+          score: 32,
+          isSelf: true,
+        },
+        {
+          rank: 2,
+          gameId: "doro_5e6f7a8b",
+          nickname: "泡面朋友",
+          avatar: "🐈",
+          score: 24,
+          isSelf: false,
+        },
+      ],
+      self: {
+        rank: 1,
+        gameId: "doro_1a2b3c4d",
+        nickname: "测试小鱼",
+        avatar: "🐣",
+        score: 32,
+      },
+    },
+    furniture: { entries: [], self: null },
+    fashion: { entries: [], self: null },
+    collection: { entries: [], self: null },
+  },
+  winners: {
+    level: {
+      day: "2026-10-21",
+      gameId: "doro_5e6f7a8b",
+      nickname: "泡面朋友",
+      avatar: "🐈",
+      score: 30,
+    },
+  },
+  definitions: {
+    level: {
+      label: "等级榜",
+      rewardId: "rank_level_crown",
+      rewardName: "摸鱼等级王冠",
+      rewardIcon: "👑",
+      effectName: "永耀",
+      scoreMultiplier: 1.2,
+      permanentIncomeBonus: 0.05,
+      dailyIncomeBonus: 1,
+    },
+    furniture: {
+      label: "家具榜",
+      rewardId: "rank_furniture_trophy",
+      rewardName: "家具大师奖杯",
+      rewardIcon: "🏆",
+      effectName: "永耀",
+      scoreMultiplier: 1.2,
+      permanentIncomeBonus: 0,
+      dailyIncomeBonus: 2,
+    },
+    fashion: {
+      label: "时装榜",
+      rewardId: "rank_fashion_crown",
+      rewardName: "时装之星皇冠",
+      rewardIcon: "💎",
+      effectName: "永耀",
+      scoreMultiplier: 1.2,
+      permanentIncomeBonus: 0,
+      dailyIncomeBonus: 2,
+    },
+    collection: {
+      label: "典藏榜",
+      rewardId: "rank_collection_obelisk",
+      rewardName: "典藏守护方尖碑",
+      rewardIcon: "🗿",
+      effectName: "永耀",
+      scoreMultiplier: 1.2,
+      permanentIncomeBonus: 0,
+      dailyIncomeBonus: 2,
+    },
+  },
+  awards: [],
+  activeBoosts: {
+    effectName: "永耀",
+    period: "2026-10-22",
+    activeUntil: Date.now() + 6 * 3600 * 1000,
+    scoreMultiplier: 1.2,
+    permanentIncomeBonuses: { level: 0.05, furniture: 0, fashion: 0, collection: 0 },
+    dailyIncomeBonuses: { level: 1, furniture: 2, fashion: 2, collection: 2 },
+    boards: ["level"],
+  },
+};
 const calls = {
   setPosition: [],
   clickThrough: [],
@@ -113,6 +240,9 @@ const calls = {
   aiClosed: 0,
   socialCopies: [],
   socialClosed: 0,
+  socialMessageSends: 0,
+  socialGroupsCreated: 0,
+  leaderboardRefreshes: 0,
 };
 const results = [];
 const lines = [];
@@ -300,7 +430,126 @@ function registerStubs() {
     nickname: socialFixture.profile.nickname,
   }));
   ipcMain.handle("social:get", () => ({ ok: true, ...socialFixture }));
+  ipcMain.handle("social:conversations", () => {
+    return {
+      ok: true,
+      conversations: [
+        {
+          kind: "direct",
+          id: socialFixture.friends[0].gameId,
+          title: socialFixture.friends[0].nickname,
+          avatar: socialFixture.friends[0].avatar,
+          online: true,
+          peer: socialFixture.friends[0],
+          unread: 1,
+          lastMessage: socialMessagesFixture[0],
+          lastAt: socialMessagesFixture[0].createdAt,
+        },
+        ...socialGroupsFixture.map((item) => ({
+          kind: "group",
+          id: item.id,
+          title: item.name,
+          avatar: "👥",
+          online: true,
+          group: item,
+          unread: 0,
+          lastMessage: null,
+          lastAt: item.updatedAt,
+        })),
+      ],
+      groups: socialGroupsFixture,
+    };
+  });
+  ipcMain.handle("social:messages", (_event, payload) => {
+    const messages =
+      payload.kind === "group"
+        ? socialMessagesFixture.filter(
+            (message) => message.kind === "group" && message.groupId === payload.targetId
+          )
+        : socialMessagesFixture.filter(
+            (message) =>
+              message.kind === "direct" &&
+              (message.senderId === payload.targetId || message.peerId === payload.targetId)
+          );
+    return {
+      ok: true,
+      conversation: {
+        kind: payload.kind,
+        id: payload.targetId,
+        title:
+          payload.kind === "group"
+            ? (socialGroupsFixture.find((group) => group.id === payload.targetId) || {}).name
+            : socialFixture.friends[0].nickname,
+      },
+      messages,
+    };
+  });
+  ipcMain.handle("social:send-message", (_event, payload) => {
+    calls.socialMessageSends += 1;
+    const message = {
+      id: `msg_test_${calls.socialMessageSends}`,
+      kind: payload.kind,
+      senderId: socialFixture.profile.gameId,
+      ...(payload.kind === "group" ? { groupId: payload.groupId } : { peerId: payload.peerId }),
+      text: payload.text,
+      createdAt: Date.now(),
+      mine: true,
+      sender: socialFixture.profile,
+    };
+    socialMessagesFixture.push(message);
+    return { ok: true, message };
+  });
+  ipcMain.handle("social:create-group", (_event, payload) => {
+    calls.socialGroupsCreated += 1;
+    const group = {
+      id: `grp_${String(calls.socialGroupsCreated).padStart(12, "0")}`,
+      name: payload.name,
+      ownerId: socialFixture.profile.gameId,
+      owner: socialFixture.profile,
+      memberIds: [socialFixture.profile.gameId, ...(payload.memberIds || [])],
+      members: [socialFixture.profile, socialFixture.friends[0]].slice(0, 2),
+      memberCount: 1 + (payload.memberIds || []).length,
+      isOwner: true,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    socialGroupsFixture.push(group);
+    return { ok: true, group };
+  });
+  ipcMain.handle("social:rename-group", (_event, payload) => {
+    const group = socialGroupsFixture.find((item) => item.id === payload.groupId);
+    if (group) group.name = payload.name;
+    return group ? { ok: true, group } : { ok: false, error: "not-found" };
+  });
+  ipcMain.handle("social:add-group-member", () => ({ ok: true }));
+  ipcMain.handle("social:remove-group-member", () => ({ ok: true }));
+  ipcMain.handle("social:leave-group", () => ({ ok: true }));
+  ipcMain.handle("social:disband-group", () => ({ ok: true }));
   ipcMain.handle("social:presence", () => ({ ok: true }));
+  ipcMain.handle("social:recovery-get", () => ({
+    ok: true,
+    gameId: socialFixture.profile.gameId,
+    recoveryCode: "TEST-RECOVERY-CODE",
+  }));
+  ipcMain.handle("social:leaderboard", () => {
+    calls.leaderboardRefreshes += 1;
+    return JSON.parse(JSON.stringify(leaderboardFixture));
+  });
+  ipcMain.handle("shop:status", () => ({
+    ok: true,
+    configured: true,
+    catalog: {
+      version: "test-catalog",
+      source: "docker",
+      state: "ready",
+      catalog: { version: "test-catalog", items: {}, furniture: {} },
+    },
+  }));
+  ipcMain.handle("shop:sync", () => ({
+    ok: true,
+    catalog: { version: "test-catalog", source: "docker", state: "ready" },
+    entitlements: { ok: true },
+  }));
   ipcMain.handle("social:search", () => ({
     ok: true,
     users: [
@@ -811,10 +1060,27 @@ async function runScenarios(win) {
       open: document.getElementById("shop").classList.contains("show"),
       items: document.querySelectorAll(".shop-item").length,
       tabs: document.querySelectorAll("#shop-tabs button").length,
+      tabLabels: [...document.querySelectorAll("#shop-tabs button")].map((button) => button.textContent),
+      dressTabVisible: (() => {
+        const button = [...document.querySelectorAll("#shop-tabs button")].find((node) => node.textContent === "装扮");
+        if (!button) return false;
+        const rect = button.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0 && rect.top >= 0 && rect.bottom <= innerHeight;
+      })(),
       balance: document.getElementById("shop-balance").textContent
     })`
   );
-  check("商城能打开并列出货物", shop.open && shop.items >= 4 && shop.tabs === 7, JSON.stringify(shop));
+  check(
+    "商城能打开并直接看到装扮入口",
+    shop.open &&
+      shop.items >= 4 &&
+      shop.tabs === 7 &&
+      shop.tabLabels.includes("家具") &&
+      shop.tabLabels.includes("装扮") &&
+      shop.tabLabels.includes("典藏") &&
+      shop.dressTabVisible,
+    JSON.stringify(shop)
+  );
 
   const beforeBuy = await getState(win);
   await js(win, `document.querySelector(".shop-item button").click()`);
@@ -848,8 +1114,87 @@ async function runScenarios(win) {
     `[...document.querySelectorAll("#shop-tabs button")].find((b) => b.textContent === "装扮").click()`
   );
   await wait(120);
-  const dressCount = await js(win, `document.querySelectorAll(".shop-item").length`);
-  check("商城有装扮分类", dressCount > 5, `${dressCount} 件`);
+  const dressCatalog = await js(
+    win,
+    `({
+      count: document.querySelectorAll(".shop-item").length,
+      hasStarlightHat: [...document.querySelectorAll(".shop-name")].some((n) => n.textContent.includes("星辉礼帽")),
+      hasSpaceHelmet: [...document.querySelectorAll(".shop-name")].some((n) => n.textContent.includes("太空头盔")),
+      hasButterflyClip: [...document.querySelectorAll(".shop-name")].some((n) => n.textContent.includes("蝶翼发夹")),
+      hasLunarVeil: [...document.querySelectorAll(".shop-name")].some((n) => n.textContent.includes("月纱头饰"))
+    })`
+  );
+  check(
+    "商城装扮分类持续显示两批可叠穿服装",
+    dressCatalog.count >= 48 &&
+      dressCatalog.hasStarlightHat &&
+      dressCatalog.hasSpaceHelmet &&
+      dressCatalog.hasButterflyClip &&
+      dressCatalog.hasLunarVeil,
+    JSON.stringify(dressCatalog)
+  );
+  await js(win, `window.__doroTest.equipFashionForTest("fashion_starlight_hat")`);
+  await wait(180);
+  const fashionOverlay = await js(
+    win,
+    `(() => {
+      const image = document.getElementById("fashion-overlay");
+      return image ? { exists: true, loaded: image.complete && image.naturalWidth > 0, top: image.style.top, width: image.style.width } : { exists: false };
+    })()`
+  );
+  check(
+    "新服装 SVG 能叠加到宠物图层",
+    fashionOverlay.exists &&
+      fashionOverlay.loaded &&
+      fashionOverlay.top === "2%" &&
+      fashionOverlay.width === "48%",
+    JSON.stringify(fashionOverlay)
+  );
+  const rentalUi = await js(
+    win,
+    `(() => {
+      const select = document.getElementById("shop-duration");
+      const before = { hidden: select.hidden, options: select.options.length, price: document.querySelector(".shop-price").textContent };
+      select.value = "permanent";
+      select.dispatchEvent(new Event("change"));
+      return { ...before, permanentPrice: document.querySelector(".shop-price").textContent };
+    })()`
+  );
+  check(
+    "装扮支持 5 档时长且价格随永久档切换",
+    !rentalUi.hidden &&
+      rentalUi.options === 5 &&
+      rentalUi.price.includes("1 日") &&
+      rentalUi.permanentPrice.includes("永久") &&
+      rentalUi.permanentPrice !== rentalUi.price,
+    JSON.stringify(rentalUi)
+  );
+  await js(
+    win,
+    `[...document.querySelectorAll("#shop-tabs button")].find((b) => b.textContent === "家具").click()`
+  );
+  await wait(120);
+  const furnitureCatalog = await js(
+    win,
+    `({
+      count: document.querySelectorAll(".shop-item").length,
+      hasGoldenDesk: [...document.querySelectorAll(".shop-name")].some((n) => n.textContent.includes("黄金摸鱼桌")),
+      hasFishTank: [...document.querySelectorAll(".shop-name")].some((n) => n.textContent.includes("摸鱼水族箱")),
+      hasThrone: [...document.querySelectorAll(".shop-name")].some((n) => n.textContent.includes("黄金王座")),
+      hasStarCatBed: [...document.querySelectorAll(".shop-name")].some((n) => n.textContent.includes("星梦猫窝")),
+      hasWishPool: [...document.querySelectorAll(".shop-name")].some((n) => n.textContent.includes("森林许愿池"))
+    })`
+  );
+  check(
+    "商城新增家具会显示并参与时长购买",
+    furnitureCatalog.count >= 31 &&
+      furnitureCatalog.hasGoldenDesk &&
+      furnitureCatalog.hasFishTank &&
+      furnitureCatalog.hasThrone &&
+      furnitureCatalog.hasStarCatBed &&
+      furnitureCatalog.hasWishPool,
+    JSON.stringify(furnitureCatalog)
+  );
   await js(
     win,
     `[...document.querySelectorAll("#shop-tabs button")].find((b) => b.textContent === "主题").click()`
@@ -868,12 +1213,18 @@ async function runScenarios(win) {
     `({
       items: document.querySelectorAll(".shop-item").length,
       hasReshape: [...document.querySelectorAll(".shop-name")].some((n) => n.textContent.includes("性格重塑卡")),
-      hasMillionItem: [...document.querySelectorAll(".shop-price")].some((n) => /M/.test(n.textContent))
+      hasMillionItem: [...document.querySelectorAll(".shop-price")].some((n) => /M/.test(n.textContent)),
+      hasMusicBox: [...document.querySelectorAll(".shop-name")].some((n) => n.textContent.includes("星屑音乐盒")),
+      hasDoroUniverse: [...document.querySelectorAll(".shop-name")].some((n) => n.textContent.includes("doro 永恒宇宙"))
     })`
   );
   check(
-    "典藏分类包含性格重塑与百万级商品",
-    luxury.items === 7 && luxury.hasReshape && luxury.hasMillionItem,
+    "典藏分类包含第二批新品与性格重塑",
+    luxury.items === 38 &&
+      luxury.hasReshape &&
+      luxury.hasMillionItem &&
+      luxury.hasMusicBox &&
+      luxury.hasDoroUniverse,
     JSON.stringify(luxury)
   );
 
@@ -1291,8 +1642,8 @@ async function runScenarios(win) {
   await wait(400);
   const afterDaily = await getState(win);
   check(
-    "每日一题答对 +100 金币",
-    Math.abs(afterDaily.coins - beforeDaily.coins - 100) < 0.01 && afterDaily.quiz.dailyDone === true,
+    "每日一题答对 +10000 金币",
+    Math.abs(afterDaily.coins - beforeDaily.coins - 10000) < 0.01 && afterDaily.quiz.dailyDone === true,
     `${beforeDaily.coins.toFixed(0)}→${afterDaily.coins.toFixed(0)}`
   );
   check("答题后显示判定反馈", await js(win, `Boolean(document.querySelector(".quiz-feedback.ok"))`));
@@ -1564,12 +1915,30 @@ async function runToolWindowScenarios() {
       `document.body.dataset.tool === "gacha" && document.getElementById("gacha").classList.contains("show")`
     )) === true
   );
+  const gachaHistoryInitial = await js(
+    gacha,
+    `({
+      rows: document.querySelectorAll("#gacha-history-list .gacha-history-row").length,
+      empty: document.querySelector(".gacha-history-empty").textContent,
+      clearDisabled: document.getElementById("gacha-history-clear").disabled
+    })`
+  );
+  check(
+    "扭蛋窗展示抽奖记录空状态且不展示爆率说明",
+    gachaHistoryInitial.rows === 0 &&
+      gachaHistoryInitial.empty.includes("还没有抽奖记录") &&
+      gachaHistoryInitial.clearDisabled &&
+      (await js(gacha, `!document.querySelector(".gacha-rates")`)),
+    JSON.stringify(gachaHistoryInitial)
+  );
   await js(gacha, `document.getElementById("gacha-pull").click()`);
   await wait(220);
   check(
-    "独立扭蛋机抽奖会写入共享状态",
+    "独立扭蛋机抽奖会写入状态和抽奖记录",
     toolState.gacha.pulls === pullsBefore + 1 &&
-      Boolean(await js(gacha, `document.getElementById("gacha-result").textContent`)),
+      toolState.gacha.history.length === 1 &&
+      Boolean(await js(gacha, `document.getElementById("gacha-result").textContent`)) &&
+      (await js(gacha, `document.querySelectorAll(".gacha-history-row").length`)) === 1,
     `pulls=${toolState.gacha.pulls}`
   );
   const gachaTenDebug = await js(
@@ -1589,10 +1958,75 @@ async function runToolWindowScenarios() {
   await js(gacha, `document.getElementById("gacha-ten").click()`);
   await wait(240);
   check(
-    "独立扭蛋机支持十连并展示十份奖励",
+    "独立扭蛋机支持十连并逐条写入抽奖记录",
     toolState.gacha.pulls === pullsBefore + 11 &&
-      (await js(gacha, `document.querySelectorAll(".gacha-reward").length`)) === 10,
+      toolState.gacha.history.length === 11 &&
+      (await js(gacha, `document.querySelectorAll(".gacha-reward").length`)) === 10 &&
+      (await js(gacha, `document.querySelectorAll(".gacha-history-row").length`)) === 10,
+    `pulls=${toolState.gacha.pulls}, history=${toolState.gacha.history.length}`
+  );
+  await js(gacha, `document.getElementById("gacha-history-open").click()`);
+  await wait(120);
+  const historyPage = await js(
+    gacha,
+    `({
+      visible: !document.getElementById("gacha-history-page").hidden,
+      mainHidden: document.querySelector("#gacha .gacha-body").hidden,
+      count: document.getElementById("gacha-history-page-count").textContent,
+      rows: document.querySelectorAll(".gacha-history-row").length,
+      headers: document.querySelectorAll(".gacha-history-table th").length,
+      page: document.getElementById("gacha-history-page-number").textContent,
+      pager: (() => {
+        const rect = document.querySelector(".gacha-history-pager").getBoundingClientRect();
+        return { top: rect.top, bottom: rect.bottom, height: rect.height, viewport: innerHeight };
+      })()
+    })`
+  );
+  check(
+    "抽奖记录使用两列表格且每页最多 10 条",
+    historyPage.visible &&
+      historyPage.mainHidden &&
+      historyPage.count === "11 / 50" &&
+      historyPage.rows === 10 &&
+      historyPage.headers === 2 &&
+      historyPage.page === "第 1 / 2 页" &&
+      historyPage.pager.height > 0 &&
+      historyPage.pager.bottom <= historyPage.pager.viewport,
+    JSON.stringify(historyPage)
+  );
+  await js(gacha, `document.getElementById("gacha-history-next").click()`);
+  await wait(80);
+  check(
+    "抽奖记录可以翻页",
+    (await js(gacha, `document.querySelectorAll(".gacha-history-row").length`)) === 1 &&
+      (await js(gacha, `document.getElementById("gacha-history-page-number").textContent`)) === "第 2 / 2 页"
+  );
+  await js(gacha, `document.getElementById("gacha-history-prev").click()`);
+  await wait(80);
+  gacha.showInactive();
+  await wait(120);
+  fs.writeFileSync(
+    path.join(ROOT, "_shot_gacha_history.png"),
+    (await gacha.webContents.capturePage()).toPNG()
+  );
+  await js(gacha, `document.getElementById("gacha-history-clear").click()`);
+  await wait(180);
+  check(
+    "抽奖记录可以清空且不会重置累计抽数和保底",
+    toolState.gacha.history.length === 0 &&
+      toolState.gacha.pulls === pullsBefore + 11 &&
+      (await js(gacha, `document.querySelectorAll(".gacha-history-row").length`)) === 0,
     `pulls=${toolState.gacha.pulls}`
+  );
+  await js(gacha, `document.getElementById("gacha-history-back").click()`);
+  await wait(80);
+  check(
+    "抽奖记录页可以返回扭蛋主页",
+    (await js(
+      gacha,
+      `!document.querySelector("#gacha .gacha-body").hidden &&
+        document.getElementById("gacha-history-page").hidden`
+    )) === true
   );
   gacha.close();
   await wait(120);
@@ -1803,7 +2237,8 @@ async function runSocialWindowScenario() {
       nickname: document.getElementById("profile-nickname").textContent,
       gameId: document.getElementById("copy-id").textContent,
       friends: document.querySelectorAll("#friends .person-row").length,
-      appVisible: !document.getElementById("app").hidden
+      appVisible: !document.getElementById("app").hidden,
+      shopCloud: document.getElementById("shop-cloud-status").textContent
     })`
   );
   check(
@@ -1811,9 +2246,54 @@ async function runSocialWindowScenario() {
     info.appVisible &&
       info.nickname === "测试小鱼" &&
       info.gameId.includes("doro_1a2b3c4d") &&
-      info.friends === 1,
+      info.friends === 1 &&
+      info.shopCloud.includes("Docker"),
     JSON.stringify(info)
   );
+  await js(social, `document.querySelector('[data-view="ranking"]').click()`);
+  await wait(150);
+  const ranking = await js(
+    social,
+    `({
+      visible: !document.getElementById("ranking-view").hidden,
+      rows: document.querySelectorAll("#leaderboard-list .rank-row").length,
+      self: document.getElementById("leaderboard-self").textContent,
+      reward: document.getElementById("leaderboard-reward").textContent,
+      tabs: document.querySelectorAll("#leaderboard-tabs button").length
+    })`
+  );
+  check(
+    "排行榜包含四类榜单、自己的名次和榜一典藏",
+    ranking.visible &&
+      ranking.rows === 2 &&
+      ranking.self.includes("第 1 名") &&
+      ranking.self.includes("永耀") &&
+      ranking.reward.includes("摸鱼等级王冠") &&
+      ranking.reward.includes("永久产出 +5%") &&
+      ranking.reward.includes("分数 +20%") &&
+      ranking.reward.includes("当日产出 +100%") &&
+      ranking.tabs === 4 &&
+      calls.leaderboardRefreshes >= 1,
+    JSON.stringify(ranking)
+  );
+  social.showInactive();
+  await wait(120);
+  fs.writeFileSync(
+    path.join(ROOT, "_shot_social_ranking.png"),
+    (await social.webContents.capturePage()).toPNG()
+  );
+  await js(social, `document.querySelector('[data-view="friends"]').click()`);
+  await wait(80);
+  await js(social, `document.getElementById("show-recovery").click()`);
+  await wait(100);
+  const recoveryVisible = await js(
+    social,
+    `!document.getElementById("recovery-value").hidden &&
+      document.getElementById("recovery-value").textContent === "TEST-RECOVERY-CODE"`
+  );
+  await js(social, `document.getElementById("copy-recovery").click()`);
+  await wait(80);
+  check("账号恢复码可显示并复制", recoveryVisible && calls.socialCopies.includes("TEST-RECOVERY-CODE"));
   await js(social, `document.getElementById("copy-id").click()`);
   await wait(100);
   check("游戏 ID 可以复制", calls.socialCopies.includes("doro_1a2b3c4d"));
@@ -1829,6 +2309,93 @@ async function runSocialWindowScenario() {
   check(
     "可以搜索局域网玩家",
     (await js(social, `document.querySelectorAll("#search-results .person-row").length`)) === 1
+  );
+  await js(social, `document.querySelector('[data-view="chat"]').click()`);
+  await wait(220);
+  const chatInfo = await js(
+    social,
+    `({
+      conversations: document.querySelectorAll("#conversation-list .conversation-item").length,
+      activeView: !document.getElementById("chat-view").hidden
+    })`
+  );
+  await js(social, `document.querySelector("#conversation-list .conversation-item").click()`);
+  await wait(180);
+  const threadInfo = await js(
+    social,
+    `({
+      visible: !document.getElementById("chat-thread").hidden,
+      title: document.getElementById("chat-title").textContent,
+      messages: document.querySelectorAll("#message-list .message-row").length
+    })`
+  );
+  check(
+    "聊天页显示好友和群会话并加载私聊记录",
+    chatInfo.activeView &&
+      chatInfo.conversations === 2 &&
+      threadInfo.visible &&
+      threadInfo.title === "泡面朋友" &&
+      threadInfo.messages === 1,
+    JSON.stringify({ chatInfo, threadInfo })
+  );
+  await js(
+    social,
+    `(() => {
+      document.getElementById("message-input").value = "冒烟测试消息";
+      document.getElementById("message-form").requestSubmit();
+      return true;
+    })()`
+  );
+  await wait(220);
+  check(
+    "好友聊天可以发送消息并立即显示",
+    calls.socialMessageSends === 1 &&
+      (await js(
+        social,
+        `Array.from(document.querySelectorAll("#message-list .message-bubble")).some(
+          (node) => node.textContent === "冒烟测试消息"
+        )`
+      ))
+  );
+  social.showInactive();
+  await wait(100);
+  fs.writeFileSync(
+    path.join(ROOT, "_shot_social_chat.png"),
+    (await social.webContents.capturePage()).toPNG()
+  );
+  await js(social, `document.querySelector('[data-view="groups"]').click()`);
+  await wait(180);
+  const groupInfo = await js(
+    social,
+    `({
+      visible: !document.getElementById("groups-view").hidden,
+      cards: document.querySelectorAll("#group-list .group-card").length,
+      friends: document.querySelectorAll("#group-friend-picker input").length
+    })`
+  );
+  await js(
+    social,
+    `(() => {
+      document.getElementById("group-name").value = "新冒烟群";
+      document.getElementById("create-group").click();
+      return true;
+    })()`
+  );
+  await wait(220);
+  check(
+    "群组页显示群卡片、好友选择并可以创建新群",
+    groupInfo.visible &&
+      groupInfo.cards === 1 &&
+      groupInfo.friends === 1 &&
+      calls.socialGroupsCreated === 1 &&
+      (await js(social, `document.querySelectorAll("#group-list .group-card").length`)) === 2,
+    JSON.stringify(groupInfo)
+  );
+  social.showInactive();
+  await wait(100);
+  fs.writeFileSync(
+    path.join(ROOT, "_shot_social_groups.png"),
+    (await social.webContents.capturePage()).toPNG()
   );
   await js(social, `document.getElementById("close").click()`);
   await wait(150);
