@@ -4,6 +4,7 @@ const G = require("../renderer/game.js");
 const { applyToolCommand } = require("../lib/tool-actions.js");
 
 const NOW = 1_700_000_000_000;
+const UP_NOW = Date.parse("2026-11-01T12:00:00+08:00");
 const actions = [
   { name: "dress_one", label: "测试装扮", category: "dress", group: "换装" },
   { name: "meme_one", label: "测试表情", category: "meme", group: "表情包", blocked: false },
@@ -58,6 +59,174 @@ test("商城不能伪造商品价格或购买不存在商品", () => {
   );
   assert.strictEqual(fake.ok, false);
   assert.strictEqual(state.coins, 10000);
+});
+
+test("独立商城可批量购买修炼道具", () => {
+  const state = G.hydrate(
+    {
+      level: 41,
+      coins: 300000,
+      cultivation: {
+        attributes: {
+          root: "metal",
+          insight: 80,
+          fortune: 60,
+          daoHeart: 70,
+          lifespan: 100,
+        },
+        lastAgedAt: NOW,
+      },
+    },
+    NOW
+  );
+  const result = applyToolCommand(
+    state,
+    actions,
+    "shop",
+    {
+      type: "buy",
+      item: { kind: "catalog", id: "stone_mid" },
+      quantity: 4,
+    },
+    NOW
+  );
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(result.state.cultivation.stones.mid, 4);
+  assert.strictEqual(result.state.cultivation.buyQuantity, 4);
+  assert.strictEqual(result.state.coins, 300000 - 4 * G.CULTIVATION.STONE_TIERS.mid.price);
+
+  const pill = applyToolCommand(
+    result.state,
+    actions,
+    "shop",
+    { type: "buy", item: { kind: "catalog", id: "breakthrough_pill" } },
+    NOW
+  );
+  assert.strictEqual(pill.ok, true);
+  assert.strictEqual(pill.state.cultivation.pills.breakthrough, 1);
+
+  const technique = applyToolCommand(
+    pill.state,
+    actions,
+    "shop",
+    {
+      type: "buy",
+      item: { kind: "technique", id: "tech_metal_heaven_upper" },
+    },
+    NOW
+  );
+  assert.strictEqual(technique.ok, true);
+  assert.strictEqual(technique.state.cultivation.techniqueScrolls.tech_metal_heaven_upper, 1);
+  const studied = applyToolCommand(
+    technique.state,
+    actions,
+    "shop",
+    { type: "study-technique", id: "tech_metal_heaven_upper" },
+    NOW
+  );
+  assert.strictEqual(studied.ok, true);
+  assert.ok(studied.state.cultivation.equippedTechniques.includes("tech_metal_heaven_upper"));
+});
+
+test("独立背包可研习、切换功法并服用延寿丹", () => {
+  const state = G.hydrate(
+    {
+      cultivation: {
+        attributes: {
+          root: "metal",
+          insight: 80,
+          fortune: 60,
+          daoHeart: 70,
+          lifespan: 100,
+        },
+        lastAgedAt: NOW,
+        techniqueScrolls: { tech_metal_heaven_upper: 1 },
+        techniquesKnown: ["tech_metal_yellow_lower"],
+        equippedTechnique: "tech_metal_yellow_lower",
+        pills: { breakthrough: 0, life: 1 },
+      },
+    },
+    NOW
+  );
+  const studied = applyToolCommand(
+    state,
+    actions,
+    "inventory",
+    { type: "study-technique", id: "tech_metal_heaven_upper" },
+    NOW
+  );
+  assert.strictEqual(studied.ok, true);
+  assert.ok(studied.state.cultivation.equippedTechniques.includes("tech_metal_heaven_upper"));
+
+  const equipped = applyToolCommand(
+    studied.state,
+    actions,
+    "inventory",
+    { type: "equip-technique", id: "tech_metal_yellow_lower" },
+    NOW
+  );
+  assert.strictEqual(equipped.ok, true);
+  assert.ok(equipped.state.cultivation.equippedTechniques.includes("tech_metal_yellow_lower"));
+
+  const paused = applyToolCommand(
+    equipped.state,
+    actions,
+    "inventory",
+    { type: "unequip-technique", id: "tech_metal_yellow_lower" },
+    NOW
+  );
+  assert.strictEqual(paused.ok, true);
+  assert.ok(!paused.state.cultivation.equippedTechniques.includes("tech_metal_yellow_lower"));
+
+  paused.state.cultivation.pills.heart = 1;
+  const calmed = applyToolCommand(
+    paused.state,
+    actions,
+    "inventory",
+    { type: "use-cultivation-pill", pill: "heart" },
+    NOW
+  );
+  assert.strictEqual(calmed.ok, true);
+  assert.ok(calmed.state.cultivation.attributes.daoHeart > 70);
+  assert.strictEqual(calmed.state.cultivation.pills.heart, 0);
+
+  const consumed = applyToolCommand(calmed.state, actions, "inventory", { type: "use-life-pill" }, NOW);
+  assert.strictEqual(consumed.ok, true);
+  assert.strictEqual(consumed.state.cultivation.pills.life, 0);
+  assert.strictEqual(consumed.state.cultivation.bonusLifespan, 100);
+});
+
+test("独立机缘窗口可抽取并结算选项", () => {
+  const state = G.hydrate(
+    {
+      level: 20,
+      cultivation: {
+        attributes: {
+          root: "metal",
+          insight: 70,
+          fortune: 60,
+          daoHeart: 70,
+          lifespan: 100,
+        },
+        lastAgedAt: NOW,
+      },
+    },
+    NOW
+  );
+  const drawn = applyToolCommand(state, actions, "opportunity", { type: "draw" }, NOW);
+  assert.strictEqual(drawn.ok, true);
+  assert.ok(drawn.result.event.id);
+  const choice = G.opportunityStatus(drawn.state, NOW).choices.find((item) => item.available);
+  assert.ok(choice);
+  const resolved = applyToolCommand(
+    drawn.state,
+    actions,
+    "opportunity",
+    { type: "choose", choiceId: choice.id },
+    NOW
+  );
+  assert.strictEqual(resolved.ok, true);
+  assert.strictEqual(resolved.state.opportunities.history.length, 1);
 });
 
 test("装扮按动作清单价格解锁", () => {
@@ -158,6 +327,31 @@ test("扭蛋抽奖记录会逐条保存并可以清空", () => {
   assert.strictEqual(cleared.ok, true);
   assert.deepStrictEqual(cleared.state.gacha.history, []);
   assert.strictEqual(cleared.state.gacha.pulls, 10);
+});
+
+test("UP 池按独立价格抽奖并只清理自己的记录", () => {
+  const state = G.hydrate({ coins: 60000 }, UP_NOW);
+  const single = applyToolCommand(state, actions, "gacha", { type: "pull", pool: "up" }, UP_NOW);
+  assert.strictEqual(single.ok, true);
+  assert.strictEqual(60000 - single.state.coins + (single.result.amount || 0), G.GACHA_UP_PRICE);
+  assert.strictEqual(single.state.gacha.upPulls, 1);
+
+  const ten = applyToolCommand(single.state, actions, "gacha", { type: "pull-ten", pool: "up" }, UP_NOW);
+  assert.strictEqual(ten.ok, true);
+  assert.strictEqual(ten.result.cost, 50000);
+  assert.strictEqual(ten.state.gacha.upPulls, 11);
+  assert.ok(ten.state.gacha.history.every((entry) => entry.pool === "up"));
+
+  const cleared = applyToolCommand(
+    ten.state,
+    actions,
+    "gacha",
+    { type: "clear-history", pool: "up" },
+    UP_NOW
+  );
+  assert.strictEqual(cleared.ok, true);
+  assert.strictEqual(cleared.state.gacha.history.length, 0);
+  assert.strictEqual(cleared.state.gacha.upPulls, 11);
 });
 
 test("小游戏结算有冷却和分数上限", () => {

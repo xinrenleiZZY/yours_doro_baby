@@ -18,10 +18,17 @@ function test(name, fn) {
 }
 
 const NOW = 1_700_000_000_000;
+const UP_NOW = Date.parse("2026-11-01T12:00:00+08:00");
 
 function sequenceRandom(values) {
   let index = 0;
   return () => values[Math.min(index++, values.length - 1)];
+}
+
+function finishStoneSession(state, rng) {
+  const started = G.cultivate(state, state.cultivation.consumeQuantity || 1, NOW, rng);
+  const finished = G.settleStoneCultivation(state, started.endsAt + 1, rng);
+  return { started, finished };
 }
 
 console.log("doro 经济逻辑测试");
@@ -97,16 +104,801 @@ test("吃太饱会被拒绝，但不会扣钱", () => {
   assert.strictEqual(state.coins, 100);
 });
 
-test("陪玩加心情、升等级越升越贵", () => {
-  const state = G.hydrate({ coins: 1e6, mood: 10, satiety: 90 }, NOW);
-  const play = G.play(state, NOW);
-  assert.strictEqual(play.ok, true);
-  assert.strictEqual(state.mood, 10 + G.BALANCE.playValue);
+test("批量修炼消耗灵石，随机获得一次修为并可能毫无进展", () => {
+  const state = G.hydrate(
+    {
+      coins: 1000,
+      cultivation: {
+        attributes: { root: "metal", insight: 70, fortune: 50, daoHeart: 60, lifespan: 90 },
+        spiritStones: 3,
+        lastAgedAt: NOW,
+      },
+    },
+    NOW
+  );
+  const { started, finished } = finishStoneSession(state, () => 0.9);
+  assert.strictEqual(started.ok, true);
+  assert.strictEqual(started.used, 1);
+  assert.ok(finished.gained > 0);
+  assert.strictEqual(state.cultivation.spiritStones, 2);
+  assert.ok(state.cultivation.exp > 0);
 
-  const first = G.upgradeCost(state);
-  G.upgrade(state, NOW);
-  assert.strictEqual(state.level, 2);
-  assert.ok(G.upgradeCost(state) > first);
+  const noProgress = G.hydrate(
+    {
+      cultivation: {
+        attributes: { root: "mixed", insight: 20, fortune: 20, daoHeart: 40, lifespan: 90 },
+        spiritStones: 1,
+        lastAgedAt: NOW,
+      },
+    },
+    NOW
+  );
+  const { finished: none } = finishStoneSession(noProgress, () => 0);
+  assert.strictEqual(none.noProgress, true);
+  assert.strictEqual(noProgress.cultivation.exp, 0);
+  assert.strictEqual(noProgress.cultivation.spiritStones, 0);
+});
+
+test("灵石能量固定，不随玩家等级提高", () => {
+  const makeState = (level) =>
+    G.hydrate(
+      {
+        level,
+        cultivation: {
+          attributes: { root: "mixed", insight: 20, fortune: 20, daoHeart: 70, lifespan: 90 },
+          spiritStones: 1,
+          regionId: "qingju_plain",
+          lastAgedAt: NOW,
+        },
+      },
+      NOW
+    );
+  const low = makeState(1);
+  const high = makeState(90);
+  const lowResult = finishStoneSession(low, () => 0.9).finished;
+  const highResult = finishStoneSession(high, () => 0.9).finished;
+  assert.strictEqual(G.CULTIVATION.STONE_TIERS.low.energy, 10);
+  assert.strictEqual(G.CULTIVATION.STONE_TIERS.mid.energy, 100);
+  assert.strictEqual(G.CULTIVATION.STONE_TIERS.high.energy, 1000);
+  assert.strictEqual(G.CULTIVATION.STONE_TIERS.supreme.energy, 10000);
+  assert.strictEqual(G.CULTIVATION.stoneBaseExperience(1, "low"), 10);
+  assert.strictEqual(G.CULTIVATION.stoneBaseExperience(90, "low"), 10);
+  assert.strictEqual(highResult.gained, lowResult.gained);
+});
+
+test("四档灵石经验依次提高，并受橘子大陆区域灵气影响", () => {
+  const makeState = (tier, regionId) =>
+    G.hydrate(
+      {
+        level: 11,
+        cultivation: {
+          attributes: { root: "mixed", insight: 20, fortune: 20, daoHeart: 70, lifespan: 90 },
+          stones: { low: 1, mid: 1, high: 1, supreme: 1 },
+          selectedStoneTier: tier,
+          regionId,
+          lastAgedAt: NOW,
+        },
+      },
+      NOW
+    );
+  const run = (state, tier) => {
+    const started = G.cultivate(state, 1, NOW, () => 0.9, tier);
+    return G.settleStoneCultivation(state, started.endsAt + 1, () => 0.9);
+  };
+  const low = run(makeState("low", "qingju_plain"), "low");
+  const supreme = run(makeState("supreme", "qingju_plain"), "supreme");
+  const qiRich = run(makeState("supreme", "ghost_realm"), "supreme");
+  assert.ok(supreme.gained > low.gained * 10);
+  assert.ok(qiRich.gained > supreme.gained);
+  assert.strictEqual(qiRich.region.id, "ghost_realm");
+});
+
+test("灵石购买数量和修炼消耗数量可以自定义并保存", () => {
+  const state = G.hydrate({ coins: 100000 }, NOW);
+  const quantities = G.setStoneQuantities(state, 7, 3, NOW);
+  assert.strictEqual(quantities.buyQuantity, 7);
+  assert.strictEqual(quantities.consumeQuantity, 3);
+  state.cultivation.stones.low = 5;
+  state.cultivation.spiritStones = 5;
+  const result = G.cultivate(state, state.cultivation.consumeQuantity, NOW, () => 0.5);
+  assert.strictEqual(result.used, 3);
+  assert.strictEqual(state.cultivation.stones.low, 2);
+  assert.strictEqual(state.cultivation.spiritStones, 2);
+  G.settleStoneCultivation(state, result.endsAt + 1, () => 0.9);
+  const insufficient = G.cultivate(state, 3, NOW, () => 0.5);
+  assert.strictEqual(insufficient.reason, "stones");
+  assert.strictEqual(insufficient.available, 2);
+  assert.strictEqual(state.cultivation.stones.low, 2);
+  const maximum = G.setStoneQuantities(state, 9999, 9999, NOW);
+  assert.strictEqual(maximum.buyQuantity, 9999);
+  assert.strictEqual(maximum.consumeQuantity, 9999);
+});
+
+test("1000 颗灵石只创建一次批处理，判定不随数量循环", () => {
+  const state = G.hydrate(
+    {
+      cultivation: {
+        attributes: { root: "metal", insight: 70, fortune: 50, daoHeart: 60, lifespan: 90 },
+        stones: { low: 1000, mid: 0, high: 0, supreme: 0 },
+        lastAgedAt: NOW,
+      },
+    },
+    NOW
+  );
+  let rolls = 0;
+  const rng = () => {
+    rolls += 1;
+    return 0.9;
+  };
+  const started = G.cultivate(state, 1000, NOW, rng, "low");
+  assert.strictEqual(started.ok, true);
+  assert.strictEqual(started.used, 1000);
+  assert.strictEqual(started.totalEnergy, 10_000);
+  assert.strictEqual(state.cultivation.stones.low, 0);
+  assert.strictEqual(state.cultivation.exp, 0);
+  assert.strictEqual(state.cultivation.stoneSession.active, true);
+  assert.strictEqual(G.cultivate(state, 1000, NOW, rng, "low").reason, "session");
+  const finished = G.settleStoneCultivation(state, started.endsAt + 1, rng);
+  assert.strictEqual(finished.completed, true);
+  assert.strictEqual(state.cultivation.stoneSession.active, false);
+  assert.ok(rolls <= 5, `一次批处理应只有少量随机判定，实际 ${rolls} 次`);
+  const expAfter = state.cultivation.exp;
+  assert.strictEqual(G.settleStoneCultivation(state, started.endsAt + 2000, rng).completed, false);
+  assert.strictEqual(state.cultivation.exp, expAfter);
+  assert.ok(G.CULTIVATION.stoneBatchChances(state.cultivation).noProgress <= 0.025);
+});
+
+test("灵石总量与等级共同决定批量修炼时间", () => {
+  const makeState = (level, quantity) =>
+    G.hydrate(
+      {
+        level,
+        cultivation: {
+          attributes: { root: "metal", insight: 70, fortune: 50, daoHeart: 60, lifespan: 200 },
+          stones: { low: quantity, mid: 0, high: 0, supreme: 0 },
+          lastAgedAt: NOW,
+        },
+      },
+      NOW
+    );
+  const lowLevelTen = G.cultivate(makeState(1, 10), 10, NOW, () => 0.9, "low");
+  const lowLevelHundred = G.cultivate(makeState(1, 100), 100, NOW, () => 0.9, "low");
+  const highLevelHundred = G.cultivate(makeState(100, 100), 100, NOW, () => 0.9, "low");
+  const levelHundredRate = G.CULTIVATION.stoneAbsorptionRate(makeState(100, 1).cultivation, 100);
+  assert.strictEqual(lowLevelHundred.totalEnergy, lowLevelTen.totalEnergy * 10);
+  assert.ok(lowLevelHundred.durationMs > lowLevelTen.durationMs);
+  assert.ok(highLevelHundred.energyPerSecond > lowLevelTen.energyPerSecond);
+  assert.ok(highLevelHundred.durationMs < lowLevelHundred.durationMs);
+  assert.strictEqual(levelHundredRate.base, 3 + 100 * (1.8 + 100 / 100) + 70 * 0.8);
+});
+
+test("灵石批量修炼会话可在重启存档后离线完成", () => {
+  const state = G.hydrate(
+    {
+      cultivation: {
+        attributes: { root: "metal", insight: 90, fortune: 80, daoHeart: 70, lifespan: 120 },
+        stones: { low: 25, mid: 0, high: 0, supreme: 0 },
+        lastAgedAt: NOW,
+      },
+    },
+    NOW
+  );
+  const started = G.cultivate(state, 25, NOW, () => 0.9, "low");
+  const restored = G.hydrate(JSON.parse(JSON.stringify(state)), started.endsAt + 1);
+  assert.strictEqual(restored.cultivation.stoneSession.active, true);
+  const offline = G.settleOffline(restored, started.endsAt + 1, () => 0.9);
+  assert.strictEqual(offline.stoneCultivation.completed, true);
+  assert.ok(restored.cultivation.exp > 0);
+  assert.strictEqual(restored.cultivation.stoneSession.active, false);
+});
+
+test("橘子大陆区域按等级解锁，初始出生只开放三个区域", () => {
+  const starters = G.CULTIVATION.ORANGE_REGIONS.filter((region) => region.minLevel <= 1);
+  assert.strictEqual(G.CULTIVATION.ORANGE_CONTINENT.name, "橘子大陆");
+  assert.strictEqual(starters.length, 3);
+  const state = G.hydrate({ level: 10 }, NOW, () => 0.4);
+  assert.strictEqual(G.travelToRegion(state, "ghost_realm", NOW).reason, "locked");
+  assert.strictEqual(G.travelToRegion(state, "chenghu_marsh", NOW).ok, true);
+  state.level = 41;
+  assert.strictEqual(G.travelToRegion(state, "ghost_realm", NOW).ok, true);
+  assert.strictEqual(state.cultivation.regionId, "ghost_realm");
+});
+
+test("区域灵石开采会按灵气与特性产出不同品质", () => {
+  const state = G.hydrate(
+    {
+      level: 11,
+      cultivation: {
+        attributes: { root: "water", insight: 60, fortune: 80, daoHeart: 70, lifespan: 90 },
+        regionId: "xuanshui_ravine",
+        lastAgedAt: NOW,
+      },
+    },
+    NOW
+  );
+  const result = G.mineSpiritStones(state, NOW, () => 0.9);
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(result.tier, "supreme");
+  assert.ok(state.cultivation.stones.supreme > 0);
+  assert.strictEqual(G.mineSpiritStones(state, NOW + 1000, () => 0.9).reason, "cooldown");
+});
+
+test("打坐按灵气浓度、天赋与阵法持续获得修为", () => {
+  const makeState = (formationId, regionId) =>
+    G.hydrate(
+      {
+        level: 41,
+        cultivation: {
+          attributes: {
+            root: "wood",
+            insight: 80,
+            fortune: 50,
+            daoHeart: 70,
+            lifespan: 100,
+          },
+          formationId,
+          regionId,
+          meditation: { active: true, lastAt: NOW, totalSeconds: 0 },
+          lastAgedAt: NOW,
+        },
+      },
+      NOW
+    );
+  const plain = makeState("none", "qingju_plain");
+  const empowered = makeState("five_elements", "ghost_realm");
+  const plainRate = G.CULTIVATION.meditationRate(plain.cultivation, plain.level);
+  const empoweredRate = G.CULTIVATION.meditationRate(empowered.cultivation, empowered.level);
+  assert.ok(empoweredRate.perHour > plainRate.perHour * 2.5);
+
+  const beforeTechnique = plain.cultivation.technique;
+  const gained = G.settleMeditation(plain, NOW + 3600000);
+  assert.ok(gained.gained > 0);
+  assert.ok(gained.techniqueGained > 0);
+  assert.ok(plain.cultivation.technique > beforeTechnique);
+  assert.ok(plain.cultivation.exp > 0);
+  assert.strictEqual(plain.cultivation.meditation.totalSeconds, 3600);
+  assert.strictEqual(plain.cultivation.meditation.active, true);
+});
+
+test("参悟功法可主动提高功法领悟并进入冷却", () => {
+  const state = G.hydrate(
+    {
+      level: 11,
+      cultivation: {
+        attributes: {
+          root: "water",
+          insight: 60,
+          fortune: 44,
+          daoHeart: 70,
+          lifespan: 90,
+        },
+        formationId: "gathering",
+        regionId: "cloudsea_peak",
+        techniquesKnown: ["tech_water_heaven_upper"],
+        equippedTechniques: ["tech_water_heaven_upper"],
+        techniqueProgress: { tech_water_heaven_upper: 12 },
+        lastAgedAt: NOW,
+      },
+    },
+    NOW
+  );
+  const values = [0.1, 0.9, 0.5];
+  let index = 0;
+  const result = G.comprehendTechnique(state, NOW, () => values[index++] ?? 0.5);
+  assert.strictEqual(result.ok, true);
+  assert.ok(state.cultivation.technique > 0);
+  assert.ok(state.cultivation.techniqueProgress.tech_water_heaven_upper > 12);
+  assert.strictEqual(state.cultivation.techniqueReadyAt, NOW + 5 * 60000);
+  assert.strictEqual(G.comprehendTechnique(state, NOW + 1000, () => 0.5).reason, "cooldown");
+});
+
+test("打坐到瓶颈自动停止，阵法按等级解锁", () => {
+  const state = G.hydrate(
+    {
+      level: 20,
+      cultivation: {
+        attributes: {
+          root: "innate",
+          insight: 100,
+          fortune: 50,
+          daoHeart: 70,
+          lifespan: 100,
+        },
+        formationId: "gathering",
+        regionId: "cloudsea_peak",
+        meditation: { active: true, lastAt: NOW, totalSeconds: 0 },
+        lastAgedAt: NOW,
+      },
+    },
+    NOW
+  );
+  state.cultivation.exp = G.CULTIVATION.expRequired(20) - 0.1;
+  const settled = G.settleMeditation(state, NOW + 60000);
+  assert.strictEqual(state.level, 20);
+  assert.strictEqual(settled.atCap, true);
+  assert.strictEqual(state.cultivation.meditation.active, false);
+
+  state.level = 21;
+  assert.strictEqual(G.setFormation(state, "five_elements", NOW).reason, "locked");
+  state.level = 41;
+  assert.strictEqual(G.setFormation(state, "five_elements", NOW).ok, true);
+  assert.strictEqual(state.cultivation.formationId, "five_elements");
+});
+
+test("普通小境界修为满后自动晋升，大境界圆满后停止修炼", () => {
+  const state = G.hydrate(
+    {
+      cultivation: {
+        attributes: { root: "innate", insight: 96, fortune: 50, daoHeart: 70, lifespan: 100 },
+        spiritStones: 20,
+        lastAgedAt: NOW,
+      },
+    },
+    NOW
+  );
+  const first = G.cultivate(state, 20, NOW, () => 0.9);
+  G.settleStoneCultivation(state, first.endsAt + 1, () => 0.9);
+  assert.ok(state.level > 1);
+
+  state.level = 9;
+  state.cultivation.exp = G.CULTIVATION.expRequired(9) - 250;
+  state.cultivation.stones.low = 100;
+  state.cultivation.spiritStones = 100;
+  const second = G.cultivate(state, 100, NOW, () => 0.9);
+  G.settleStoneCultivation(state, second.endsAt + 1, () => 0.9);
+  assert.strictEqual(state.level, 10);
+  state.cultivation.exp = G.CULTIVATION.expRequired(10);
+  const blocked = G.cultivate(state, 1, NOW, () => 0.5);
+  assert.strictEqual(blocked.reason, "breakthrough");
+  assert.strictEqual(state.level, 10);
+});
+
+test("大境界突破要求修为、丹药、功法、悟性和道心", () => {
+  const state = G.hydrate(
+    {
+      level: 10,
+      cultivation: {
+        attributes: { root: "earth", insight: 40, fortune: 50, daoHeart: 30, lifespan: 90 },
+        spiritStones: 1,
+        exp: G.CULTIVATION.expRequired(10),
+        technique: 0,
+        lastAgedAt: NOW,
+      },
+    },
+    NOW
+  );
+  const blocked = G.attemptBreakthrough(state, "pill", NOW, () => 0);
+  assert.strictEqual(blocked.ok, false);
+  assert.ok(blocked.missing.includes("缺少引气丹") || blocked.missing.includes("功法领悟 0"));
+
+  state.cultivation.technique = 100;
+  state.cultivation.pills.breakthrough = 1;
+  const ok = G.attemptBreakthrough(state, "pill", NOW, () => 0);
+  assert.strictEqual(ok.ok, true);
+  assert.strictEqual(state.level, 11);
+  assert.strictEqual(state.cultivation.pills.breakthrough, 0);
+  assert.strictEqual(state.cultivation.exp, 0);
+});
+
+test("同源灵根等阶会同时提高修炼收益和突破成功率", () => {
+  const base = {
+    attributes: {
+      root: "metal",
+      insight: 80,
+      fortune: 60,
+      daoHeart: 70,
+      lifespan: 100,
+    },
+    exp: G.CULTIVATION.expRequired(10),
+    technique: 100,
+    pills: { breakthrough: 1, life: 0 },
+    regionId: "qingju_plain",
+    lastAgedAt: NOW,
+  };
+  const plain = G.hydrate(
+    { level: 10, cultivation: { ...base, attributes: { ...base.attributes, rootLineage: 0 } } },
+    NOW
+  );
+  const lineage = G.hydrate(
+    { level: 10, cultivation: { ...base, attributes: { ...base.attributes, rootLineage: 2 } } },
+    NOW
+  );
+  const plainChance = G.CULTIVATION.breakthroughStatus(plain.cultivation, 10, "pill", NOW).chance;
+  const lineageChance = G.CULTIVATION.breakthroughStatus(lineage.cultivation, 10, "pill", NOW).chance;
+  assert.ok(lineageChance > plainChance);
+  assert.ok(
+    G.CULTIVATION.meditationRate(lineage.cultivation, 10).perHour >
+      G.CULTIVATION.meditationRate(plain.cultivation, 10).perHour
+  );
+});
+
+test("灵根体系覆盖单、双、三、四、五灵根、变异灵根与先天道体", () => {
+  const roots = Object.values(G.CULTIVATION.ROOTS);
+  const countKind = (kind) => roots.filter((root) => root.kind === kind).length;
+  assert.strictEqual(roots.length, 37);
+  assert.strictEqual(countKind("single"), 5);
+  assert.strictEqual(countKind("dual"), 10);
+  assert.strictEqual(countKind("triple"), 10);
+  assert.strictEqual(countKind("quad"), 5);
+  assert.strictEqual(countKind("mixed"), 1);
+  assert.strictEqual(countKind("variant"), 5);
+  assert.strictEqual(countKind("innate"), 1);
+  assert.strictEqual(G.CULTIVATION.ROOTS["dual_metal_water"].gain, 0.7);
+  assert.strictEqual(G.CULTIVATION.ROOTS["dual_metal_wood"].gain, 0.6);
+  assert.strictEqual(G.CULTIVATION.ROOTS.mixed.gain, 0.1);
+  assert.ok(G.CULTIVATION.ROOTS.chaos.gain >= G.CULTIVATION.ROOTS.ice.gain * 2);
+  const tribulationCultivation = (root) => ({
+    attributes: { root, insight: 80, fortune: 30, daoHeart: 80, lifespan: 100, rootLineage: 0 },
+    karma: 0,
+    thunderPearls: 0,
+  });
+  assert.ok(
+    G.CULTIVATION.tribulationProfile(tribulationCultivation("thunder"), 100).strength <
+      G.CULTIVATION.tribulationProfile(tribulationCultivation("metal"), 100).strength
+  );
+
+  const sequence = (values) => {
+    let index = 0;
+    return () => values[index++] ?? 0;
+  };
+  assert.strictEqual(G.CULTIVATION.rollRoot(sequence([0.000000005, 0.99])), "innate");
+  assert.strictEqual(G.CULTIVATION.rollRoot(sequence([0.0000005, 0.99])), "chaos");
+  assert.strictEqual(G.CULTIVATION.rollRoot(sequence([0.0001, 0])), "metal");
+  assert.strictEqual(G.CULTIVATION.rollRoot(sequence([0.0005, 0])), "dual_metal_wood");
+  assert.strictEqual(G.CULTIVATION.rollRoot(sequence([0.005, 0])), "triple_metal_wood_water");
+  assert.strictEqual(G.CULTIVATION.rollRoot(sequence([0.05, 0])), "quad_metal_wood_water_fire");
+  assert.strictEqual(G.CULTIVATION.rollRoot(sequence([0.5])), "mixed");
+});
+
+test("功法目录为每种灵根提供天地玄黄与上中下品", () => {
+  const techniques = Object.values(G.CULTIVATION.TECHNIQUES);
+  assert.strictEqual(techniques.length, 444);
+  assert.strictEqual(new Set(techniques.map((item) => item.root)).size, 37);
+  assert.strictEqual(new Set(techniques.map((item) => item.tier)).size, 4);
+  assert.strictEqual(new Set(techniques.map((item) => item.grade)).size, 3);
+  assert.ok(
+    G.CULTIVATION.TECHNIQUES.tech_metal_heaven_upper.cultivationMultiplier >
+      G.CULTIVATION.TECHNIQUES.tech_metal_yellow_lower.cultivationMultiplier
+  );
+  assert.ok(G.CULTIVATION.TECHNIQUES.tech_thunder_heaven_upper.name.includes("九天雷霆诀"));
+  assert.ok(G.CULTIVATION.TECHNIQUES.tech_dual_metal_water_heaven_upper.name.includes("双炼诀"));
+  assert.deepStrictEqual(Object.keys(G.CULTIVATION.TECHNIQUE_CATEGORIES), [
+    "heart",
+    "spell",
+    "combat",
+    "movement",
+    "body",
+  ]);
+  assert.strictEqual(new Set(techniques.map((item) => item.category)).size, 5);
+  Object.keys(G.CULTIVATION.ROOTS).forEach((rootId) => {
+    assert.strictEqual(
+      new Set(techniques.filter((technique) => technique.root === rootId).map((item) => item.category)).size,
+      5
+    );
+  });
+});
+
+test("五类功法可同时修炼，每部功法独立累计并参悟进度", () => {
+  const state = G.hydrate(
+    {
+      level: 41,
+      cultivation: {
+        attributes: {
+          root: "metal",
+          insight: 90,
+          fortune: 70,
+          daoHeart: 80,
+          lifespan: 100,
+        },
+        regionId: "qingju_plain",
+        lastAgedAt: NOW,
+      },
+    },
+    NOW
+  );
+  const byCategory = {};
+  Object.values(G.CULTIVATION.TECHNIQUES)
+    .filter((technique) => technique.root === "metal")
+    .forEach((technique) => {
+      if (!byCategory[technique.category]) byCategory[technique.category] = technique;
+    });
+  Object.values(byCategory).forEach((technique) => {
+    state.cultivation.techniqueScrolls[technique.id] = 1;
+    assert.strictEqual(G.studyTechnique(state, technique.id, NOW).ok, true);
+  });
+  assert.strictEqual(state.cultivation.equippedTechniques.length, 5);
+  assert.strictEqual(
+    new Set(G.CULTIVATION.activeTechniques(state.cultivation).map((technique) => technique.category)).size,
+    5
+  );
+  assert.ok(Object.values(state.cultivation.techniqueProgress).every((progress) => progress > 0));
+
+  const target = G.CULTIVATION.activeTechniques(state.cultivation)[0];
+  const beforeTarget = state.cultivation.techniqueProgress[target.id];
+  const other = Object.entries(state.cultivation.techniqueProgress).find(([id]) => id !== target.id);
+  const result = G.comprehendTechnique(state, NOW, () => 0, target.id);
+  assert.strictEqual(result.ok, true);
+  assert.ok(state.cultivation.techniqueProgress[target.id] > beforeTarget);
+  assert.strictEqual(state.cultivation.techniqueProgress[other[0]], other[1]);
+  assert.ok(G.CULTIVATION.techniqueBonuses(state.cultivation).cultivationMultiplier > 1);
+});
+
+test("洞天福地固定 10 处，每轮随机 1–3 个大型并可选择前往", () => {
+  const state = G.hydrate(
+    {
+      level: 41,
+      cultivation: {
+        attributes: {
+          root: "metal",
+          insight: 80,
+          fortune: 70,
+          daoHeart: 80,
+          lifespan: 100,
+        },
+        stones: { low: 5, mid: 0, high: 0, supreme: 0 },
+        regionId: "qingju_plain",
+        lastAgedAt: NOW,
+      },
+    },
+    NOW
+  );
+  const sequence = (values) => {
+    let index = 0;
+    return () => values[index++] ?? 0.25;
+  };
+  const status = G.caveHeavenStatus(state, NOW, sequence([0, 0.2, 0.7]));
+  assert.strictEqual(status.spots.length, 10);
+  assert.strictEqual(new Set(status.spots.map((spot) => spot.id)).size, 10);
+  assert.ok(status.largeCount >= 1 && status.largeCount <= 3);
+  const beforeRate = G.CULTIVATION.meditationRate(state.cultivation, state.level).perHour;
+  const target = status.spots.find((spot) => spot.size === "small");
+  const entered = G.enterCaveHeaven(state, target.id, NOW, () => 0);
+  assert.strictEqual(entered.ok, true);
+  assert.strictEqual(state.cultivation.cave.active.id, target.id);
+  assert.strictEqual(entered.rewards.length, 1);
+  assert.notStrictEqual(entered.rewards[0].type, "none");
+  const afterRate = G.CULTIVATION.meditationRate(state.cultivation, state.level).perHour;
+  assert.ok(afterRate > beforeRate);
+  assert.strictEqual(G.enterCaveHeaven(state, status.spots[0].id, NOW + 1000, () => 0).reason, "active");
+});
+
+test("大型福地守灵支持避战、观望和战斗，分别调整爆率与修为结果", () => {
+  const makeState = () =>
+    G.hydrate(
+      {
+        level: 41,
+        cultivation: {
+          attributes: {
+            root: "metal",
+            insight: 90,
+            fortune: 80,
+            daoHeart: 80,
+            lifespan: 100,
+          },
+          stones: { low: 5, mid: 0, high: 0, supreme: 0 },
+          regionId: "qingju_plain",
+          lastAgedAt: NOW,
+        },
+      },
+      NOW
+    );
+  const prepare = () => {
+    const state = makeState();
+    const status = G.caveHeavenStatus(state, NOW, () => 0);
+    const large = status.spots.find((spot) => spot.size === "large");
+    const entered = G.enterCaveHeaven(state, large.id, NOW, () => 0);
+    assert.strictEqual(entered.challenge, true);
+    assert.strictEqual(state.cultivation.cave.challenge.id, large.id);
+    return state;
+  };
+
+  const avoided = prepare();
+  const avoid = G.resolveCaveChallenge(avoided, "avoid", NOW, () => 0.99);
+  assert.strictEqual(avoid.ok, true);
+  assert.strictEqual(avoid.lootMultiplier, 0.2);
+  assert.strictEqual(avoid.combat, null);
+  assert.strictEqual(avoid.rewards[0].type, "none");
+
+  const observed = prepare();
+  const observe = G.resolveCaveChallenge(observed, "observe", NOW, () => 0);
+  assert.strictEqual(observe.lootMultiplier, 0.5);
+  assert.strictEqual(observe.combat, null);
+
+  const fought = prepare();
+  const beforeExp = fought.cultivation.exp;
+  const fight = G.resolveCaveChallenge(fought, "fight", NOW, () => 0);
+  assert.strictEqual(fight.lootMultiplier, 1.2);
+  assert.strictEqual(fight.combat.outcome, "win");
+  assert.ok(fight.combat.gained > 0);
+  assert.ok(fought.cultivation.exp > beforeExp);
+
+  const lost = prepare();
+  lost.cultivation.exp = Math.round(G.CULTIVATION.expRequired(lost.level) * 0.2);
+  const beforeLoss = lost.cultivation.exp;
+  const failure = G.resolveCaveChallenge(lost, "fight", NOW, () => 0.99);
+  assert.strictEqual(failure.combat.outcome, "loss");
+  assert.ok(failure.combat.lost > 0);
+  assert.ok(lost.cultivation.exp < beforeLoss);
+});
+
+test("悟道丹、培元丹和静心丹会消耗并随机生效", () => {
+  const state = G.hydrate(
+    {
+      level: 20,
+      cultivation: {
+        attributes: {
+          root: "metal",
+          insight: 80,
+          fortune: 60,
+          daoHeart: 60,
+          lifespan: 100,
+        },
+        techniquesKnown: ["tech_metal_heaven_upper"],
+        equippedTechniques: ["tech_metal_heaven_upper"],
+        techniqueProgress: { tech_metal_heaven_upper: 10 },
+        pills: { breakthrough: 0, life: 0, technique: 1, cultivation: 1, heart: 1 },
+        regionId: "qingju_plain",
+        lastAgedAt: NOW,
+      },
+    },
+    NOW
+  );
+  const technique = G.takeCultivationPill(state, "technique", NOW, () => 0);
+  assert.strictEqual(technique.ok, true);
+  assert.ok(state.cultivation.techniqueProgress.tech_metal_heaven_upper > 10);
+  assert.strictEqual(state.cultivation.pills.technique, 0);
+
+  const beforeExp = state.cultivation.exp;
+  const cultivation = G.takeCultivationPill(state, "cultivation", NOW, () => 0);
+  assert.strictEqual(cultivation.ok, true);
+  assert.ok(state.cultivation.exp > beforeExp);
+  assert.strictEqual(state.cultivation.pills.cultivation, 0);
+
+  const heart = G.takeCultivationPill(state, "heart", NOW, () => 0);
+  assert.strictEqual(heart.ok, true);
+  assert.strictEqual(state.cultivation.attributes.daoHeart, 62);
+  assert.strictEqual(state.cultivation.pills.heart, 0);
+});
+
+test("混沌与先天道体兼容全属性功法，普通灵根仅适配本命功法", () => {
+  const make = (root) => ({ attributes: { root } });
+  assert.strictEqual(G.CULTIVATION.techniqueCompatible(make("chaos"), "tech_metal_heaven_upper"), true);
+  assert.strictEqual(G.CULTIVATION.techniqueCompatible(make("innate"), "tech_ice_heaven_upper"), true);
+  assert.strictEqual(
+    G.CULTIVATION.techniqueCompatible(make("metal"), "tech_dual_metal_water_heaven_upper"),
+    false
+  );
+  assert.strictEqual(
+    G.CULTIVATION.techniqueCompatible(make("dual_metal_water"), "tech_dual_metal_water_heaven_upper"),
+    true
+  );
+});
+
+test("商城功法可购买、研习、装备并增强修炼与突破", () => {
+  const state = G.hydrate(
+    {
+      level: 11,
+      coins: 100000,
+      cultivation: {
+        attributes: {
+          root: "metal",
+          insight: 70,
+          fortune: 50,
+          daoHeart: 70,
+          lifespan: 90,
+        },
+        lastAgedAt: NOW,
+      },
+    },
+    NOW
+  );
+  const item = G.CULTIVATION.TECHNIQUES.tech_metal_earth_middle;
+  const bought = G.purchase(state, item, NOW);
+  assert.strictEqual(bought.ok, true);
+  assert.strictEqual(state.cultivation.techniqueScrolls[item.id], 1);
+  const studied = G.studyTechnique(state, item.id, NOW);
+  assert.strictEqual(studied.ok, true);
+  assert.ok(state.cultivation.techniquesKnown.includes(item.id));
+  assert.strictEqual(state.cultivation.equippedTechnique, item.id);
+  assert.ok(G.CULTIVATION.activeTechnique(state.cultivation));
+
+  const wrong = G.CULTIVATION.TECHNIQUES.tech_fire_yellow_lower;
+  assert.strictEqual(G.purchase(state, wrong, NOW).reason, "root");
+
+  const reward = G.rollTechniqueReward(state, G.CULTIVATION.ORANGE_REGIONS[0], () => 0.99);
+  assert.strictEqual(reward.root, "metal");
+  assert.ok(state.cultivation.techniqueScrolls[reward.id] >= 1);
+});
+
+test("突破失败退回一半修为、消耗丹药并进入冷却", () => {
+  const state = G.hydrate(
+    {
+      level: 10,
+      cultivation: {
+        attributes: { root: "fire", insight: 100, fortune: 100, daoHeart: 80, lifespan: 90 },
+        exp: G.CULTIVATION.expRequired(10),
+        technique: 100,
+        pills: { breakthrough: 1, life: 0 },
+        lastAgedAt: NOW,
+      },
+    },
+    NOW
+  );
+  const beforeHeart = state.cultivation.attributes.daoHeart;
+  const failed = G.attemptBreakthrough(state, "pill", NOW, () => 1);
+  assert.strictEqual(failed.ok, false);
+  assert.strictEqual(state.cultivation.exp, Math.floor(G.CULTIVATION.expRequired(10) * 0.5));
+  assert.strictEqual(state.cultivation.pills.breakthrough, 0);
+  assert.strictEqual(state.cultivation.cooldownUntil, NOW + 10 * 60000);
+  assert.ok(state.cultivation.attributes.daoHeart < beforeHeart);
+});
+
+test("灵根、悟性和传承会共同放大修炼收益", () => {
+  const weak = G.hydrate(
+    {
+      cultivation: {
+        attributes: { root: "mixed", insight: 20, fortune: 20, daoHeart: 20, lifespan: 90 },
+        spiritStones: 1,
+        lastAgedAt: NOW,
+      },
+    },
+    NOW
+  );
+  const strong = G.hydrate(
+    {
+      cultivation: {
+        attributes: {
+          root: "innate",
+          insight: 100,
+          fortune: 100,
+          daoHeart: 100,
+          lifespan: 100,
+          rootLineage: 2,
+        },
+        spiritStones: 1,
+        lastAgedAt: NOW,
+      },
+    },
+    NOW
+  );
+  const makeRng = () => {
+    const values = [0.9, 0, 0, 0.9];
+    let index = 0;
+    return () => values[index++] ?? 0.9;
+  };
+  const weakResult = G.CULTIVATION.cultivateOnce(weak.cultivation, 1, makeRng(), "low");
+  const strongResult = G.CULTIVATION.cultivateOnce(strong.cultivation, 1, makeRng(), "low");
+  assert.ok(strongResult.gained > weakResult.gained * 2);
+});
+
+test("最高境界锁定 Lv.999，不会再次累加修为", () => {
+  const state = G.hydrate(
+    {
+      level: 999,
+      cultivation: {
+        attributes: { root: "innate", insight: 100, fortune: 100, daoHeart: 100, lifespan: 100 },
+        spiritStones: 5,
+        lastAgedAt: NOW,
+      },
+    },
+    NOW
+  );
+  const result = G.cultivate(state, 1, NOW, () => 0.5);
+  assert.strictEqual(result.ok, false);
+  assert.strictEqual(result.reason, "max-level");
+  assert.strictEqual(state.level, 999);
+  assert.strictEqual(state.cultivation.spiritStones, 5);
+});
+
+test("修为需求按大境界 6 倍、小境界 1.3 倍和瓶颈 4 倍增长", () => {
+  assert.strictEqual(G.CULTIVATION.expRequired(11), 100);
+  assert.strictEqual(G.CULTIVATION.expRequired(12), 130);
+  assert.strictEqual(G.CULTIVATION.expRequired(19), 816);
+  assert.strictEqual(G.CULTIVATION.expRequired(20), 3263);
+  assert.strictEqual(G.CULTIVATION.expRequired(21), 600);
+  assert.strictEqual(G.CULTIVATION.expRequired(41), 21600);
+  assert.ok(G.CULTIVATION.expRequired(999 - 1) > 1e50);
+  assert.strictEqual(G.CULTIVATION.expRequired(999), 0);
 });
 
 test("摸头加心情并且掉 1~3 金币", () => {
@@ -216,6 +1008,37 @@ test("商城：金币不足时买不了", () => {
   assert.strictEqual(result.ok, false);
   assert.strictEqual(result.reason, "coin");
   assert.strictEqual(state.coins, 5);
+});
+
+test("商城：灵石、五种丹药和避雷珠可购买", () => {
+  const state = G.hydrate({ level: 41, coins: 1000000 }, NOW);
+  const stone = G.purchaseMany(state, G.SHOP_ITEMS.stone_high, 3, NOW);
+  assert.strictEqual(stone.ok, true);
+  assert.strictEqual(state.cultivation.stones.high, 3);
+  assert.strictEqual(state.shopStats.purchases, 3);
+
+  const breakthrough = G.purchase(state, G.SHOP_ITEMS.breakthrough_pill, NOW);
+  const life = G.purchase(state, G.SHOP_ITEMS.life_pill, NOW);
+  const technique = G.purchase(state, G.SHOP_ITEMS.technique_pill, NOW);
+  const cultivation = G.purchase(state, G.SHOP_ITEMS.cultivation_pill, NOW);
+  const heart = G.purchase(state, G.SHOP_ITEMS.heart_pill, NOW);
+  const thunder = G.purchase(state, G.SHOP_ITEMS.thunder_pearl, NOW);
+  assert.strictEqual(breakthrough.ok, true);
+  assert.strictEqual(life.ok, true);
+  assert.strictEqual(technique.ok, true);
+  assert.strictEqual(cultivation.ok, true);
+  assert.strictEqual(heart.ok, true);
+  assert.strictEqual(thunder.ok, true);
+  assert.strictEqual(state.cultivation.pills.breakthrough, 1);
+  assert.strictEqual(state.cultivation.pills.life, 1);
+  assert.strictEqual(state.cultivation.pills.technique, 1);
+  assert.strictEqual(state.cultivation.pills.cultivation, 1);
+  assert.strictEqual(state.cultivation.pills.heart, 1);
+  assert.strictEqual(state.cultivation.thunderPearls, 1);
+  assert.strictEqual(
+    G.shopItemPrice(state, G.SHOP_ITEMS.breakthrough_pill),
+    G.CULTIVATION.breakthroughCost(41)
+  );
 });
 
 test("商城：装扮购买后解锁", () => {
@@ -484,6 +1307,47 @@ test("咖啡让产出 ×1.5，招财猫永久 +10%", () => {
   assert.ok(G.incomePerSecond(state) >= base * 1.5 * 1.09);
 });
 
+test("增益道具新增 10 款并按最高倍率生效、持续时间和到期状态可存档", () => {
+  const ids = [
+    "lemon_soda",
+    "honey_bar",
+    "matcha_latte",
+    "energy_drink",
+    "night_owl_drink",
+    "lucky_clover",
+    "cloud_aroma",
+    "starlight_charm",
+    "master_tea",
+    "time_capsule",
+  ];
+  const buffs = Object.values(G.SHOP_ITEMS).filter((item) => item.type === "buff");
+  assert.strictEqual(buffs.length, 11);
+  assert.strictEqual(new Set(ids.map((id) => G.SHOP_ITEMS[id].buff)).size, 10);
+
+  const state = G.hydrate({ coins: 100000, mood: 50, satiety: 80 }, Date.now());
+  const now = Date.now();
+  const base = G.incomePerSecond(state);
+  assert.strictEqual(G.activeIncomeBuffMultiplier(state, now), 1);
+
+  for (const id of ids) {
+    const item = G.SHOP_ITEMS[id];
+    assert.ok(item.minutes >= 10 && item.minutes <= 60, id);
+    assert.ok(item.incomeMultiplier > 1, id);
+    assert.strictEqual(G.purchase(state, item, now).ok, true, id);
+  }
+  assert.strictEqual(G.activeIncomeBuffMultiplier(state, now), 3);
+  assert.ok(Math.abs(G.incomePerSecond(state) - base * 3) < 1e-9);
+  assert.ok(G.activeBuff(state, "income_master_tea", now) >= now + 44 * 60000);
+
+  G.purchase(state, G.SHOP_ITEMS.time_capsule, now + 1000);
+  assert.ok(state.buffs.income_time_capsule >= now + 1000 + 30 * 60000);
+  state.buffs.income_time_capsule = now - 1;
+  assert.strictEqual(G.activeIncomeBuffMultiplier(state, now), 2.5);
+
+  const cleaned = sanitizeSave(state);
+  ids.forEach((id) => assert.ok(cleaned.buffs[G.SHOP_ITEMS[id].buff] > 0, id));
+});
+
 test("日程：添加、到期、提醒、完成、删除", () => {
   const state = G.hydrate({}, NOW);
   const added = G.addScheduleItem(state, { time: "09:00", text: "喝一杯水" }, NOW);
@@ -511,6 +1375,45 @@ test("v1 老存档迁移后带上商城与日程字段", () => {
   assert.strictEqual(state.version, G.SAVE_VERSION);
 });
 
+test("v22 老存档升级到当前版本并保留组合灵根与长 ID 功法", () => {
+  const raw = {
+    version: 22,
+    coins: 10,
+    cultivation: {
+      attributes: {
+        root: "dual_metal_water",
+        insight: 80,
+        fortune: 70,
+        daoHeart: 80,
+        lifespan: 100,
+      },
+      soul: { level: 101, count: 1, root: "quad_metal_wood_water_fire", attributeBonus: 20 },
+      techniqueScrolls: { tech_dual_metal_water_heaven_upper: 2 },
+      techniquesKnown: ["tech_dual_metal_water_heaven_upper"],
+      techniqueProgress: { tech_dual_metal_water_heaven_upper: 37.5 },
+      equippedTechnique: "tech_dual_metal_water_heaven_upper",
+      lastAgedAt: NOW,
+    },
+  };
+  const migrated = G.hydrate(raw, NOW);
+  assert.strictEqual(migrated.version, G.SAVE_VERSION);
+  assert.strictEqual(migrated.cultivation.attributes.root, "dual_metal_water");
+  assert.strictEqual(migrated.cultivation.soul.root, "quad_metal_wood_water_fire");
+  assert.strictEqual(migrated.cultivation.techniqueScrolls.tech_dual_metal_water_heaven_upper, 2);
+  assert.ok(migrated.cultivation.equippedTechniques.includes("tech_dual_metal_water_heaven_upper"));
+  assert.strictEqual(migrated.cultivation.techniqueProgress.tech_dual_metal_water_heaven_upper, 37.5);
+  assert.deepStrictEqual(migrated.cultivation.cave.spots, []);
+  assert.strictEqual(migrated.cultivation.pills.technique, 0);
+  assert.strictEqual(migrated.cultivation.pills.cultivation, 0);
+  assert.strictEqual(migrated.cultivation.pills.heart, 0);
+  const clean = sanitizeSave(migrated);
+  assert.strictEqual(clean.cultivation.attributes.root, "dual_metal_water");
+  assert.strictEqual(clean.cultivation.equippedTechnique, "tech_dual_metal_water_heaven_upper");
+  assert.ok(clean.cultivation.equippedTechniques.includes("tech_dual_metal_water_heaven_upper"));
+  assert.strictEqual(clean.cultivation.techniqueProgress.tech_dual_metal_water_heaven_upper, 37.5);
+  assert.strictEqual(clean.cultivation.techniqueScrolls.tech_dual_metal_water_heaven_upper, 2);
+});
+
 test("存档白名单保留商城 / 日程字段并过滤非法项", () => {
   const clean = sanitizeSave({
     coins: 10,
@@ -527,7 +1430,7 @@ test("存档白名单保留商城 / 日程字段并过滤非法项", () => {
     stickerLabels: { meme_test: "新名称", bad: 3 },
     stickerHidden: ["closeup_soft", "bad name"],
     inventory: { fish: 2, "bad-key": 3 },
-    buffs: { double_income: 12345 },
+    buffs: { double_income: 12345, income_time_capsule: 23456, "bad-key": 99 },
     perks: {
       lucky_cat: true,
       luxury_hourglass: true,
@@ -567,6 +1470,35 @@ test("存档白名单保留商城 / 日程字段并过滤非法项", () => {
         },
       ],
     },
+    cultivation: {
+      attributes: {
+        root: "innate",
+        insight: 93,
+        fortune: 81,
+        daoHeart: 77,
+        lifespan: 105,
+        rootLineage: 2,
+      },
+      exp: 456,
+      age: 33,
+      techniqueReadyAt: NOW + 60000,
+      spiritStones: 8,
+      stones: { low: 8, mid: 3, high: 2, supreme: 1 },
+      selectedStoneTier: "high",
+      regionId: "ghost_realm",
+      formationId: "five_elements",
+      meditation: { active: true, lastAt: NOW, totalSeconds: 3600 },
+      soul: { level: 101, count: 2, root: "metal", attributeBonus: 15 },
+      techniqueScrolls: { tech_metal_heaven_upper: 2 },
+      techniquesKnown: ["tech_metal_earth_middle"],
+      equippedTechnique: "tech_metal_earth_middle",
+      herbs: 4,
+      pills: { breakthrough: 2, life: 1 },
+      thunderPearls: 3,
+      karma: 5,
+      cycle: 2,
+      lastAgedAt: NOW,
+    },
     prestige: { count: 2, legacyLevel: 109 },
     intimacy: { points: 130, dailyDate: "2026-10-22", dailyPoints: 12 },
     diary: { entries: [{ date: "2026-10-21", text: "昨天赚了 100 金币。" }] },
@@ -576,7 +1508,7 @@ test("存档白名单保留商城 / 日程字段并过滤非法项", () => {
     schedule: [{ id: "a", time: "09:00", text: "喝水", doneDate: "", notifiedDate: "" }],
     shopStats: { purchases: 2, spent: 40 },
   });
-  assert.strictEqual(clean.version, 14);
+  assert.strictEqual(clean.version, G.SAVE_VERSION);
   assert.strictEqual(clean.inventory.fish, 2);
   assert.strictEqual(clean.inventory["bad-key"], undefined);
   assert.strictEqual(clean.perks.lucky_cat, true);
@@ -592,11 +1524,33 @@ test("存档白名单保留商城 / 日程字段并过滤非法项", () => {
   assert.deepStrictEqual(clean.training.learned, ["idle_stand", "scene_cat"]);
   assert.strictEqual(clean.work.fragments, 4);
   assert.strictEqual(clean.work.jobs[0].reward.amount, 500);
+  assert.strictEqual(clean.cultivation.attributes.root, "innate");
+  assert.strictEqual(clean.cultivation.attributes.rootLineage, 2);
+  assert.strictEqual(clean.cultivation.spiritStones, 8);
+  assert.strictEqual(clean.cultivation.techniqueReadyAt, NOW + 60000);
+  assert.strictEqual(clean.cultivation.stones.low, 8);
+  assert.strictEqual(clean.cultivation.stones.mid, 3);
+  assert.strictEqual(clean.cultivation.selectedStoneTier, "high");
+  assert.strictEqual(clean.cultivation.regionId, "ghost_realm");
+  assert.strictEqual(clean.cultivation.formationId, "five_elements");
+  assert.strictEqual(clean.cultivation.meditation.active, true);
+  assert.strictEqual(clean.cultivation.meditation.totalSeconds, 3600);
+  assert.strictEqual(clean.cultivation.soul.level, 101);
+  assert.strictEqual(clean.cultivation.soul.root, "metal");
+  assert.strictEqual(clean.cultivation.soul.attributeBonus, 15);
+  assert.strictEqual(clean.cultivation.techniqueScrolls.tech_metal_heaven_upper, 2);
+  assert.deepStrictEqual(clean.cultivation.techniquesKnown, ["tech_metal_earth_middle"]);
+  assert.strictEqual(clean.cultivation.equippedTechnique, "tech_metal_earth_middle");
+  assert.strictEqual(clean.cultivation.pills.breakthrough, 2);
+  assert.strictEqual(clean.cultivation.thunderPearls, 3);
+  assert.strictEqual(clean.cultivation.cycle, 2);
   assert.strictEqual(clean.prestige.count, 2);
   assert.strictEqual(clean.prestige.legacyLevel, 109);
   assert.strictEqual(clean.intimacy.points, 130);
   assert.strictEqual(clean.diary.entries[0].date, "2026-10-21");
   assert.strictEqual(clean.buffs.double_income, 12345);
+  assert.strictEqual(clean.buffs.income_time_capsule, 23456);
+  assert.strictEqual(clean.buffs["bad-key"], undefined);
   assert.strictEqual(clean.unlocked.length, 2);
   assert.deepStrictEqual(clean.favorites, ["idle_stand"]);
   assert.deepStrictEqual(clean.recent, ["idle_stand"]);
@@ -615,6 +1569,24 @@ test("存档白名单保留商城 / 日程字段并过滤非法项", () => {
   assert.strictEqual(clean.stickerLabels.meme_test, "新名称");
   assert.strictEqual(clean.stickerLabels.bad, undefined);
   assert.deepStrictEqual(clean.stickerHidden, ["closeup_soft"]);
+});
+
+test("存档白名单保留进行中的灵石批量修炼会话", () => {
+  const state = G.hydrate(
+    {
+      cultivation: {
+        stones: { low: 1000, mid: 0, high: 0, supreme: 0 },
+        lastAgedAt: NOW,
+      },
+    },
+    NOW
+  );
+  const started = G.cultivate(state, 1000, NOW, () => 0.9, "low");
+  const clean = sanitizeSave(state);
+  assert.strictEqual(clean.cultivation.stoneSession.active, true);
+  assert.strictEqual(clean.cultivation.stoneSession.quantity, 1000);
+  assert.strictEqual(clean.cultivation.stoneSession.totalEnergy, 10_000);
+  assert.strictEqual(clean.cultivation.stoneSession.endsAt, started.endsAt);
 });
 
 test("动作间隔按配置秒数浮动，默认会兜底", () => {
@@ -785,6 +1757,31 @@ test("扭蛋扣 500 金币并返回结果", () => {
   assert.strictEqual(state.gacha.pulls, 1);
 });
 
+test("普通金币按 90% 的 100–500 与 10% 的 500–2500 两档随机", () => {
+  const lowState = G.hydrate({ coins: 500 }, NOW);
+  const low = G.pullGacha(lowState, [], NOW, sequenceRandom([0.999999, 0, 0.899999, 0]));
+  assert.strictEqual(low.type, "coins");
+  assert.strictEqual(low.amount, 100);
+
+  const lowMaxState = G.hydrate({ coins: 500 }, NOW);
+  const lowMax = G.pullGacha(lowMaxState, [], NOW, sequenceRandom([0.999999, 0, 0.899999, 0.999999]));
+  assert.strictEqual(lowMax.amount, 500);
+
+  const highMinState = G.hydrate({ coins: 500 }, NOW);
+  const highMin = G.pullGacha(highMinState, [], NOW, sequenceRandom([0.999999, 0, 0.9, 0]));
+  assert.strictEqual(highMin.amount, 500);
+
+  const highState = G.hydrate({ coins: 500 }, NOW);
+  const high = G.pullGacha(highState, [], NOW, sequenceRandom([0.999999, 0, 0.9, 0.999999]));
+  assert.strictEqual(high.type, "coins");
+  assert.strictEqual(high.amount, 2500);
+  assert.strictEqual(G.GACHA_COMMON_COIN_LOW_RATE, 0.9);
+  assert.strictEqual(G.GACHA_COMMON_COIN_LOW_MIN, 100);
+  assert.strictEqual(G.GACHA_COMMON_COIN_LOW_MAX, 500);
+  assert.strictEqual(G.GACHA_COMMON_COIN_HIGH_MIN, 500);
+  assert.strictEqual(G.GACHA_COMMON_COIN_HIGH_MAX, 2500);
+});
+
 test("扭蛋包含四档金币大奖并在 80 抽从三档保底中随机", () => {
   const top = G.hydrate({ coins: 500 }, NOW);
   const topResult = G.pullGacha(top, [], NOW, () => 0);
@@ -808,13 +1805,32 @@ test("扭蛋包含四档金币大奖并在 80 抽从三档保底中随机", () =
   );
 });
 
-test("扭蛋永久旧装扮不超过 5%，普通分支概率合计为 100%", () => {
+test("累计抽数不会改变普通抽概率，只按每 80 抽触发固定保底", () => {
+  const ordinaryState = G.hydrate({ coins: 500, gacha: { pulls: 2999 } }, NOW);
+  const ordinary = G.pullGacha(ordinaryState, [], NOW, () => 0.0003);
+  assert.strictEqual(ordinaryState.gacha.pulls, 3000);
+  assert.strictEqual(ordinary.guaranteed, false);
+  assert.strictEqual(ordinary.amount, 50000);
+
+  const pityState = G.hydrate({ coins: 500, gacha: { pulls: 3039 } }, NOW);
+  const pity = G.pullGacha(pityState, [], NOW, () => 0.34);
+  assert.strictEqual(pityState.gacha.pulls, 3040);
+  assert.strictEqual(pity.guaranteed, true);
+  assert.strictEqual(pity.amount, 50000);
+});
+
+test("扭蛋普通分支概率合计为 100%，家具降至 2% 并加入 3% 增益", () => {
+  const rate = (value) => Math.round(value * 1e9) / 1e9;
   const rateSum = Object.values(G.GACHA_RATES).reduce((sum, value) => sum + value, 0);
   const topRate = G.GACHA_TOP_PRIZES[G.GACHA_TOP_PRIZES.length - 1].until / 1000000;
-  assert.strictEqual(Math.round(rateSum * 1e9) / 1e9, 1);
+  assert.strictEqual(rate(rateSum), 1);
   assert.ok((1 - topRate) * G.GACHA_RATES.legacyOutfitUnlock <= 0.05);
-  assert.strictEqual(G.GACHA_RATES.timedFurniture, 0.1);
-  assert.strictEqual(G.GACHA_RATES.timedOutfit, 0.08);
+  assert.strictEqual(rate(G.GACHA_RATES.consumable), 0.02);
+  assert.strictEqual(G.GACHA_RATES.timedFurniture, 0.02);
+  assert.strictEqual(G.GACHA_RATES.buff, 0.03);
+  assert.strictEqual(rate(G.GACHA_RATES.timedOutfit), 0.008);
+  assert.strictEqual(rate(G.GACHA_RATES.legacyOutfitUnlock), 0.005);
+  assert.strictEqual(rate(G.GACHA_RATES.themeOrFallback), 0.22);
 });
 
 test("限时家具与装扮按价格加权，价格越高概率越低", () => {
@@ -823,7 +1839,7 @@ test("限时家具与装扮按价格加权，价格越高概率越低", () => {
 
   const state = G.hydrate({ coins: 1000 }, NOW);
   const action = { name: "dress_santa", label: "圣诞装扮", category: "dress" };
-  const result = G.pullGacha(state, [action], NOW, sequenceRandom([0.999999, 0.82, 0]));
+  const result = G.pullGacha(state, [action], NOW, sequenceRandom([0.999999, 0.778, 0]));
   assert.strictEqual(result.type, "dress");
   assert.strictEqual(result.action, action.name);
   assert.ok(state.unlocked.includes(action.name));
@@ -833,7 +1849,7 @@ test("限时家具与装扮按价格加权，价格越高概率越低", () => {
 test("扭蛋可抽出 1–7 天限时家具，重复获得会续期并在到期后失效", () => {
   const state = G.hydrate({ coins: 1000 }, NOW);
   const furniture = Object.values(G.FURNITURE).find((item) => item.id !== "companion");
-  const first = G.pullGacha(state, [], NOW, sequenceRandom([0.999999, 0.65, 0, 0.5]));
+  const first = G.pullGacha(state, [], NOW, sequenceRandom([0.999999, 0.73, 0, 0.5]));
   assert.deepStrictEqual(G.GACHA_LIMITED_DAYS, [1, 2, 3, 4, 5, 6, 7]);
   assert.strictEqual(first.type, "furniture");
   assert.strictEqual(first.durationDays, 4);
@@ -842,20 +1858,32 @@ test("扭蛋可抽出 1–7 天限时家具，重复获得会续期并在到期�
   assert.strictEqual(G.ownsFurniture(state, furniture.id, NOW + 1), true);
   assert.strictEqual(G.ownsFurniture(state, furniture.id, NOW + 4 * 86400000 + 1), false);
 
-  const extended = G.pullGacha(state, [], NOW, sequenceRandom([0.999999, 0.65, 0, 0]));
+  const extended = G.pullGacha(state, [], NOW, sequenceRandom([0.999999, 0.73, 0, 0]));
   assert.strictEqual(extended.durationDays, 1);
   assert.strictEqual(state.rentals.furniture[furniture.id], NOW + 5 * 86400000);
 
   const ownedState = G.hydrate({ coins: 500, room: { furniture: [furniture.id] } }, NOW);
-  const replacement = G.pullGacha(ownedState, [], NOW, sequenceRandom([0.999999, 0.65, 0, 0]));
+  const replacement = G.pullGacha(ownedState, [], NOW, sequenceRandom([0.999999, 0.73, 0, 0]));
   assert.strictEqual(replacement.type, "furniture");
   assert.notStrictEqual(replacement.furnitureId, furniture.id);
+});
+
+test("扭蛋可以抽出增益并立即激活、重复获得会续期", () => {
+  const state = G.hydrate({ coins: 1000 }, NOW);
+  const first = G.pullGacha(state, [], NOW, sequenceRandom([0.999999, 0.75, 0]));
+  assert.strictEqual(first.type, "buff");
+  assert.strictEqual(first.rewardCategory, "buff");
+  assert.strictEqual(first.itemId, "coffee");
+  assert.strictEqual(state.buffs.double_income, NOW + 10 * 60000);
+
+  const extended = G.pullGacha(state, [], NOW, sequenceRandom([0.999999, 0.75, 0]));
+  assert.ok(extended.type === "buff" && state.buffs.double_income > NOW + 10 * 60000);
 });
 
 test("扭蛋可抽出 1–7 天限时装扮，并按租赁有效期解锁和失效", () => {
   const state = G.hydrate({ coins: 1000 }, NOW);
   const action = { name: "dress_santa", label: "圣诞装扮", category: "dress" };
-  const result = G.pullGacha(state, [action], NOW, sequenceRandom([0.999999, 0.75, 0, 0.999999]));
+  const result = G.pullGacha(state, [action], NOW, sequenceRandom([0.999999, 0.77, 0, 0.999999]));
   assert.strictEqual(result.type, "dress");
   assert.strictEqual(result.rewardCategory, "outfit");
   assert.strictEqual(result.durationDays, 7);
@@ -865,7 +1893,7 @@ test("扭蛋可抽出 1–7 天限时装扮，并按租赁有效期解锁和失�
   assert.strictEqual(G.isUnlocked(state, action, NOW + 7 * 86400000 + 1), false);
 
   const fashion = G.SHOP_ITEMS.fashion_starlight_hat;
-  const fashionResult = G.pullGacha(state, [], NOW, sequenceRandom([0.999999, 0.75, 0, 0]));
+  const fashionResult = G.pullGacha(state, [], NOW, sequenceRandom([0.999999, 0.77, 0, 0]));
   assert.strictEqual(fashionResult.type, "fashion");
   assert.strictEqual(fashionResult.durationDays, 1);
   assert.strictEqual(state.rentals.dress[fashion.id], NOW + 86400000);
@@ -899,6 +1927,62 @@ test("扭蛋记录在最前面追加、最多保存 50 条并可通过存档白�
   const sanitized = sanitizeSave(state);
   assert.strictEqual(sanitized.gacha.history.length, 50);
   assert.strictEqual(sanitized.gacha.history[0].label, result.label);
+});
+
+test("UP 奖池概率合计为 100%，价格和 300 抽保底独立于常驻池", () => {
+  const rateSum = Object.values(G.GACHA_UP_RATES).reduce((sum, value) => sum + value, 0);
+  assert.strictEqual(Math.round(rateSum * 1e9) / 1e9, 1);
+  assert.strictEqual(G.GACHA_UP_RATES.bigCollection, 0.000025);
+  assert.strictEqual(G.GACHA_UP_RATES.officeCollection, 0.000075);
+  assert.strictEqual(G.GACHA_UP_PRICE, 5000);
+  assert.strictEqual(G.GACHA_UP_TEN_PRICE, 50000);
+  assert.strictEqual(G.GACHA_UP_PITY_PULLS, 300);
+
+  const state = G.hydrate({ coins: 100000 }, UP_NOW);
+  const result = G.pullUpGachaMany(state, [], 10, UP_NOW, () => 0.5);
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(result.cost, 50000);
+  assert.strictEqual(result.results.length, 10);
+  assert.strictEqual(state.gacha.upPulls, 10);
+  assert.strictEqual(state.gacha.upPity, 10);
+  assert.strictEqual(state.gacha.pulls, 0);
+});
+
+test("UP 大奖首次获得典藏，重复获得折算 20M 金币", () => {
+  const state = G.hydrate({ coins: 10000 }, UP_NOW);
+  const first = G.pullUpGacha(state, [], UP_NOW, () => 0);
+  assert.strictEqual(first.type, "luxury");
+  assert.strictEqual(first.itemId, G.GACHA_UP_BIG_ID || "luxury_moon_observatory");
+  assert.strictEqual(state.perks.luxury_moon_observatory, true);
+  assert.strictEqual(state.gacha.upPity, 0);
+
+  const before = state.coins;
+  const duplicate = G.pullUpGacha(state, [], UP_NOW, () => 0);
+  assert.strictEqual(duplicate.type, "coins");
+  assert.strictEqual(duplicate.amount, 20000000);
+  assert.strictEqual(state.coins, before - G.GACHA_UP_PRICE + 20000000);
+  assert.strictEqual(state.gacha.history[0].pool, "up");
+});
+
+test("UP 私人摸鱼办公室重复获得折算 520K 金币", () => {
+  const state = G.hydrate({ coins: 10000, perks: { luxury_office: true } }, UP_NOW);
+  const before = state.coins;
+  const result = G.pullUpGacha(state, [], UP_NOW, sequenceRandom([0.5, 0.00005]));
+  assert.strictEqual(result.type, "coins");
+  assert.strictEqual(result.amount, 520000);
+  assert.strictEqual(state.coins, before - G.GACHA_UP_PRICE + 520000);
+});
+
+test("UP 第 300 抽必定获得月球摸鱼台", () => {
+  const state = G.hydrate({ coins: 10000, gacha: { upPity: 299 } }, UP_NOW);
+  const result = G.pullUpGacha(state, [], UP_NOW, () => 0.5);
+  assert.strictEqual(result.guaranteed, true);
+  assert.strictEqual(result.itemId, "luxury_moon_observatory");
+  assert.strictEqual(state.gacha.upPity, 0);
+
+  assert.strictEqual(G.gachaUpActive(Date.parse("2026-10-25T00:00:00+08:00")), true);
+  assert.strictEqual(G.gachaUpActive(Date.parse("2026-12-20T23:59:59+08:00")), true);
+  assert.strictEqual(G.gachaUpActive(Date.parse("2026-12-21T00:00:00+08:00")), false);
 });
 
 test("小游戏结算金币并进入冷却", () => {
@@ -1159,50 +2243,195 @@ test("访客可以被请走，碎片可以兑换装扮", () => {
   assert.strictEqual(state.work.fragments, 0);
 });
 
-test("Lv.50 才能转生，转生后等级归一并保留长期资产", () => {
-  const low = G.hydrate({ level: 49 }, NOW);
-  assert.strictEqual(G.prestige(low, NOW).ok, false);
+test("元婴期可以转世，等级和资产重来并尝试携带一项属性", () => {
+  const low = G.hydrate({ level: 40 }, NOW);
+  assert.strictEqual(G.rebirth(low, "insight", NOW).ok, false);
 
   const state = G.hydrate(
     {
-      version: 10,
-      level: 50,
+      level: 41,
       coins: 123456,
       unlocked: ["dress_santa"],
       seenActions: ["scene_cat"],
       companion: { adopted: true },
       room: { furniture: ["rug"] },
+      cultivation: {
+        attributes: { root: "water", insight: 100, fortune: 80, daoHeart: 90, lifespan: 110 },
+        cycle: 2,
+        lastAgedAt: NOW,
+      },
     },
     NOW
   );
-  const result = G.prestige(state, NOW);
+  const result = G.rebirth(state, "insight", NOW, () => 0.1);
   assert.strictEqual(result.ok, true);
   assert.strictEqual(state.level, 1);
-  assert.strictEqual(state.prestige.count, 1);
-  assert.strictEqual(state.prestige.legacyLevel, 50);
-  assert.strictEqual(state.coins, 123456);
-  assert.ok(state.unlocked.includes("dress_santa"));
-  assert.ok(state.seenActions.includes("scene_cat"));
-  assert.strictEqual(state.companion.adopted, true);
-  assert.strictEqual(G.titleForState(state), "摸鱼新生");
+  assert.strictEqual(state.cultivation.cycle, 3);
+  assert.strictEqual(state.coins, 0);
+  assert.deepStrictEqual(state.unlocked, []);
+  assert.strictEqual(state.companion.adopted, false);
+  assert.strictEqual(state.cultivation.lastLifeEvent.type, "rebirth");
+  assert.strictEqual(state.cultivation.lastLifeEvent.carried, "insight");
+  assert.strictEqual(result.mergeMode, "merge");
 });
 
-test("转生倍率永久提升产出，并累积限定称号", () => {
-  const state = G.hydrate({ level: 50, prestige: { count: 2, legacyLevel: 100 } }, NOW);
-  const before = G.incomePerSecond(state);
-  assert.ok(Math.abs(before - 50 * 1.4 * 1.3) < 1e-9);
-  assert.strictEqual(G.titleForState(state), "摸鱼传说");
-  G.prestige(state, NOW);
-  assert.strictEqual(state.prestige.count, 3);
-  assert.strictEqual(G.prestigeStatus(state).multiplier, 1.45);
-  assert.strictEqual(G.titleForState(state), "传奇摸鱼王");
+test("主动转世按当前大境界命名，元婴只是解锁条件", () => {
+  const nascent = G.hydrate({ level: 41 }, NOW);
+  const tribulation = G.hydrate({ level: 100 }, NOW);
+  assert.strictEqual(G.rebirthStatus(nascent).realmName, "元婴");
+  assert.strictEqual(G.rebirthStatus(tribulation).realmName, "渡劫");
+  const result = G.rebirth(tribulation, "fortune", NOW, () => 0.9);
+  assert.strictEqual(result.previousRealmName, "渡劫");
 });
 
-test("v9 老存档迁移后补齐转生字段", () => {
-  const state = G.hydrate({ version: 9, level: 20 }, NOW);
+test("仙人神魂转世保留前世灵根、神魂等级和全属性加成", () => {
+  const state = G.hydrate(
+    {
+      level: 101,
+      cultivation: {
+        attributes: {
+          root: "metal",
+          insight: 110,
+          fortune: 100,
+          daoHeart: 120,
+          lifespan: 130,
+          rootLineage: 2,
+        },
+        cycle: 4,
+        lastAgedAt: NOW,
+      },
+    },
+    NOW
+  );
+  const before = G.rebirthStatus(state);
+  assert.strictEqual(before.immortal, true);
+  assert.strictEqual(before.soul.nextLevel, 101);
+  assert.strictEqual(before.soul.nextRootName, "金灵根");
+  assert.ok(before.soul.nextAttributeBonus > 0);
+
+  const result = G.rebirth(state, "insight", NOW, () => 0.1);
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(result.immortal, true);
+  assert.strictEqual(state.level, 1);
+  assert.strictEqual(state.cultivation.soul.level, 101);
+  assert.strictEqual(state.cultivation.soul.root, "metal");
+  assert.strictEqual(state.cultivation.soul.attributeBonus, result.attributeBonus);
+  assert.strictEqual(state.cultivation.attributes.root, "metal");
+  assert.strictEqual(result.rootUpgraded, true);
+  assert.strictEqual(result.generatedRoot, "quad_metal_wood_water_fire");
+  assert.strictEqual(state.cultivation.attributes.rootLineage, 3);
+  assert.ok(state.cultivation.attributes.insight >= result.attributeBonus);
+  assert.ok(state.cultivation.attributes.fortune >= result.attributeBonus);
+  assert.strictEqual(state.cultivation.lastLifeEvent.carried, "root");
+});
+
+test("仙人转世仅在相同或共生多灵根时提高根骨等阶", () => {
+  assert.strictEqual(G.CULTIVATION.rootsAreSymbiotic("metal", "metal"), true);
+  assert.strictEqual(G.CULTIVATION.rootsAreSymbiotic("metal", "dual_metal_water"), true);
+  assert.strictEqual(G.CULTIVATION.rootsAreSymbiotic("metal", "dual_fire_earth"), false);
+  assert.strictEqual(G.CULTIVATION.rootsAreSymbiotic("metal", "innate"), false);
+
+  const state = G.hydrate(
+    {
+      level: 101,
+      cultivation: {
+        attributes: {
+          root: "metal",
+          insight: 100,
+          fortune: 100,
+          daoHeart: 100,
+          lifespan: 130,
+          rootLineage: 4,
+        },
+        lastAgedAt: NOW,
+      },
+    },
+    NOW
+  );
+  const result = G.rebirth(state, "root", NOW, () => 0);
+  assert.strictEqual(result.generatedRoot, "innate");
+  assert.strictEqual(result.rootUpgraded, false);
+  assert.strictEqual(state.cultivation.attributes.root, "metal");
+  assert.strictEqual(state.cultivation.attributes.rootLineage, 4);
+
+  const same = G.hydrate(
+    {
+      level: 101,
+      cultivation: {
+        attributes: {
+          root: "innate",
+          insight: 100,
+          fortune: 100,
+          daoHeart: 100,
+          lifespan: 130,
+          rootLineage: 2,
+        },
+        lastAgedAt: NOW,
+      },
+    },
+    NOW
+  );
+  const sameResult = G.rebirth(same, "root", NOW, () => 0);
+  assert.strictEqual(sameResult.generatedRoot, "innate");
+  assert.strictEqual(sameResult.rootUpgraded, true);
+  assert.strictEqual(same.cultivation.attributes.rootLineage, 3);
+});
+
+test("寿元耗尽会陨落、重选命格并清空本世进度", () => {
+  const state = G.hydrate(
+    {
+      level: 20,
+      coins: 8888,
+      cultivation: {
+        attributes: { root: "wood", insight: 50, fortune: 50, daoHeart: 50, lifespan: 90 },
+        age: 100,
+        lastAgedAt: NOW,
+        cycle: 0,
+      },
+    },
+    NOW,
+    () => 0.12
+  );
+  state.cultivation.age = G.CULTIVATION.maxLifespan(state.cultivation, state.level) - 0.5;
+  state.cultivation.lastAgedAt = NOW - G.CULTIVATION.DAY_MS;
+  const result = G.advanceLifespan(state, NOW, () => 0.12);
+  assert.strictEqual(result.died, true);
+  assert.strictEqual(state.level, 1);
+  assert.strictEqual(state.coins, 0);
+  assert.strictEqual(state.cultivation.cycle, 1);
+  assert.strictEqual(state.cultivation.lastLifeEvent.type, "lifespan");
+});
+
+test("百级飞升天劫包含多阶段，成功后进入仙界真仙", () => {
+  const state = G.hydrate(
+    {
+      level: 100,
+      cultivation: {
+        attributes: { root: "innate", insight: 120, fortune: 120, daoHeart: 120, lifespan: 120 },
+        exp: G.CULTIVATION.expRequired(100),
+        technique: 1000,
+        pills: { breakthrough: 1, life: 0 },
+        thunderPearls: 3,
+        lastAgedAt: NOW,
+      },
+    },
+    NOW
+  );
+  const status = G.CULTIVATION.breakthroughStatus(state.cultivation, 100, "pill", NOW);
+  assert.ok(status.tribulation.steps.includes("心魔劫"));
+  assert.ok(status.tribulation.steps.includes("法则劫"));
+  const result = G.attemptBreakthrough(state, "pill", NOW, () => 0);
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(state.level, 101);
+  assert.strictEqual(G.titleForState(state), "真仙初期");
+});
+
+test("v15 老存档迁移后补齐修仙属性与寿元", () => {
+  const state = G.hydrate({ version: 15, level: 20 }, NOW, () => 0.2);
   assert.strictEqual(state.version, G.SAVE_VERSION);
-  assert.strictEqual(state.prestige.count, 0);
-  assert.strictEqual(state.prestige.legacyLevel, 0);
+  assert.ok(state.cultivation.attributes.root in G.CULTIVATION.ROOTS);
+  assert.ok(state.cultivation.age > 0);
+  assert.ok(G.CULTIVATION.maxLifespan(state.cultivation, state.level) > state.cultivation.age);
 });
 
 test("亲密度由互动、心愿和访客增长并独立于心情", () => {
@@ -1265,6 +2494,199 @@ test("v13 老存档迁移后补齐永耀状态", () => {
     activeUntil: 0,
     boards: [],
   });
+});
+
+test("培元丹每个小阶段最多服用 2 颗，升级后重置额度", () => {
+  const state = G.hydrate(
+    {
+      level: 20,
+      cultivation: {
+        attributes: {
+          root: "metal",
+          insight: 80,
+          fortune: 60,
+          daoHeart: 60,
+          lifespan: 100,
+        },
+        pills: { breakthrough: 0, life: 0, technique: 0, cultivation: 3, heart: 0 },
+        lastAgedAt: NOW,
+      },
+    },
+    NOW
+  );
+  assert.strictEqual(G.takeCultivationPill(state, "cultivation", NOW, () => 0).ok, true);
+  assert.strictEqual(G.takeCultivationPill(state, "cultivation", NOW, () => 0).ok, true);
+  const limited = G.takeCultivationPill(state, "cultivation", NOW, () => 0);
+  assert.strictEqual(limited.ok, false);
+  assert.strictEqual(limited.reason, "stage-limit");
+  assert.strictEqual(state.cultivation.pills.cultivation, 1);
+  state.level += 1;
+  assert.strictEqual(G.takeCultivationPill(state, "cultivation", NOW, () => 0).ok, true);
+});
+
+test("可以提前结束灵石修炼并按已吸收比例结算", () => {
+  const state = G.hydrate(
+    {
+      cultivation: {
+        stones: { low: 10, mid: 0, high: 0, supreme: 0 },
+        attributes: {
+          root: "metal",
+          insight: 70,
+          fortune: 60,
+          daoHeart: 60,
+          lifespan: 100,
+        },
+        lastAgedAt: NOW,
+      },
+    },
+    NOW
+  );
+  const started = G.cultivate(state, 10, NOW, () => 0.9, "low");
+  const earlyAt = NOW + Math.floor(started.durationMs / 4);
+  const early = G.endStoneCultivation(state, earlyAt, () => 0.9);
+  assert.strictEqual(early.completed, true);
+  assert.strictEqual(early.endedEarly, true);
+  assert.ok(early.settledEnergy > 0 && early.settledEnergy < early.totalEnergy);
+  assert.ok(early.gained > 0);
+  assert.strictEqual(state.cultivation.stoneSession.active, false);
+});
+
+test("自动购买并进食可在饱食度偏低时运行", () => {
+  const state = G.hydrate({ coins: 100, satiety: 20, settings: { autoFeed: true } }, NOW);
+  G.tick(state, 1000);
+  assert.strictEqual(state.stats.feeds, 1);
+  assert.ok(state.satiety > G.BALANCE.hungryThreshold);
+  assert.ok(state.coins < 100);
+});
+
+test("属性上限提升到 99999 并由存档白名单保留", () => {
+  const state = G.hydrate(
+    {
+      cultivation: {
+        attributes: {
+          root: "metal",
+          insight: 120000,
+          fortune: 99999,
+          daoHeart: 110000,
+          lifespan: 130000,
+        },
+        lastAgedAt: NOW,
+      },
+    },
+    NOW
+  );
+  assert.strictEqual(state.cultivation.attributes.insight, 99999);
+  assert.strictEqual(state.cultivation.attributes.daoHeart, 99999);
+  assert.strictEqual(state.cultivation.attributes.lifespan, 99999);
+  const clean = sanitizeSave(state);
+  assert.strictEqual(clean.cultivation.attributes.insight, 99999);
+  assert.strictEqual(clean.cultivation.attributes.lifespan, 99999);
+});
+
+test("灵力上限累计此前修为并随环境与修为效率恢复", () => {
+  const state = G.hydrate(
+    {
+      level: 21,
+      cultivation: {
+        attributes: {
+          root: "metal",
+          insight: 80,
+          fortune: 60,
+          daoHeart: 60,
+          lifespan: 100,
+        },
+        regionId: "qingmu_forest",
+        spiritualPower: 0,
+        spiritualPowerUpdatedAt: NOW,
+        lastAgedAt: NOW,
+      },
+    },
+    NOW
+  );
+  assert.ok(G.totalCultivationAmount(state.cultivation, 21) > G.totalCultivationAmount(state.cultivation, 20));
+  const recovered = G.recoverSpiritualPower(state, NOW + 60000);
+  assert.ok(recovered.current > 0);
+  assert.strictEqual(recovered.max, G.spiritualPowerCapacity(state.cultivation, state.level));
+  assert.ok(recovered.environmentFactor > 1);
+});
+
+test("黑塔按等级挑战、扣除灵力并奖励修为", () => {
+  const state = G.hydrate(
+    {
+      level: 21,
+      cultivation: {
+        attributes: {
+          root: "metal",
+          insight: 80,
+          fortune: 60,
+          daoHeart: 60,
+          lifespan: 100,
+        },
+        spiritualPower: 100000,
+        spiritualPowerUpdatedAt: NOW,
+        lastAgedAt: NOW,
+      },
+    },
+    NOW
+  );
+  const tower = G.blackTowerStatus(state, NOW);
+  state.cultivation.spiritualPower = tower.power.max;
+  state.cultivation.spiritualPowerUpdatedAt = NOW;
+  const result = G.challengeBlackTower(state, 3, NOW, () => 0);
+  assert.strictEqual(result.ok, true);
+  assert.ok(result.cost > 0);
+  assert.ok(result.gained > 0);
+  assert.ok(state.cultivation.spiritualPower < tower.power.max);
+  assert.strictEqual(state.cultivation.blackTower.attempts, 1);
+  state.cultivation.spiritualPower = 0;
+  state.cultivation.spiritualPowerUpdatedAt = NOW;
+  const blocked = G.challengeBlackTower(state, 3, NOW, () => 0);
+  assert.strictEqual(blocked.reason, "power");
+});
+
+test("主动离开洞天会同时清除福地与守灵挑战", () => {
+  const state = G.hydrate(
+    {
+      level: 11,
+      cultivation: {
+        stones: { low: 10, mid: 0, high: 0, supreme: 0 },
+        lastAgedAt: NOW,
+      },
+    },
+    NOW
+  );
+  const cave = G.caveHeavenStatus(state, NOW, () => 0);
+  state.cultivation.cave.active = {
+    id: cave.spots[0].id,
+    size: cave.spots[0].size,
+    qiMultiplier: cave.spots[0].qiMultiplier,
+    effectType: cave.spots[0].effectType,
+    effectValue: cave.spots[0].effectValue,
+    enteredAt: NOW,
+    expiresAt: NOW + 60000,
+  };
+  state.cultivation.cave.challenge = { id: cave.spots[0].id, guardian: "测试守灵" };
+  const result = G.leaveCaveHeaven(state, NOW);
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(state.cultivation.cave.active, null);
+  assert.strictEqual(state.cultivation.cave.challenge, null);
+});
+
+test("快捷键配置会保存到存档白名单", () => {
+  const state = G.hydrate(
+    {
+      settings: {
+        autoFeed: true,
+        shortcuts: { toggle: "Ctrl+Shift+1", summon: "Alt+X", chat: "F8" },
+      },
+    },
+    NOW
+  );
+  assert.strictEqual(state.settings.autoFeed, true);
+  const clean = sanitizeSave(state);
+  assert.strictEqual(clean.settings.shortcuts.toggle, "Ctrl+Shift+1");
+  assert.strictEqual(clean.settings.shortcuts.summon, "Alt+X");
+  assert.strictEqual(clean.settings.shortcuts.chat, "F8");
 });
 
 console.log(`\n通过 ${passed} / ${passed + failures.length}`);

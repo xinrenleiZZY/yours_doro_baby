@@ -51,6 +51,21 @@ const BASE_SAVE = {
   },
   work: { jobs: [], fragments: 0, completed: 0 },
   prestige: { count: 0, legacyLevel: 0 },
+  cultivation: {
+    attributes: { root: "innate", insight: 96, fortune: 88, daoHeart: 92, lifespan: 110 },
+    exp: 0,
+    age: 20,
+    lastAgedAt: Date.now(),
+    spiritStones: 50,
+    herbs: 12,
+    pills: { breakthrough: 2, life: 1 },
+    thunderPearls: 2,
+    techniquesKnown: ["tech_metal_heaven_upper"],
+    techniqueProgress: { tech_metal_heaven_upper: 32 },
+    equippedTechniques: ["tech_metal_heaven_upper"],
+    equippedTechnique: "tech_metal_heaven_upper",
+    cycle: 0,
+  },
   intimacy: { points: 130, dailyDate: "", dailyPoints: 0 },
   diary: {
     entries: [{ date: "2026-10-21", text: "今天赚了 3.2K 金币，看了 7 个动作，接待了 1 位访客。" }],
@@ -241,8 +256,11 @@ const calls = {
   socialCopies: [],
   socialClosed: 0,
   socialMessageSends: 0,
+  socialFriendRequests: 0,
   socialGroupsCreated: 0,
+  socialGroupMembersAdded: 0,
   leaderboardRefreshes: 0,
+  updateActions: 0,
 };
 const results = [];
 const lines = [];
@@ -299,6 +317,10 @@ function registerStubs() {
     calls.save.push(state);
     return { ok: true };
   });
+  ipcMain.handle("shortcuts:update", (_event, shortcuts) => ({
+    ok: true,
+    shortcuts: shortcuts && typeof shortcuts === "object" ? shortcuts : {},
+  }));
   ipcMain.handle("pet:actions", () => {
     return fixtureActions();
   });
@@ -376,6 +398,10 @@ function registerStubs() {
   ipcMain.handle("screen:get-work-area", () => ({ x: 0, y: 0, width: 1920, height: 1080 }));
   ipcMain.handle("app:update-status", () => ({ state: "idle", version: "0.2.0" }));
   ipcMain.handle("app:update-check", () => ({ state: "not-available", version: "0.2.0" }));
+  ipcMain.handle("app:update-action", () => {
+    calls.updateActions += 1;
+    return { state: "downloaded", version: "0.2.1", percent: 100 };
+  });
   ipcMain.handle("app:update-download", () => ({ state: "downloaded", version: "0.2.1" }));
   ipcMain.handle("app:update-install", () => ({ state: "installing" }));
 
@@ -501,13 +527,16 @@ function registerStubs() {
   });
   ipcMain.handle("social:create-group", (_event, payload) => {
     calls.socialGroupsCreated += 1;
+    const invitedMembers = socialFixture.friends.filter((friend) =>
+      (payload.memberIds || []).includes(friend.gameId)
+    );
     const group = {
       id: `grp_${String(calls.socialGroupsCreated).padStart(12, "0")}`,
       name: payload.name,
       ownerId: socialFixture.profile.gameId,
       owner: socialFixture.profile,
       memberIds: [socialFixture.profile.gameId, ...(payload.memberIds || [])],
-      members: [socialFixture.profile, socialFixture.friends[0]].slice(0, 2),
+      members: [socialFixture.profile, ...invitedMembers],
       memberCount: 1 + (payload.memberIds || []).length,
       isOwner: true,
       createdAt: Date.now(),
@@ -521,7 +550,17 @@ function registerStubs() {
     if (group) group.name = payload.name;
     return group ? { ok: true, group } : { ok: false, error: "not-found" };
   });
-  ipcMain.handle("social:add-group-member", () => ({ ok: true }));
+  ipcMain.handle("social:add-group-member", (_event, payload) => {
+    calls.socialGroupMembersAdded += 1;
+    const group = socialGroupsFixture.find((item) => item.id === payload.groupId);
+    if (!group) return { ok: false, error: "not-found" };
+    if (!group.memberIds.includes(payload.memberId)) {
+      group.memberIds.push(payload.memberId);
+      group.members.push(socialFixture.friends[0]);
+      group.memberCount = group.memberIds.length;
+    }
+    return { ok: true, group: JSON.parse(JSON.stringify(group)) };
+  });
   ipcMain.handle("social:remove-group-member", () => ({ ok: true }));
   ipcMain.handle("social:leave-group", () => ({ ok: true }));
   ipcMain.handle("social:disband-group", () => ({ ok: true }));
@@ -562,6 +601,24 @@ function registerStubs() {
       },
     ],
   }));
+  ipcMain.handle("social:request", (_event, payload) => {
+    calls.socialFriendRequests += 1;
+    const request = {
+      id: "request_smoke",
+      fromId: socialFixture.profile.gameId,
+      toId: payload.targetId,
+      status: "pending",
+      to: {
+        gameId: payload.targetId,
+        nickname: "搜索结果",
+        avatar: "🐹",
+      },
+    };
+    if (!socialFixture.outgoing.some((item) => item.toId === payload.targetId)) {
+      socialFixture.outgoing.push(request);
+    }
+    return { ok: true, request };
+  });
   ipcMain.handle("social:update", (_event, profile) => ({
     ok: true,
     profile: { ...socialFixture.profile, ...profile },
@@ -663,9 +720,10 @@ async function openWindow() {
 }
 
 async function openToolWindowPage(tool) {
+  const size = tool === "gacha" ? { width: 800, height: 600 } : { width: 620, height: 700 };
   const win = new BrowserWindow({
-    width: 620,
-    height: 700,
+    width: size.width,
+    height: size.height,
     show: false,
     frame: false,
     webPreferences: {
@@ -675,6 +733,7 @@ async function openToolWindowPage(tool) {
       backgroundThrottling: false,
     },
   });
+  if (tool === "gacha") win.setAspectRatio(4 / 3);
   await win.loadFile(path.join(ROOT, "renderer", "tool-window.html"), { query: { tool } });
   await waitFor(win, `document.documentElement.dataset.toolReady === "1"`, 5000, `${tool} 工具窗口`);
   return win;
@@ -818,19 +877,214 @@ async function runScenarios(win) {
     `${beforePlay.coins.toFixed(0)}→${afterPlay.coins.toFixed(0)}，心情 ${beforePlay.mood.toFixed(0)}→${afterPlay.mood.toFixed(0)}`
   );
 
-  // 4. 升级
+  // 4. 灵石修炼
   const beforeUpgrade = await getState(win);
-  const upgradeCost = await js(win, `Number(document.getElementById("upgrade-cost").textContent)`);
   await js(win, `document.getElementById("btn-upgrade").click()`);
+  await wait(80);
+  const upgradeStarted = await getState(win);
+  check(
+    "修炼：一次点击创建批量吸收会话并立即扣除灵石",
+    upgradeStarted.cultivation.spiritStones === beforeUpgrade.cultivation.spiritStones - 1 &&
+      upgradeStarted.cultivation.stoneSession.active &&
+      upgradeStarted.cultivation.stoneSession.totalEnergy ===
+        G.CULTIVATION.STONE_TIERS[upgradeStarted.cultivation.stoneSession.tier].energy,
+    `灵石 ${beforeUpgrade.cultivation.spiritStones}→${upgradeStarted.cultivation.spiritStones}，能量 ${upgradeStarted.cultivation.stoneSession.totalEnergy}`
+  );
+  await js(win, `document.getElementById("btn-end-cultivation").click()`);
+  await wait(80);
+  const stoppedEarly = await getState(win);
+  check(
+    "可主动提前结束灵石修炼",
+    !stoppedEarly.cultivation.stoneSession.active &&
+      stoppedEarly.cultivation.stoneSession.endedEarly === true,
+    JSON.stringify({
+      endedEarly: stoppedEarly.cultivation.stoneSession.endedEarly,
+      gained: stoppedEarly.cultivation.stoneSession.gained,
+    })
+  );
+  await js(win, `document.getElementById("btn-upgrade").click()`);
+  await wait(80);
+  await js(win, `window.__doroTest.finishCultivation(0.9)`);
   await wait(80);
   const afterUpgrade = await getState(win);
   check(
-    "升级：等级 +1、按标价扣费",
-    afterUpgrade.level === beforeUpgrade.level + 1 &&
-      Math.abs(beforeUpgrade.coins - afterUpgrade.coins - upgradeCost) < 0.01,
-    `Lv.${beforeUpgrade.level}→Lv.${afterUpgrade.level}，花费 ${upgradeCost}`
+    "修炼会话完成后统一结算修为",
+    !afterUpgrade.cultivation.stoneSession.active &&
+      afterUpgrade.cultivation.exp > beforeUpgrade.cultivation.exp,
+    `修为 ${beforeUpgrade.cultivation.exp}→${afterUpgrade.cultivation.exp}`
   );
-  check("升级后标签同步", /Lv\.2/.test(await js(win, `document.getElementById("pet-label").textContent`)));
+  check("境界标签同步", /凡人/.test(await js(win, `document.getElementById("pet-label").textContent`)));
+  const beforeTenUpgrade = await getState(win);
+  await js(win, `document.getElementById("btn-upgrade-all").click()`);
+  await wait(80);
+  const tenUpgradeStarted = await getState(win);
+  check(
+    "修炼十颗仍只创建一次批量会话",
+    tenUpgradeStarted.cultivation.stoneSession.active &&
+      tenUpgradeStarted.cultivation.stoneSession.quantity === 10,
+    `修炼前持有 ${beforeTenUpgrade.cultivation.spiritStones}，批次 ${tenUpgradeStarted.cultivation.stoneSession.quantity}`
+  );
+  await js(win, `window.__doroTest.finishCultivation(0.9)`);
+  await wait(80);
+  win.setSize(650, 560);
+  await wait(120);
+  await js(win, `document.getElementById("btn-upgrade-ten").click()`);
+  await wait(700);
+  check(
+    "境界面板打开并显示灵根与寿元",
+    (await js(win, `document.getElementById("cultivation-panel").classList.contains("show")`)) &&
+      !(await js(win, `document.getElementById("growth").classList.contains("show")`)) &&
+      (await js(win, `document.getElementById("cult-root").textContent.includes("先天道体")`)) &&
+      (await js(win, `document.getElementById("cult-life").textContent.includes("寿元")`))
+  );
+  const cultivationMap = await js(
+    win,
+    `({
+      region: document.getElementById("cult-region").textContent,
+      regionOptions: document.querySelectorAll("#cult-region-select option").length,
+      tierOptions: document.querySelectorAll("#cult-stone-tier option").length,
+      formationOptions: document.querySelectorAll("#cult-formation-select option").length,
+      meditation: document.getElementById("cult-meditation").textContent,
+      buyQuantity: document.getElementById("cult-buy-quantity").value,
+      consumeQuantity: document.getElementById("cult-consume-quantity").value,
+      inventoryInGrowth: Boolean(document.getElementById("inventory-list")),
+      mineButton: Boolean(document.getElementById("btn-mine")),
+      opportunityButton: Boolean(document.getElementById("btn-opportunity"))
+    })`
+  );
+  check(
+    "修炼面板显示橘子大陆、12 个区域、四档灵石与阵法",
+    cultivationMap.region.includes("橘子大陆") &&
+      cultivationMap.regionOptions === 12 &&
+      cultivationMap.tierOptions === 4 &&
+      cultivationMap.formationOptions === 5 &&
+      cultivationMap.meditation.includes("修为/秒") &&
+      cultivationMap.buyQuantity === "10" &&
+      cultivationMap.consumeQuantity === "1" &&
+      cultivationMap.inventoryInGrowth === false &&
+      cultivationMap.mineButton &&
+      cultivationMap.opportunityButton,
+    JSON.stringify(cultivationMap)
+  );
+  await js(
+    win,
+    `(() => {
+      const buy = document.getElementById("cult-buy-quantity");
+      const consume = document.getElementById("cult-consume-quantity");
+      buy.value = "9999";
+      consume.value = "9999";
+      buy.dispatchEvent(new Event("change", { bubbles: true }));
+      consume.dispatchEvent(new Event("change", { bubbles: true }));
+      return true;
+    })()`
+  );
+  await wait(120);
+  const quantities = await getState(win);
+  check(
+    "灵石购买与修炼数量可以自定义",
+    quantities.cultivation.buyQuantity === 9999 && quantities.cultivation.consumeQuantity === 9999,
+    `购买 ${quantities.cultivation.buyQuantity} / 消耗 ${quantities.cultivation.consumeQuantity}`
+  );
+  await js(
+    win,
+    `(() => {
+      const consume = document.getElementById("cult-consume-quantity");
+      consume.value = "1";
+      consume.dispatchEvent(new Event("change", { bubbles: true }));
+      return true;
+    })()`
+  );
+  await js(win, `window.__doroTest.setLevel(11)`);
+  const techniqueBefore = await getState(win);
+  await js(win, `document.getElementById("btn-comprehend").click()`);
+  await wait(120);
+  const techniqueAfter = await getState(win);
+  check(
+    "参悟功法入口可用并进入冷却",
+    techniqueAfter.cultivation.techniqueReadyAt > Date.now(),
+    `${techniqueBefore.cultivation.technique.toFixed(1)}→${techniqueAfter.cultivation.technique.toFixed(1)}`
+  );
+  const caveMap = await js(
+    win,
+    `({
+      options: document.querySelectorAll("#cult-cave-select option").length,
+      large: [...document.querySelectorAll("#cult-cave-select option")].filter((option) => option.textContent.includes("大型")).length,
+      status: document.getElementById("cult-cave-status").textContent,
+      battleButtons: document.querySelectorAll("#cult-cave-battle-actions button").length,
+      battleHidden: document.getElementById("cult-cave-battle-actions").hidden,
+      towerFloors: document.querySelectorAll("#cult-tower-floor option").length,
+      towerStatus: document.getElementById("cult-tower-status").textContent
+    })`
+  );
+  check(
+    "洞天福地提供 10 个地点和 1–3 个大型福地",
+    caveMap.options === 10 &&
+      caveMap.large >= 1 &&
+      caveMap.large <= 3 &&
+      caveMap.status.includes("大型") &&
+      caveMap.battleButtons === 3 &&
+      caveMap.battleHidden &&
+      caveMap.towerFloors === 10 &&
+      caveMap.towerStatus.includes("灵力"),
+    JSON.stringify(caveMap)
+  );
+  const stonesBeforeCave = (await getState(win)).cultivation.stones.low;
+  await js(
+    win,
+    `(() => {
+      const select = document.getElementById("cult-cave-select");
+      const small = [...select.options].find((option) => option.textContent.includes("小型"));
+      select.value = small.value;
+      return small.value;
+    })()`
+  );
+  await js(win, `document.getElementById("btn-enter-cave").click()`);
+  await wait(180);
+  const caveEntered = await getState(win);
+  check(
+    "可以选择并进入洞天福地，获得随机功法或丹药",
+    caveEntered.cultivation.cave.active &&
+      caveEntered.cultivation.stones.low === stonesBeforeCave - 1 &&
+      (caveEntered.cultivation.cave.lastLoot.techniqueName || caveEntered.cultivation.cave.lastLoot.pillName),
+    JSON.stringify(caveEntered.cultivation.cave)
+  );
+  await js(win, `document.getElementById("btn-meditate").click()`);
+  await wait(150);
+  const meditationOn = await getState(win);
+  check(
+    "开始打坐后持续吐纳并切换护士装动作",
+    meditationOn.cultivation.meditation.active === true &&
+      (await js(win, `window.__doroTest.currentAction()`)) === "dress_nurse",
+    `action=${await js(win, `window.__doroTest.currentAction()`)}`
+  );
+  await js(win, `document.getElementById("btn-meditate").click()`);
+  await wait(100);
+  check("停止打坐后恢复常驻动作", (await getState(win)).cultivation.meditation.active === false);
+  const towerBefore = await getState(win);
+  await js(win, `document.getElementById("btn-challenge-tower").click()`);
+  await wait(120);
+  const towerAfter = await getState(win);
+  check(
+    "黑塔挑战扣除灵力并结算修为",
+    towerAfter.cultivation.blackTower.attempts === towerBefore.cultivation.blackTower.attempts + 1 &&
+      towerAfter.cultivation.spiritualPower < towerBefore.cultivation.spiritualPower,
+    `灵力 ${towerBefore.cultivation.spiritualPower.toFixed(1)}→${towerAfter.cultivation.spiritualPower.toFixed(1)}`
+  );
+  await js(win, `document.getElementById("btn-leave-cave").click()`);
+  await wait(100);
+  const leftCave = await getState(win);
+  check("可主动离开洞天福地", !leftCave.cultivation.cave.active && !leftCave.cultivation.cave.challenge);
+  await js(win, `document.getElementById("cultivation-close").click()`);
+  await js(win, `document.querySelector('[data-cmd="inventory"]').click()`);
+  await wait(120);
+  check("从菜单打开背包会使用独立窗口", calls.toolOpened.at(-1) === "inventory");
+  await js(win, `document.querySelector('[data-cmd="opportunity"]').click()`);
+  await wait(120);
+  check("从菜单打开机缘录会使用独立窗口", calls.toolOpened.at(-1) === "opportunity");
+  win.setSize(320, 360);
+  await wait(120);
+  await js(win, `window.__doroTest.setLevel(2)`);
+  await js(win, `window.__doroTest.setCoins(450)`);
 
   // 5. 点一下 = 摸头
   const beforePet = await getState(win);
@@ -870,6 +1124,31 @@ async function runScenarios(win) {
     `document.getElementById("pet-wrap").dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 60, clientY: 60 }))`
   );
   check("右键打开菜单", await js(win, `document.getElementById("menu").classList.contains("show")`));
+  const updateEntry = await js(
+    win,
+    `({
+      label: document.querySelector('[data-cmd="update-app"] span').textContent,
+      status: document.getElementById("menu-update-status").textContent,
+      disabled: document.getElementById("menu-update-app").disabled
+    })`
+  );
+  check(
+    "右键菜单提供更新新版本",
+    updateEntry.label === "更新新版本" && !updateEntry.disabled,
+    JSON.stringify(updateEntry)
+  );
+  await js(win, `document.querySelector('[data-cmd="update-app"]').click()`);
+  await wait(150);
+  check(
+    "右键更新会执行统一更新流程",
+    calls.updateActions === 1 &&
+      (await js(win, `document.getElementById("menu-update-status").textContent`)) === "重启安装",
+    `calls=${calls.updateActions}`
+  );
+  await js(
+    win,
+    `document.getElementById("pet-wrap").dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 60, clientY: 60 }))`
+  );
   await js(win, `document.querySelector('[data-cmd="library"]').click()`);
   await wait(150);
   const library = await js(
@@ -1074,8 +1353,10 @@ async function runScenarios(win) {
     "商城能打开并直接看到装扮入口",
     shop.open &&
       shop.items >= 4 &&
-      shop.tabs === 7 &&
+      shop.tabs === 9 &&
       shop.tabLabels.includes("家具") &&
+      shop.tabLabels.includes("修炼") &&
+      shop.tabLabels.includes("功法") &&
       shop.tabLabels.includes("装扮") &&
       shop.tabLabels.includes("典藏") &&
       shop.dressTabVisible,
@@ -1107,6 +1388,52 @@ async function runScenarios(win) {
     afterUse.satiety > beforeUse.satiety &&
       (afterUse.inventory.fish || 0) === (beforeUse.inventory.fish || 0) - 1,
     `${beforeUse.satiety.toFixed(0)}→${afterUse.satiety.toFixed(0)}`
+  );
+
+  await js(
+    win,
+    `[...document.querySelectorAll("#shop-tabs button")].find((b) => b.textContent === "增益").click()`
+  );
+  await wait(120);
+  const buffCatalog = await js(
+    win,
+    `({
+      count: document.querySelectorAll(".shop-item").length,
+      names: [...document.querySelectorAll(".shop-name")].map((node) => node.textContent),
+      lemonPrice: [...document.querySelectorAll(".shop-item")]
+        .find((row) => row.textContent.includes("柠檬气泡水"))
+        ?.querySelector(".shop-price").textContent
+    })`
+  );
+  check(
+    "商城增益分类显示 10 款新品与原有增益",
+    buffCatalog.count === 12 &&
+      ["柠檬气泡水", "抹茶拿铁", "幸运四叶草", "时光胶囊"].every((name) =>
+        buffCatalog.names.some((text) => text.includes(name))
+      ) &&
+      buffCatalog.lemonPrice.includes("180"),
+    JSON.stringify(buffCatalog)
+  );
+  await js(
+    win,
+    `[...document.querySelectorAll(".shop-item")]
+      .find((row) => row.textContent.includes("柠檬气泡水"))
+      .querySelector("button")
+      .click()`
+  );
+  await wait(180);
+  const activeBuff = await getState(win);
+  const buffDescription = await js(
+    win,
+    `[...document.querySelectorAll(".shop-item")]
+      .find((row) => row.textContent.includes("柠檬气泡水"))
+      .querySelector(".shop-desc")
+      .textContent`
+  );
+  check(
+    "购买增益后立即生效并显示剩余时间",
+    activeBuff.buffs.income_lemon_soda > Date.now() && /剩余 \d+ 分钟/.test(buffDescription),
+    buffDescription
   );
 
   await js(
@@ -1275,12 +1602,17 @@ async function runScenarios(win) {
     `({
       open: document.getElementById("config").classList.contains("show"),
       ambient: document.getElementById("cfg-ambient").value,
-      toggles: document.querySelectorAll("#config [data-toggle]").length
+      toggles: document.querySelectorAll("#config [data-toggle]").length,
+      shortcuts: [...document.querySelectorAll("#config .shortcut-row input")].map((input) => input.value)
     })`
   );
   check(
     "配置中心能打开",
-    config.open && config.toggles === 10 && config.ambient === "60",
+    config.open &&
+      config.toggles === 11 &&
+      config.ambient === "60" &&
+      config.shortcuts.length === 3 &&
+      config.shortcuts.every(Boolean),
     JSON.stringify(config)
   );
 
@@ -1309,6 +1641,34 @@ async function runScenarios(win) {
       configScroll.footerVisible,
     JSON.stringify(configScroll)
   );
+  await js(
+    win,
+    `(() => {
+      const input = document.getElementById("cfg-shortcut-toggle");
+      input.focus();
+      input.dispatchEvent(new KeyboardEvent("keydown", {
+        key: "Q",
+        code: "KeyQ",
+        ctrlKey: true,
+        shiftKey: true,
+        bubbles: true
+      }));
+      return true;
+    })()`
+  );
+  await wait(450);
+  check("配置中心可以录制自定义快捷键", (await getState(win)).settings.shortcuts.toggle === "Ctrl+Shift+Q");
+  await js(
+    win,
+    `[...document.querySelectorAll("#config [data-toggle]")].find((button) => button.dataset.toggle === "autoFeed").click()`
+  );
+  await wait(450);
+  check("可开启自动购买并进食", (await getState(win)).settings.autoFeed === true);
+  await js(
+    win,
+    `[...document.querySelectorAll("#config [data-toggle]")].find((button) => button.dataset.toggle === "autoFeed").click()`
+  );
+  await wait(80);
 
   await js(
     win,
@@ -1422,13 +1782,14 @@ async function runScenarios(win) {
     win,
     `({
       open: document.getElementById("growth").classList.contains("show"),
+      cultivationOpen: document.getElementById("cultivation-panel").classList.contains("show"),
       daily: document.querySelectorAll("#growth-daily .growth-item").length,
       ach: document.querySelectorAll("#growth-achievements .growth-item").length
     })`
   );
   check(
     "任务与成就面板能打开",
-    growth.open && growth.daily === 4 && growth.ach === 12,
+    growth.open && !growth.cultivationOpen && growth.daily === 4 && growth.ach === 12,
     JSON.stringify(growth)
   );
   const profilePanel = await js(
@@ -1814,27 +2175,55 @@ async function runScenarios(win) {
     lastSaved ? Object.keys(lastSaved).join(",") : "null"
   );
 
-  await js(win, `window.__doroTest.setLevel(50)`);
-  await js(win, `window.__doroTest.openGrowth()`);
+  await js(win, `window.__doroTest.setLevel(41)`);
+  await js(win, `window.__doroTest.openCultivation()`);
   await wait(120);
-  const prestigeBefore = await getState(win);
-  await js(win, `document.getElementById("btn-prestige").click()`);
+  const rebirthBefore = await getState(win);
+  check(
+    "转世按钮按当前境界显示",
+    await js(win, `document.getElementById("btn-rebirth").textContent.includes("元婴转世")`)
+  );
+  await js(win, `document.getElementById("rebirth-attribute").value = "insight"`);
+  await js(win, `document.getElementById("btn-rebirth").click()`);
   await wait(80);
-  await js(win, `document.getElementById("btn-prestige").click()`);
+  await js(win, `document.getElementById("btn-rebirth").click()`);
   await wait(160);
-  const prestigeAfter = await getState(win);
+  const rebirthAfter = await getState(win);
   check(
-    "Lv.50 可以通过二次确认转生",
-    prestigeBefore.level === 50 && prestigeAfter.level === 1 && prestigeAfter.prestige.count === 1,
-    `Lv.${prestigeBefore.level}→Lv.${prestigeAfter.level}，转生 ${prestigeAfter.prestige.count}`
+    "Lv.41 元婴期可以通过二次确认转世",
+    rebirthBefore.level === 41 &&
+      rebirthAfter.level === 1 &&
+      rebirthAfter.cultivation.cycle === rebirthBefore.cultivation.cycle + 1,
+    `Lv.${rebirthBefore.level}→Lv.${rebirthAfter.level}，第 ${rebirthAfter.cultivation.cycle + 1} 世`
   );
   check(
-    "转生显示永久倍率与限定称号",
-    (await js(win, `document.getElementById("growth-prestige-title").textContent`)).includes("摸鱼新生") &&
-      (await js(win, `document.getElementById("growth-prestige").textContent`)).includes("×1.15"),
-    await js(win, `document.getElementById("growth-prestige").textContent`)
+    "转世重选命格并记录携带属性",
+    rebirthAfter.cultivation.lastLifeEvent.type === "rebirth" &&
+      rebirthAfter.cultivation.lastLifeEvent.carried === "insight",
+    await js(win, `document.getElementById("cult-life-event").textContent`)
   );
-  await js(win, `document.getElementById("growth-close").click()`);
+  await js(win, `document.getElementById("cultivation-close").click()`);
+
+  await js(win, `window.__doroTest.setLevel(101)`);
+  await js(win, `window.__doroTest.openCultivation()`);
+  await wait(120);
+  const immortalRebirth = await js(
+    win,
+    `({
+      button: document.getElementById("btn-rebirth").textContent,
+      soul: document.getElementById("cult-soul").textContent,
+      selectDisabled: document.getElementById("rebirth-attribute").disabled
+    })`
+  );
+  check(
+    "仙人转世显示神魂等级与全属性加成",
+    immortalRebirth.button.includes("仙人神魂转世") &&
+      immortalRebirth.soul.includes("全属性 +") &&
+      immortalRebirth.soul.includes("共生多灵根") &&
+      immortalRebirth.selectDisabled,
+    JSON.stringify(immortalRebirth)
+  );
+  await js(win, `document.getElementById("cultivation-close").click()`);
 
   // 10. 渲染进程异常会上报主进程日志
   await js(win, `setTimeout(() => { throw new Error("smoke-boom"); }, 0); true`);
@@ -1848,7 +2237,24 @@ async function runScenarios(win) {
 }
 
 async function runToolWindowScenarios() {
-  toolState = G.hydrate({ coins: 20000, satiety: 80, mood: 80 }, Date.now());
+  toolState = G.hydrate(
+    {
+      coins: 100000,
+      satiety: 80,
+      mood: 80,
+      cultivation: {
+        attributes: {
+          root: "metal",
+          insight: 60,
+          fortune: 50,
+          daoHeart: 60,
+          lifespan: 90,
+        },
+        lastAgedAt: Date.now(),
+      },
+    },
+    Date.now()
+  );
   toolRevision += 1;
 
   const shop = await openToolWindowPage("shop");
@@ -1867,7 +2273,7 @@ async function runToolWindowScenarios() {
     shopInfo.tool === "shop" &&
       shopInfo.open &&
       shopInfo.items > 0 &&
-      shopInfo.tabs === 7 &&
+      shopInfo.tabs === 9 &&
       /金币/.test(shopInfo.balance),
     JSON.stringify(shopInfo)
   );
@@ -1901,7 +2307,229 @@ async function runToolWindowScenarios() {
   await js(shop, `document.querySelector(".shop-item .use").click()`);
   await wait(220);
   check("独立商城可使用背包物品", toolState.inventory.fish === 0, `鱼×${toolState.inventory.fish}`);
+  const stonesBeforeShop = toolState.cultivation.stones.low;
+  const coinsBeforeStones = toolState.coins;
+  await js(
+    shop,
+    `(() => {
+      [...document.querySelectorAll("#shop-tabs button")].find((node) => node.textContent === "修炼").click();
+      return true;
+    })()`
+  );
+  await wait(120);
+  const cultivationShop = await js(
+    shop,
+    `({
+      items: document.querySelectorAll(".shop-item").length,
+      quantityVisible: !document.getElementById("shop-quantity").hidden,
+      names: [...document.querySelectorAll(".shop-name")].map((node) => node.textContent)
+    })`
+  );
+  await js(
+    shop,
+    `(() => {
+      document.getElementById("shop-quantity").value = "2";
+      document.querySelector(".shop-item button:not(.use)").click();
+      return true;
+    })()`
+  );
+  await wait(220);
+  check(
+    "修炼商品已同步到商城并支持批量购买",
+    cultivationShop.items === 10 &&
+      cultivationShop.quantityVisible &&
+      cultivationShop.names.some((name) => name.includes("下品灵石")) &&
+      cultivationShop.names.some((name) => name.includes("破境丹")) &&
+      cultivationShop.names.some((name) => name.includes("悟道丹")) &&
+      cultivationShop.names.some((name) => name.includes("培元丹")) &&
+      cultivationShop.names.some((name) => name.includes("静心丹")) &&
+      toolState.cultivation.stones.low === stonesBeforeShop + 2 &&
+      toolState.coins < coinsBeforeStones,
+    JSON.stringify({ cultivationShop, stones: toolState.cultivation.stones.low })
+  );
+  await js(
+    shop,
+    `(() => {
+      [...document.querySelectorAll("#shop-tabs button")].find((node) => node.textContent === "功法").click();
+      return true;
+    })()`
+  );
+  await wait(120);
+  const techniqueShop = await js(
+    shop,
+    `({
+      items: document.querySelectorAll(".shop-item").length,
+      first: document.querySelector(".shop-name").textContent,
+      price: document.querySelector(".shop-price").textContent
+    })`
+  );
+  await js(shop, `document.querySelector(".shop-item button:not(.use)").click()`);
+  await wait(220);
+  await js(shop, `document.querySelector(".shop-item .use").click()`);
+  await wait(220);
+  check(
+    "商城功法可购买并在背包中研习装备",
+    techniqueShop.items === 444 &&
+      techniqueShop.first.includes("金灵根") &&
+      toolState.cultivation.techniquesKnown.length === 1 &&
+      toolState.cultivation.equippedTechniques.includes(toolState.cultivation.techniquesKnown[0]),
+    JSON.stringify({ techniqueShop, known: toolState.cultivation.techniquesKnown })
+  );
   shop.close();
+  await wait(120);
+
+  toolState.cultivation.techniquesKnown.push("tech_metal_heaven_upper");
+  toolState.cultivation.techniqueProgress.tech_metal_heaven_upper = 42;
+  toolState.cultivation.equippedTechniques.push("tech_metal_heaven_upper");
+  toolRevision += 1;
+  const inventory = await openToolWindowPage("inventory");
+  const inventoryInfo = await js(
+    inventory,
+    `({
+      tool: document.body.dataset.tool,
+      open: document.getElementById("inventory").classList.contains("show"),
+      tabs: document.querySelectorAll("#inventory-tabs button").length,
+      active: document.querySelector("#inventory-tabs button.active")?.textContent,
+      summary: document.getElementById("inventory-summary").textContent,
+      filters: document.querySelectorAll("#inventory-tech-filters button").length,
+      rows: document.querySelectorAll("#inventory-list .inventory-item").length,
+      name: document.querySelector("#inventory-list .inventory-item-title")?.textContent,
+      detail: document.querySelector("#inventory-list .inventory-item-desc")?.textContent,
+      progressBars: document.querySelectorAll("#inventory-list .inventory-progress").length,
+      hint: document.querySelector(".inventory-window-hint").textContent
+    })`
+  );
+  check(
+    "背包以独立窗口打开并展示功法",
+    inventoryInfo.tool === "inventory" &&
+      inventoryInfo.open &&
+      inventoryInfo.tabs === 3 &&
+      inventoryInfo.active === "功法" &&
+      inventoryInfo.summary.includes("2 部功法") &&
+      inventoryInfo.summary.includes("2/5 多修") &&
+      inventoryInfo.filters === 6 &&
+      inventoryInfo.rows === 2 &&
+      inventoryInfo.name.includes("金灵根") &&
+      inventoryInfo.detail.includes("修炼进度") &&
+      inventoryInfo.progressBars === 2 &&
+      inventoryInfo.hint.includes("五部"),
+    JSON.stringify(inventoryInfo)
+  );
+  await js(
+    inventory,
+    `[...document.querySelectorAll("#inventory-tech-filters button")].find((button) => button.textContent.includes("心法")).click()`
+  );
+  await wait(100);
+  const heartFilter = await js(
+    inventory,
+    `({
+      rows: document.querySelectorAll("#inventory-list .inventory-item").length,
+      name: document.querySelector("#inventory-list .inventory-item-title")?.textContent,
+      detail: document.querySelector("#inventory-list .inventory-item-desc")?.textContent
+    })`
+  );
+  check(
+    "功法背包可按分类筛选并显示单部进度",
+    heartFilter.rows === 1 &&
+      heartFilter.name.includes("白虹贯日剑诀") &&
+      heartFilter.detail.includes("修炼进度 42.0/100"),
+    JSON.stringify(heartFilter)
+  );
+  await js(
+    inventory,
+    `[...document.querySelectorAll("#inventory-tech-filters button")].find((button) => button.textContent.includes("全部")).click()`
+  );
+  await wait(80);
+  await js(
+    inventory,
+    `[...document.querySelectorAll("#inventory-tabs button")].find((button) => button.textContent === "丹药").click()`
+  );
+  await wait(120);
+  const inventoryPills = await js(
+    inventory,
+    `({
+      active: document.querySelector("#inventory-tabs button.active")?.textContent,
+      names: [...document.querySelectorAll("#inventory-list .inventory-item-title")].map((node) => node.textContent)
+    })`
+  );
+  check(
+    "独立背包可切换丹药分页",
+    inventoryPills.active === "丹药" &&
+      inventoryPills.names.some((name) => name.includes("破境丹")) &&
+      inventoryPills.names.some((name) => name.includes("延寿丹")) &&
+      inventoryPills.names.some((name) => name.includes("避雷珠")) &&
+      inventoryPills.names.some((name) => name.includes("悟道丹")) &&
+      inventoryPills.names.some((name) => name.includes("培元丹")) &&
+      inventoryPills.names.some((name) => name.includes("静心丹")),
+    JSON.stringify(inventoryPills)
+  );
+  inventory.close();
+  await wait(120);
+
+  const opportunity = await openToolWindowPage("opportunity");
+  const opportunityInitial = await js(
+    opportunity,
+    `({
+      tool: document.body.dataset.tool,
+      open: document.getElementById("opportunity").classList.contains("show"),
+      tabs: document.querySelectorAll("#opportunity-tabs button").length,
+      draw: document.getElementById("opportunity-draw").textContent,
+      title: document.getElementById("opportunity-title").textContent
+    })`
+  );
+  check(
+    "机缘录以独立窗口打开",
+    opportunityInitial.tool === "opportunity" &&
+      opportunityInitial.open &&
+      opportunityInitial.tabs === 2 &&
+      opportunityInitial.draw.includes("寻找机缘") &&
+      opportunityInitial.title.includes("静候"),
+    JSON.stringify(opportunityInitial)
+  );
+  await js(opportunity, `document.getElementById("opportunity-draw").click()`);
+  await wait(180);
+  const drawnOpportunity = await js(
+    opportunity,
+    `({
+      title: document.getElementById("opportunity-title").textContent,
+      choices: document.querySelectorAll(".opportunity-choice").length,
+      active: window.__toolTest.getState().opportunities.activeId
+    })`
+  );
+  check(
+    "寻找机缘会展示事件和可用抉择",
+    Boolean(drawnOpportunity.active) &&
+      drawnOpportunity.choices >= 2 &&
+      !drawnOpportunity.title.includes("静候"),
+    JSON.stringify(drawnOpportunity)
+  );
+  await js(opportunity, `document.querySelector(".opportunity-choice:not(:disabled)").click()`);
+  await wait(200);
+  const resolvedOpportunity = await js(
+    opportunity,
+    `({
+      outcomeVisible: !document.getElementById("opportunity-outcome").hidden,
+      history: window.__toolTest.getState().opportunities.history.length,
+      drawDisabled: document.getElementById("opportunity-draw").disabled
+    })`
+  );
+  check(
+    "机缘选择会结算效果并进入冷却",
+    resolvedOpportunity.outcomeVisible &&
+      resolvedOpportunity.history === 1 &&
+      resolvedOpportunity.drawDisabled,
+    JSON.stringify(resolvedOpportunity)
+  );
+  await js(
+    opportunity,
+    `[...document.querySelectorAll("#opportunity-tabs button")].find((button) => button.textContent === "机缘记录").click()`
+  );
+  await wait(100);
+  check(
+    "机缘记录展示已完成事件",
+    (await js(opportunity, `document.querySelectorAll(".opportunity-history-item").length`)) === 1
+  );
+  opportunity.close();
   await wait(120);
 
   toolState = G.hydrate({ coins: 20000, satiety: 80, mood: 80 }, Date.now());
@@ -1931,8 +2559,29 @@ async function runToolWindowScenarios() {
       (await js(gacha, `!document.querySelector(".gacha-rates")`)),
     JSON.stringify(gachaHistoryInitial)
   );
+  const posterBeforeResult = await js(
+    gacha,
+    `(() => {
+      const rect = document.getElementById("gacha-poster").getBoundingClientRect();
+      return { width: rect.width, height: rect.height };
+    })()`
+  );
   await js(gacha, `document.getElementById("gacha-pull").click()`);
   await wait(220);
+  const singleResultPopup = await js(
+    gacha,
+    `(() => {
+      const poster = document.getElementById("gacha-poster").getBoundingClientRect();
+      const result = document.querySelector("#gacha-result .gacha-reward").getBoundingClientRect();
+      return {
+        visible: !document.getElementById("gacha-result-popover").hidden,
+        posterWidth: poster.width,
+        posterHeight: poster.height,
+        tileWidth: result.width,
+        tileHeight: result.height
+      };
+    })()`
+  );
   check(
     "独立扭蛋机抽奖会写入状态和抽奖记录",
     toolState.gacha.pulls === pullsBefore + 1 &&
@@ -1940,6 +2589,14 @@ async function runToolWindowScenarios() {
       Boolean(await js(gacha, `document.getElementById("gacha-result").textContent`)) &&
       (await js(gacha, `document.querySelectorAll(".gacha-history-row").length`)) === 1,
     `pulls=${toolState.gacha.pulls}`
+  );
+  check(
+    "单抽结果以 1:1 小弹窗显示且不挤压抽奖页面",
+    singleResultPopup.visible &&
+      Math.abs(singleResultPopup.posterWidth - posterBeforeResult.width) < 1 &&
+      Math.abs(singleResultPopup.posterHeight - posterBeforeResult.height) < 1 &&
+      Math.abs(singleResultPopup.tileWidth - singleResultPopup.tileHeight) < 1,
+    JSON.stringify(singleResultPopup)
   );
   const gachaTenDebug = await js(
     gacha,
@@ -2028,6 +2685,91 @@ async function runToolWindowScenarios() {
         document.getElementById("gacha-history-page").hidden`
     )) === true
   );
+  const gachaLobby = await js(
+    gacha,
+    `(() => {
+      const buttons = document.querySelector(".gacha-actions").getBoundingClientRect();
+      const stage = document.querySelector(".gacha-stage").getBoundingClientRect();
+      return {
+        width: innerWidth,
+        height: innerHeight,
+        pools: document.querySelectorAll("[data-gacha-pool]").length,
+        active: document.querySelector(".gacha-pool-tab.active").dataset.gachaPool,
+        price: document.getElementById("gacha-pull-price").textContent,
+        tenPrice: document.getElementById("gacha-ten-price").textContent,
+        bottomRight: buttons.bottom <= stage.bottom + 1 && stage.right - buttons.right < 30
+      };
+    })()`
+  );
+  check(
+    "扭蛋机为 4:3 双栏布局，奖池在左、抽奖按钮在右下角",
+    Math.abs(gachaLobby.width / gachaLobby.height - 4 / 3) < 0.01 &&
+      gachaLobby.pools === 2 &&
+      gachaLobby.active === "standard" &&
+      gachaLobby.price === "500" &&
+      gachaLobby.tenPrice === "4,500" &&
+      gachaLobby.bottomRight,
+    JSON.stringify(gachaLobby)
+  );
+  await js(gacha, `document.querySelector('[data-gacha-pool="up"]').click()`);
+  await wait(100);
+  const upLobby = await js(
+    gacha,
+    `({
+      active: document.querySelector(".gacha-pool-tab.active").dataset.gachaPool,
+      title: document.getElementById("gacha-poster-title").textContent,
+      poster: document.getElementById("gacha-poster").dataset.pool,
+      price: document.getElementById("gacha-pull-price").textContent,
+      tenPrice: document.getElementById("gacha-ten-price").textContent,
+      pity: document.getElementById("gacha-pity").textContent
+    })`
+  );
+  check(
+    "UP 奖池展示月球摸鱼台海报、独立价格和 300 抽保底",
+    upLobby.active === "up" &&
+      upLobby.title === "月球摸鱼台" &&
+      upLobby.poster === "up" &&
+      upLobby.price === "5,000" &&
+      upLobby.tenPrice === "50,000" &&
+      upLobby.pity === "300",
+    JSON.stringify(upLobby)
+  );
+  const upPullsBefore = toolState.gacha.upPulls;
+  await js(gacha, `document.getElementById("gacha-pull").click()`);
+  await wait(220);
+  check(
+    "UP 单抽扣 5000 金币并写入 UP 独立记录",
+    toolState.gacha.upPulls === upPullsBefore + 1 &&
+      toolState.gacha.history.some((entry) => entry.pool === "up") &&
+      (await js(gacha, `document.querySelectorAll(".gacha-reward").length`)) === 1,
+    `upPulls=${toolState.gacha.upPulls}`
+  );
+  await wait(100);
+  fs.writeFileSync(
+    path.join(ROOT, "_shot_gacha_result.png"),
+    (await gacha.webContents.capturePage()).toPNG()
+  );
+  await js(gacha, `document.getElementById("gacha-history-open").click()`);
+  await wait(100);
+  const upHistory = await js(
+    gacha,
+    `({
+      count: document.getElementById("gacha-history-page-count").textContent,
+      rows: document.querySelectorAll(".gacha-history-row").length
+    })`
+  );
+  check(
+    "查看详情只显示当前 UP 池记录",
+    upHistory.count === "1 / 50" && upHistory.rows === 1,
+    JSON.stringify(upHistory)
+  );
+  await js(gacha, `document.getElementById("gacha-history-back").click()`);
+  await wait(80);
+  await js(gacha, `document.getElementById("gacha-result-close").click()`);
+  await wait(80);
+  gacha.showInactive();
+  await wait(100);
+  fs.writeFileSync(path.join(ROOT, "_shot_gacha_lobby.png"), (await gacha.webContents.capturePage()).toPNG());
   gacha.close();
   await wait(120);
 
@@ -2310,6 +3052,20 @@ async function runSocialWindowScenario() {
     "可以搜索局域网玩家",
     (await js(social, `document.querySelectorAll("#search-results .person-row").length`)) === 1
   );
+  await js(social, `document.querySelector("#search-results .person-row button").click()`);
+  await wait(180);
+  const friendRequest = await js(
+    social,
+    `(() => {
+      const button = document.querySelector("#search-results .person-row button");
+      return { label: button && button.textContent, disabled: button && button.disabled };
+    })()`
+  );
+  check(
+    "加好友按钮会发送申请并显示已申请状态",
+    calls.socialFriendRequests === 1 && friendRequest.label === "已申请" && friendRequest.disabled,
+    JSON.stringify(friendRequest)
+  );
   await js(social, `document.querySelector('[data-view="chat"]').click()`);
   await wait(220);
   const chatInfo = await js(
@@ -2390,6 +3146,32 @@ async function runSocialWindowScenario() {
       calls.socialGroupsCreated === 1 &&
       (await js(social, `document.querySelectorAll("#group-list .group-card").length`)) === 2,
     JSON.stringify(groupInfo)
+  );
+  const invitePayload = await js(
+    social,
+    `(() => {
+      const select = document.querySelector("#group-list [data-group-invite]");
+      select.value = select.options[1].value;
+      select.dispatchEvent(new Event("change"));
+      select.parentElement.querySelector(".group-invite-button").click();
+      return { groupId: select.dataset.groupInvite, memberId: select.value };
+    })()`
+  );
+  await wait(220);
+  const groupInvite = await js(
+    social,
+    `({
+      selects: document.querySelectorAll("#group-list [data-group-invite]").length,
+      cards: document.querySelectorAll("#group-list .group-card").length
+    })`
+  );
+  check(
+    "群组邀请好友按钮会添加成员并更新卡片",
+    calls.socialGroupMembersAdded === 1 &&
+      Boolean(invitePayload.groupId && invitePayload.memberId) &&
+      groupInvite.selects === 0 &&
+      groupInvite.cards === 2,
+    JSON.stringify({ invitePayload, groupInvite })
   );
   social.showInactive();
   await wait(100);

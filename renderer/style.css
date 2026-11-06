@@ -523,6 +523,12 @@ body.lib-open #stage {
   transform: none;
 }
 
+#panel .upgrade-actions button {
+  border: 1px solid #f4c9da;
+  background: #fff6fa;
+  font-size: 10px;
+}
+
 #panel .actions em,
 #menu em {
   font-style: normal;
@@ -634,6 +640,7 @@ body.lib-open #stage {
 #shop,
 #schedule,
 #config,
+#cultivation-panel,
 #growth,
 #gacha,
 #quiz,
@@ -658,6 +665,7 @@ body.lib-open #stage {
 #shop.show,
 #schedule.show,
 #config.show,
+#cultivation-panel.show,
 #growth.show,
 #gacha.show,
 #quiz.show,
@@ -670,6 +678,7 @@ body.lib-open #stage {
 #shop header,
 #schedule header,
 #config header,
+#cultivation-panel header,
 #growth header,
 #gacha header,
 #quiz header,
@@ -687,6 +696,7 @@ body.lib-open #stage {
 #shop header em,
 #schedule header em,
 #config header em,
+#cultivation-panel header em,
 #growth header em,
 #gacha header em,
 #quiz header em,
@@ -702,6 +712,7 @@ body.lib-open #stage {
 #shop header button,
 #schedule header button,
 #config header button,
+#cultivation-panel header button,
 #growth header button,
 #gacha header button,
 #quiz header button,
@@ -728,6 +739,11 @@ body.lib-open #stage {
 
 #sticker {
   width: 300px;
+}
+
+#cultivation-panel {
+  width: min(410px, calc(100vw - 12px));
+  max-height: calc(100vh - 20px);
 }
 
 #sticker-search {
@@ -1448,6 +1464,21 @@ body.lib-open #library {
   line-height: 1.3;
 }
 
+.shortcut-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: #8d7480;
+  font-size: 9.5px;
+}
+
+.shortcut-row .cfg-input {
+  width: 126px;
+  cursor: pointer;
+  text-align: center;
+}
+
 .cfg-footer {
   display: flex;
   align-items: center;
@@ -2007,6 +2038,228 @@ body.lib-open #library {
   background: var(--soft-bg);
 }
 
+.cultivation-card {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 7px;
+  border: 1px solid rgba(226, 96, 154, 0.22);
+  border-radius: 11px;
+  background:
+    radial-gradient(circle at 92% 8%, rgba(255, 218, 144, 0.28), transparent 34%),
+    linear-gradient(145deg, rgba(255, 249, 244, 0.95), rgba(255, 231, 241, 0.8));
+}
+
+.cult-realm-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 10px;
+  color: #94627b;
+}
+
+.cult-realm-line strong {
+  font-size: 11px;
+  color: #7d3b5b;
+}
+
+.cult-meta {
+  font-size: 9px;
+  line-height: 1.45;
+  color: #8d7480;
+}
+
+.cult-attrs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 3px;
+}
+
+.cult-attr {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  padding: 3px 5px;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.56);
+  font-size: 8.5px;
+  color: #8d7480;
+}
+
+.cult-attr b {
+  color: var(--pink-deep);
+  font-weight: 600;
+}
+
+.cult-attr.danger {
+  color: #a83d4d;
+  background: rgba(255, 223, 226, 0.72);
+}
+
+.cult-breakthrough {
+  padding: 5px 6px;
+  border-radius: 8px;
+  background: rgba(255, 250, 241, 0.8);
+  font-size: 9px;
+  line-height: 1.5;
+  color: #806771;
+}
+
+#cult-cave-challenge[hidden],
+#cult-cave-battle-actions[hidden] {
+  display: none;
+}
+
+.cult-breakthrough.ready {
+  border: 1px solid rgba(214, 140, 46, 0.45);
+  color: #8a5a1d;
+}
+
+.cult-breakthrough.danger {
+  border: 1px solid rgba(190, 70, 76, 0.38);
+  color: #9a3540;
+  background: rgba(255, 234, 229, 0.88);
+}
+
+.inventory-tabs {
+  display: flex;
+  gap: 4px;
+}
+
+.inventory-tabs button {
+  flex: 1;
+  border: none;
+  border-radius: 8px;
+  padding: 4px 6px;
+  background: var(--soft-bg);
+  color: #9a5a7a;
+  font: 9.5px var(--font);
+  cursor: pointer;
+}
+
+.inventory-tabs button.active {
+  color: #fff;
+  background: linear-gradient(180deg, #ffb7d3, var(--pink-deep));
+}
+
+.inventory-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 210px;
+  overflow-y: auto;
+}
+
+.inventory-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 7px;
+  border-radius: 9px;
+  background: var(--soft-bg);
+}
+
+.inventory-item-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.inventory-item-title {
+  font-size: 10px;
+  color: var(--ink);
+}
+
+.inventory-item-desc {
+  margin-top: 2px;
+  font-size: 8.5px;
+  line-height: 1.35;
+  color: #987f8b;
+}
+
+.inventory-item button {
+  border: none;
+  border-radius: 7px;
+  padding: 3px 6px;
+  font: 9px var(--font);
+  background: var(--soft-bg-2);
+  color: var(--pink-deep);
+  cursor: pointer;
+}
+
+.inventory-item button.active {
+  color: #fff;
+  background: var(--pink-deep);
+}
+
+.inventory-empty {
+  padding: 7px;
+  border-radius: 9px;
+  background: var(--soft-bg);
+  color: #a68e9a;
+  font-size: 9px;
+}
+
+#rebirth-attribute,
+#cult-stone-tier,
+#cult-region-select,
+#cult-formation-select,
+#cult-tower-floor {
+  min-width: 72px;
+  border: none;
+  border-radius: 8px;
+  padding: 3px 5px;
+  background: var(--soft-bg-2);
+  color: var(--pink-deep);
+  font-family: inherit;
+  font-size: 9px;
+}
+
+#cult-region-select {
+  flex: 1;
+  min-width: 130px;
+}
+
+#cult-formation-select {
+  flex: 1;
+  min-width: 120px;
+}
+
+#cult-tower-floor {
+  flex: 1;
+  min-width: 130px;
+}
+
+.cult-quantities {
+  display: flex;
+  gap: 6px;
+}
+
+.cult-quantities label {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  border-radius: 8px;
+  padding: 4px 6px;
+  background: var(--soft-bg);
+  font-size: 9px;
+  color: #8d7480;
+}
+
+.cult-quantities input {
+  width: 58px;
+  border: 1px solid rgba(226, 96, 154, 0.25);
+  border-radius: 6px;
+  padding: 2px 4px;
+  background: #fff;
+  color: var(--pink-deep);
+  font-family: inherit;
+  font-size: 9px;
+}
+
 .work-section {
   display: flex;
   flex-direction: column;
@@ -2151,6 +2404,7 @@ body[data-theme="night"] #library,
 body[data-theme="night"] #shop,
 body[data-theme="night"] #schedule,
 body[data-theme="night"] #config,
+body[data-theme="night"] #cultivation-panel,
 body[data-theme="night"] #growth {
   background: rgba(38, 33, 46, 0.99);
 }

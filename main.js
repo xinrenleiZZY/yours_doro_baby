@@ -57,7 +57,9 @@ const SOCIAL_PROFILE_FILE = path.join(USER_DATA, "social-profile.json");
 const SHOP_CATALOG_CACHE_FILE = path.join(USER_DATA, "shop-catalog-cache.json");
 const TOOL_WINDOW_SPECS = {
   shop: { width: 620, height: 700, title: "doro 商城" },
-  gacha: { width: 500, height: 520, title: "doro 扭蛋机" },
+  inventory: { width: 560, height: 680, title: "doro 背包" },
+  opportunity: { width: 640, height: 720, title: "doro 机缘录" },
+  gacha: { width: 800, height: 600, aspectRatio: 4 / 3, title: "doro 扭蛋机" },
   minigame: { width: 620, height: 560, title: "doro 接金币" },
   sticker: { width: 640, height: 720, title: "doro 表情包管理" },
 };
@@ -100,6 +102,7 @@ let updater = null;
 let updateTimer = null;
 let latestToolState = null;
 let toolStateRevision = 0;
+let registeredShortcuts = {};
 const stickerStore = new StickerStore({
   dir: USER_STICKER_DIR,
   manifestFile: USER_STICKERS_FILE,
@@ -154,10 +157,119 @@ function settingsOfSave() {
   return save && save.settings && typeof save.settings === "object" ? save.settings : {};
 }
 
+function shortcutAction(action) {
+  if (action === "toggle") return toggleWindow;
+  if (action === "summon") return summonToCursor;
+  if (action === "chat") return createChatWindow;
+  return null;
+}
+
+function normalizeShortcutSettings(raw) {
+  const source = raw && typeof raw === "object" ? raw : {};
+  const defaults = G.CULTIVATION.DEFAULT_SHORTCUTS;
+  return Object.fromEntries(
+    Object.keys(defaults).map((key) => {
+      const value = source[key];
+      return [
+        key,
+        typeof value === "string" && /^[A-Za-z0-9+_-]{1,64}$/.test(value.trim())
+          ? value.trim()
+          : defaults[key],
+      ];
+    })
+  );
+}
+
+function unregisterPetShortcuts() {
+  Object.values(registeredShortcuts).forEach((accelerator) => {
+    if (accelerator) globalShortcut.unregister(accelerator);
+  });
+  registeredShortcuts = {};
+}
+
+/** 原子更新三组全局快捷键；任一冲突时恢复上一组，避免部分成功。 */
+function registerPetShortcuts(raw) {
+  const desired = normalizeShortcutSettings(raw);
+  const previous = { ...registeredShortcuts };
+  const accelerators = Object.values(desired);
+  if (new Set(accelerators.map((value) => value.toLowerCase())).size !== accelerators.length) {
+    return { ok: false, error: "duplicate", shortcuts: previous };
+  }
+  unregisterPetShortcuts();
+  const next = {};
+  const failed = [];
+  Object.entries(desired).forEach(([action, accelerator]) => {
+    let ok = false;
+    try {
+      ok = globalShortcut.register(accelerator, shortcutAction(action));
+    } catch (err) {
+      log("warn", "快捷键格式无效", { action, accelerator, message: err.message });
+    }
+    if (ok) next[action] = accelerator;
+    else failed.push({ action, accelerator });
+  });
+  if (failed.length) {
+    Object.values(next).forEach((accelerator) => globalShortcut.unregister(accelerator));
+    if (!Object.keys(previous).length) {
+      // 首次启动时某个默认组合可能已被系统占用；其余可用快捷键仍应正常工作。
+      Object.entries(desired).forEach(([action, accelerator]) => {
+        if (failed.some((item) => item.action === action)) return;
+        try {
+          if (globalShortcut.register(accelerator, shortcutAction(action))) {
+            registeredShortcuts[action] = accelerator;
+          }
+        } catch (err) {
+          log("warn", "注册可用快捷键失败", { action, accelerator, message: err.message });
+        }
+      });
+      if (tray) buildTrayMenu();
+      log("warn", "部分快捷键被系统占用", failed);
+      return { ok: false, error: "register", failed, shortcuts: { ...registeredShortcuts } };
+    }
+    Object.entries(previous).forEach(([action, accelerator]) => {
+      try {
+        if (accelerator && globalShortcut.register(accelerator, shortcutAction(action))) {
+          registeredShortcuts[action] = accelerator;
+        }
+      } catch (err) {
+        log("warn", "恢复旧快捷键失败", { action, accelerator, message: err.message });
+      }
+    });
+    if (tray) buildTrayMenu();
+    return { ok: false, error: "register", failed, shortcuts: { ...registeredShortcuts } };
+  }
+  registeredShortcuts = next;
+  log("info", "注册全局快捷键", registeredShortcuts);
+  if (tray) buildTrayMenu();
+  return { ok: true, shortcuts: { ...registeredShortcuts } };
+}
+
 function checkUpdateIfEnabled(manual) {
   if (!updater) return { state: "error", message: "更新服务未初始化" };
   if (!manual && settingsOfSave().updateAutoCheck === false) return updater.snapshot();
   updater.check({ manual });
+  return updater.snapshot();
+}
+
+/** 右键菜单与托盘共用：检查 → 下载 → 重启安装。 */
+async function performUpdateAction(feedUrl) {
+  if (!updater) return { state: "error", message: "更新服务未初始化" };
+  if (feedUrl) updater.setFeedUrl(feedUrl);
+  let status = updater.snapshot();
+  if (["checking", "downloading", "installing"].includes(status.state)) return status;
+  if (status.state === "downloaded") {
+    updater.install();
+    return updater.snapshot();
+  }
+  if (status.state !== "available") {
+    await updater.check({ manual: true });
+    status = updater.snapshot();
+  }
+  if (status.state === "available") {
+    await updater.download();
+    status = updater.snapshot();
+    if (status.state === "downloaded") updater.install();
+  }
   return updater.snapshot();
 }
 
@@ -183,10 +295,7 @@ function updateMenuItem() {
   if (status.state === "available") {
     return {
       label: `发现新版本 v${status.version || ""}，点击更新`,
-      click: async () => {
-        await updater.download();
-        if (updater.snapshot().state === "downloaded") updater.install();
-      },
+      click: () => performUpdateAction(),
     };
   }
   if (status.state === "downloading") {
@@ -205,6 +314,18 @@ function updateMenuItem() {
     label: status.state === "error" ? "检查更新（上次失败，重试）" : "检查更新",
     click: () => checkUpdateIfEnabled(true),
   };
+}
+
+function updateMenuItems() {
+  const status = updater ? updater.snapshot() : { state: "error" };
+  const items = [updateMenuItem()];
+  if (status.state === "available" || status.state === "downloaded") {
+    items.push({
+      label: "重新检查更新",
+      click: () => checkUpdateIfEnabled(true),
+    });
+  }
+  return items;
 }
 
 // 点击穿透的命中判定：渲染进程上报"哪些矩形区域需要接收鼠标"，
@@ -892,6 +1013,7 @@ function createToolWindow(tool, options) {
     },
   });
   toolWindows.set(tool, toolWin);
+  if (spec.aspectRatio) toolWin.setAspectRatio(spec.aspectRatio);
   toolWin.setAlwaysOnTop(true, "floating");
   toolWin.setMenuBarVisibility(false);
   toolWin.webContents.on("did-finish-load", () => log("info", "工具窗口加载完成", { tool }));
@@ -927,11 +1049,17 @@ function buildTrayMenu() {
   const menu = Menu.buildFromTemplate([
     { label: win && win.isVisible() ? "先躲起来" : "出来玩", click: toggleWindow },
     { type: "separator" },
-    { label: "和 doro 聊天（Ctrl+Alt+C）", click: () => createChatWindow() },
+    {
+      label: `和 doro 聊天（${registeredShortcuts.chat || "未设置"}）`,
+      click: () => createChatWindow(),
+    },
     { label: "社交与排行榜", click: () => createSocialWindow() },
     { label: "喂饭（20 金币）", click: () => send("pet:command", "feed") },
     { label: "陪玩（30 金币）", click: () => send("pet:command", "play") },
-    { label: "叫它过来（Ctrl+Alt+R）", click: summonToCursor },
+    {
+      label: `叫它过来（${registeredShortcuts.summon || "未设置"}）`,
+      click: summonToCursor,
+    },
     { label: "换个动作", click: () => send("pet:command", "next-action") },
     { label: "搬砖升级", click: () => send("pet:command", "upgrade") },
     { type: "separator" },
@@ -976,7 +1104,7 @@ function buildTrayMenu() {
     { label: "打开存档文件夹", click: () => shell.showItemInFolder(SAVE_FILE) },
     { label: "打开日志", click: () => shell.openPath(LOG_FILE) },
     { type: "separator" },
-    updateMenuItem(),
+    ...updateMenuItems(),
     { type: "separator" },
     {
       label: "退出 doro",
@@ -1046,6 +1174,8 @@ function registerIpc() {
     }
     return result;
   });
+
+  ipcMain.handle("shortcuts:update", (_event, shortcuts) => registerPetShortcuts(shortcuts));
 
   // ---- AI 聊天（密钥、上下文与网络留在主进程） -------------------------
   ipcMain.handle("ai:status", (event) =>
@@ -1321,6 +1451,7 @@ function registerIpc() {
     if (updater && feedUrl) updater.setFeedUrl(feedUrl);
     return checkUpdateIfEnabled(true);
   });
+  ipcMain.handle("app:update-action", (_event, feedUrl) => performUpdateAction(feedUrl));
   ipcMain.handle("app:update-download", async () => (updater ? updater.download() : null));
   ipcMain.handle("app:update-install", () => (updater ? updater.install() : false));
   ipcMain.handle("app:update-status", () => (updater ? updater.snapshot() : null));
@@ -1654,14 +1785,7 @@ if (!gotLock) {
     }
     if (process.argv.includes("--chat")) setTimeout(() => createChatWindow(), 1200);
     if (process.argv.includes("--social")) setTimeout(() => createSocialWindow(), 1200);
-    const shortcutToggle = globalShortcut.register("CommandOrControl+Alt+D", () => toggleWindow());
-    const shortcutSummon = globalShortcut.register("CommandOrControl+Alt+R", () => summonToCursor());
-    const shortcutChat = globalShortcut.register("CommandOrControl+Alt+C", () => createChatWindow());
-    log("info", "注册全局快捷键", {
-      toggle: shortcutToggle,
-      summon: shortcutSummon,
-      chat: shortcutChat,
-    });
+    registerPetShortcuts(settingsOfSave().shortcuts);
 
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();

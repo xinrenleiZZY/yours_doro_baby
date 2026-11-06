@@ -1,17 +1,18 @@
+/* global require */
 /*
  * doro 桌面宠物的游戏逻辑（纯函数，不依赖 DOM / Electron）。
  * 浏览器里挂到 window.DoroGame，Node 里可以 require 进来跑单元测试。
  */
 (function (root, factory) {
   if (typeof module === "object" && module.exports) {
-    module.exports = factory();
+    module.exports = factory(require("./cultivation"), require("./opportunities"));
   } else {
-    root.DoroGame = factory();
+    root.DoroGame = factory(root.DoroCultivation, root.DoroOpportunities);
   }
-})(typeof self !== "undefined" ? self : this, function () {
+})(typeof self !== "undefined" ? self : this, function (C, O) {
   "use strict";
 
-  const SAVE_VERSION = 14;
+  const SAVE_VERSION = 28;
 
   // ---- 经济数值 -------------------------------------------------------------
   const BALANCE = {
@@ -31,8 +32,6 @@
     petCooldownMs: 1500,
     petMoodGain: 1.0,
     petCoinBonus: [1, 2], // 摸头随机掉落的金币区间
-    upgradeBaseCost: 120, // 升级花费 = upgradeBaseCost * level^upgradeCostPower
-    upgradeCostPower: 1.35,
     offlineEfficiency: 0.5, // 离线收益按在线的多少比例结算
     offlineCapHours: 8, // 离线收益最多结算多少小时
     offlineSatietyFloor: 30, // 离线时饱食度最低掉到这个值
@@ -73,7 +72,7 @@
     wish: null,
     checkin: { lastDate: "", streak: 0 },
     bank: { amount: 0, dueAt: 0 },
-    gacha: { pulls: 0, history: [] },
+    gacha: { pulls: 0, upPulls: 0, upPity: 0, history: [] },
     minigame: { lastPlayedAt: 0 },
     visitor: null,
     nextVisitorAt: 0,
@@ -100,6 +99,8 @@
       count: 0,
       legacyLevel: 0,
     },
+    cultivation: C.emptyCultivation(0),
+    opportunities: O.emptyState(0),
     intimacy: {
       points: 0,
       dailyDate: "",
@@ -139,18 +140,36 @@
       quizApiBase: "http://192.168.0.193:9300",
       updateFeedUrl: "http://192.168.0.193:9400/updates",
       updateAutoCheck: true,
-    },
-    // 13 -> 14：榜一典藏「永耀」当日积分与产出增幅
-    13: (raw) => {
-      return Object.assign({}, raw, {
-        version: 14,
-        leaderboardBoosts:
-          raw.leaderboardBoosts && typeof raw.leaderboardBoosts === "object"
-            ? raw.leaderboardBoosts
-            : { period: "", activeUntil: 0, boards: [] },
-      });
+      autoFeed: false,
+      shortcuts: { ...C.DEFAULT_SHORTCUTS },
     },
   };
+
+  const BLACK_TOWER_FLOORS = Object.freeze([
+    { floor: 1, name: "黑塔一层", minLevel: 1, enemy: "噬灵鼠", costRatio: 0.14, rewardRatio: 0.18, difficulty: 0.22 },
+    { floor: 2, name: "黑塔二层", minLevel: 11, enemy: "骨甲魇犬", costRatio: 0.17, rewardRatio: 0.26, difficulty: 0.27 },
+    { floor: 3, name: "黑塔三层", minLevel: 21, enemy: "腐羽鸦妖", costRatio: 0.2, rewardRatio: 0.34, difficulty: 0.32 },
+    { floor: 4, name: "黑塔四层", minLevel: 31, enemy: "赤瞳石傀", costRatio: 0.23, rewardRatio: 0.43, difficulty: 0.37 },
+    { floor: 5, name: "黑塔五层", minLevel: 41, enemy: "阴煞鬼将", costRatio: 0.26, rewardRatio: 0.52, difficulty: 0.42 },
+    { floor: 6, name: "黑塔六层", minLevel: 51, enemy: "雷脊妖猿", costRatio: 0.29, rewardRatio: 0.62, difficulty: 0.46 },
+    { floor: 7, name: "黑塔七层", minLevel: 61, enemy: "玄冰魔犀", costRatio: 0.32, rewardRatio: 0.72, difficulty: 0.49 },
+    { floor: 8, name: "黑塔八层", minLevel: 71, enemy: "无面剑侍", costRatio: 0.35, rewardRatio: 0.83, difficulty: 0.52 },
+    { floor: 9, name: "黑塔九层", minLevel: 81, enemy: "吞光魔龙", costRatio: 0.38, rewardRatio: 0.94, difficulty: 0.55 },
+    { floor: 10, name: "黑塔之巅", minLevel: 91, enemy: "黑塔魔君", costRatio: 0.42, rewardRatio: 1.08, difficulty: 0.58 },
+  ]);
+
+  function normalizeShortcuts(raw) {
+    const source = raw && typeof raw === "object" ? raw : {};
+    const clean = {};
+    Object.keys(C.DEFAULT_SHORTCUTS).forEach((key) => {
+      const value = source[key];
+      clean[key] =
+        typeof value === "string" && /^[A-Za-z0-9+_-]{1,64}$/.test(value.trim())
+          ? value.trim()
+          : C.DEFAULT_SHORTCUTS[key];
+    });
+    return clean;
+  }
 
   const DIALOGUE = {
     idle: ["……", "今天也要搬砖吗", "我在这里哦", "发呆中", "摸摸头好不好", "要不要休息一下"],
@@ -285,6 +304,100 @@
       icon: "🎮",
       desc: "心情 +50，一玩一下午",
     },
+    stone_low: {
+      id: "stone_low",
+      name: "下品灵石",
+      type: "cultivation",
+      cultivationType: "stone",
+      stoneTier: "low",
+      price: 50,
+      icon: "💠",
+      desc: "最多提供 10 点修炼能量",
+    },
+    stone_mid: {
+      id: "stone_mid",
+      name: "中品灵石",
+      type: "cultivation",
+      cultivationType: "stone",
+      stoneTier: "mid",
+      price: 300,
+      icon: "🔷",
+      desc: "最多提供 100 点修炼能量",
+    },
+    stone_high: {
+      id: "stone_high",
+      name: "上品灵石",
+      type: "cultivation",
+      cultivationType: "stone",
+      stoneTier: "high",
+      price: 1800,
+      icon: "🔹",
+      desc: "最多提供 1000 点修炼能量",
+    },
+    stone_supreme: {
+      id: "stone_supreme",
+      name: "极品灵石",
+      type: "cultivation",
+      cultivationType: "stone",
+      stoneTier: "supreme",
+      price: 10800,
+      icon: "💎",
+      desc: "最多提供 10000 点修炼能量",
+    },
+    breakthrough_pill: {
+      id: "breakthrough_pill",
+      name: "破境丹",
+      type: "cultivation",
+      cultivationType: "breakthrough",
+      price: 1200,
+      icon: "🧪",
+      desc: "用于大境界突破，可替代心魔试炼",
+    },
+    life_pill: {
+      id: "life_pill",
+      name: "延寿丹",
+      type: "cultivation",
+      cultivationType: "life",
+      price: 1800,
+      icon: "🍥",
+      desc: "服用后永久增加 100 年寿元上限",
+    },
+    technique_pill: {
+      id: "technique_pill",
+      name: "悟道丹",
+      type: "cultivation",
+      cultivationType: "technique",
+      price: 1200,
+      icon: "📖",
+      desc: "服用后随机提升一部已修功法的进度",
+    },
+    cultivation_pill: {
+      id: "cultivation_pill",
+      name: "培元丹",
+      type: "cultivation",
+      cultivationType: "cultivation",
+      price: 900,
+      icon: "🌀",
+      desc: "服用后随机获得当前小境界 8%–16% 的修为",
+    },
+    heart_pill: {
+      id: "heart_pill",
+      name: "静心丹",
+      type: "cultivation",
+      cultivationType: "heart",
+      price: 700,
+      icon: "🪷",
+      desc: "服用后恢复 2–5 点道心",
+    },
+    thunder_pearl: {
+      id: "thunder_pearl",
+      name: "避雷珠",
+      type: "cultivation",
+      cultivationType: "thunder",
+      price: 1200,
+      icon: "⚡",
+      desc: "渡劫时降低雷劫强度，提升突破成功率",
+    },
     coffee: {
       id: "coffee",
       name: "提神咖啡",
@@ -292,8 +405,119 @@
       price: 120,
       buff: "double_income",
       minutes: 10,
+      incomeMultiplier: 1.5,
       icon: "☕",
       desc: "接下来 10 分钟产出 ×1.5",
+    },
+    lemon_soda: {
+      id: "lemon_soda",
+      name: "柠檬气泡水",
+      type: "buff",
+      price: 180,
+      buff: "income_lemon_soda",
+      minutes: 10,
+      incomeMultiplier: 1.25,
+      icon: "🍋",
+      desc: "接下来 10 分钟产出 ×1.25",
+    },
+    honey_bar: {
+      id: "honey_bar",
+      name: "蜂蜜能量棒",
+      type: "buff",
+      price: 260,
+      buff: "income_honey_bar",
+      minutes: 15,
+      incomeMultiplier: 1.35,
+      icon: "🍯",
+      desc: "接下来 15 分钟产出 ×1.35",
+    },
+    matcha_latte: {
+      id: "matcha_latte",
+      name: "抹茶拿铁",
+      type: "buff",
+      price: 360,
+      buff: "income_matcha_latte",
+      minutes: 20,
+      incomeMultiplier: 1.5,
+      icon: "🍵",
+      desc: "接下来 20 分钟产出 ×1.5",
+    },
+    energy_drink: {
+      id: "energy_drink",
+      name: "能量饮料",
+      type: "buff",
+      price: 520,
+      buff: "income_energy_drink",
+      minutes: 15,
+      incomeMultiplier: 1.8,
+      icon: "🥤",
+      desc: "接下来 15 分钟产出 ×1.8",
+    },
+    night_owl_drink: {
+      id: "night_owl_drink",
+      name: "夜猫子特调",
+      type: "buff",
+      price: 700,
+      buff: "income_night_owl",
+      minutes: 30,
+      incomeMultiplier: 1.7,
+      icon: "🌃",
+      desc: "接下来 30 分钟产出 ×1.7",
+    },
+    lucky_clover: {
+      id: "lucky_clover",
+      name: "幸运四叶草",
+      type: "buff",
+      price: 900,
+      buff: "income_lucky_clover",
+      minutes: 10,
+      incomeMultiplier: 2.2,
+      icon: "🍀",
+      desc: "接下来 10 分钟产出 ×2.2",
+    },
+    cloud_aroma: {
+      id: "cloud_aroma",
+      name: "云端香薰",
+      type: "buff",
+      price: 1200,
+      buff: "income_cloud_aroma",
+      minutes: 20,
+      incomeMultiplier: 2,
+      icon: "☁️",
+      desc: "接下来 20 分钟产出 ×2",
+    },
+    starlight_charm: {
+      id: "starlight_charm",
+      name: "星河护符",
+      type: "buff",
+      price: 1800,
+      buff: "income_starlight_charm",
+      minutes: 15,
+      incomeMultiplier: 2.5,
+      icon: "🌟",
+      desc: "接下来 15 分钟产出 ×2.5",
+    },
+    master_tea: {
+      id: "master_tea",
+      name: "摸鱼大师茶",
+      type: "buff",
+      price: 2800,
+      buff: "income_master_tea",
+      minutes: 45,
+      incomeMultiplier: 1.6,
+      icon: "🫖",
+      desc: "接下来 45 分钟产出 ×1.6",
+    },
+    time_capsule: {
+      id: "time_capsule",
+      name: "时光胶囊",
+      type: "buff",
+      price: 5000,
+      buff: "income_time_capsule",
+      minutes: 30,
+      incomeMultiplier: 3,
+      icon: "⏳",
+      desc: "接下来 30 分钟产出 ×3",
     },
     lucky_cat: {
       id: "lucky_cat",
@@ -987,7 +1211,7 @@
   const CHAMPION_SCORE_MULTIPLIER = 1.2;
   const CHAMPION_INCOME_BONUS = 2;
   const PREFERENCE_ITEM_IDS = ["fish", "milk_tea", "cake", "hotpot", "wand", "bubble", "gameboy"];
-  const STARTER_ACTIONS = ["idle_stand", "walk_bag", "sleep_cat", "closeup_soft"];
+  const STARTER_ACTIONS = ["idle_stand", "walk_bag", "sleep_cat", "closeup_soft", "idle_sit"];
   const TRAINING_COSTS = {
     日常: 12,
     情绪: 14,
@@ -1065,22 +1289,6 @@
     { key: "scene", group: "小剧场" },
   ];
 
-  const TITLES = [
-    { level: 50, name: "摸鱼合伙人" },
-    { level: 30, name: "摸鱼总监" },
-    { level: 20, name: "摸鱼经理" },
-    { level: 10, name: "摸鱼主管" },
-    { level: 5, name: "摸鱼专员" },
-    { level: 1, name: "摸鱼实习生" },
-  ];
-  const PRESTIGE_LEVEL = 50;
-  const PRESTIGE_BONUS = 0.15;
-  const PRESTIGE_TITLES = [
-    { count: 5, name: "摸鱼守护神" },
-    { count: 3, name: "传奇摸鱼王" },
-    { count: 2, name: "摸鱼传说" },
-    { count: 1, name: "摸鱼新生" },
-  ];
   const INTIMACY_LEVELS = [
     { level: 5, min: 600, name: "灵魂挚友" },
     { level: 4, min: 280, name: "知心伙伴" },
@@ -1103,7 +1311,23 @@
   const GACHA_PRICE = 500;
   const GACHA_TEN_PRICE = 4500;
   const GACHA_PITY_PULLS = 80;
+  const GACHA_COMMON_COIN_LOW_RATE = 0.9;
+  const GACHA_COMMON_COIN_LOW_MIN = 100;
+  const GACHA_COMMON_COIN_LOW_MAX = 500;
+  const GACHA_COMMON_COIN_HIGH_MIN = 500;
+  const GACHA_COMMON_COIN_HIGH_MAX = 2500;
   const GACHA_LIMITED_DAYS = Object.freeze([1, 2, 3, 4, 5, 6, 7]);
+  const GACHA_UP_ID = "up_moon_office";
+  const GACHA_UP_VERSION = "v0.0.0.1";
+  const GACHA_UP_START = Date.parse("2026-10-25T00:00:00+08:00");
+  const GACHA_UP_END = Date.parse("2026-12-21T00:00:00+08:00");
+  const GACHA_UP_PRICE = 5000;
+  const GACHA_UP_TEN_PRICE = 50000;
+  const GACHA_UP_PITY_PULLS = 300;
+  const GACHA_UP_BIG_ID = "luxury_moon_observatory";
+  const GACHA_UP_OFFICE_ID = "luxury_office";
+  const GACHA_UP_BIG_DUPLICATE_COINS = 20000000;
+  const GACHA_UP_OFFICE_DUPLICATE_COINS = 520000;
   const DAY_MS = 86400000;
   const GACHA_TOP_PRIZES = [
     {
@@ -1134,33 +1358,72 @@
   const GACHA_PITY_PRIZES = Object.freeze(GACHA_TOP_PRIZES.filter((prize) => prize.amount !== 10000000));
   // 分支占比仅作用于未命中金币大奖的普通抽取，合计必须为 1。
   const GACHA_RATES = Object.freeze({
-    commonCoins: 0.4,
-    consumable: 0.2,
-    timedFurniture: 0.1,
-    timedOutfit: 0.08,
-    legacyOutfitUnlock: 0.05,
-    theme: 0.1,
-    coinFallback: 0.07,
+    commonCoins: 0.697,
+    consumable: 0.02,
+    timedFurniture: 0.02,
+    buff: 0.03,
+    timedOutfit: 0.008,
+    legacyOutfitUnlock: 0.005,
+    themeOrFallback: 0.22,
+  });
+  const GACHA_UP_RATES = Object.freeze({
+    bigCollection: 0.000025,
+    officeCollection: 0.000075,
+    commonCoins: 0.8,
+    consumable: 0.1524,
+    timedFurniture: 0.0125,
+    buff: 0.0125,
+    timedOutfit: 0.0125,
+    legacyOutfitUnlock: 0.01,
   });
   const GACHA_BRANCH_ENDS = Object.freeze({
     commonCoins: GACHA_RATES.commonCoins,
     consumable: GACHA_RATES.commonCoins + GACHA_RATES.consumable,
     timedFurniture: GACHA_RATES.commonCoins + GACHA_RATES.consumable + GACHA_RATES.timedFurniture,
+    buff: GACHA_RATES.commonCoins + GACHA_RATES.consumable + GACHA_RATES.timedFurniture + GACHA_RATES.buff,
     timedOutfit:
-      GACHA_RATES.commonCoins + GACHA_RATES.consumable + GACHA_RATES.timedFurniture + GACHA_RATES.timedOutfit,
+      GACHA_RATES.commonCoins +
+      GACHA_RATES.consumable +
+      GACHA_RATES.timedFurniture +
+      GACHA_RATES.buff +
+      GACHA_RATES.timedOutfit,
     legacyOutfitUnlock:
       GACHA_RATES.commonCoins +
       GACHA_RATES.consumable +
       GACHA_RATES.timedFurniture +
+      GACHA_RATES.buff +
       GACHA_RATES.timedOutfit +
       GACHA_RATES.legacyOutfitUnlock,
-    theme:
-      GACHA_RATES.commonCoins +
-      GACHA_RATES.consumable +
-      GACHA_RATES.timedFurniture +
-      GACHA_RATES.timedOutfit +
-      GACHA_RATES.legacyOutfitUnlock +
-      GACHA_RATES.theme,
+  });
+  const GACHA_UP_BRANCH_ENDS = Object.freeze({
+    bigCollection: 25,
+    officeCollection: 100,
+    commonCoins: 800100,
+    consumable: 952500,
+    timedFurniture: 965000,
+    buff: 977500,
+    timedOutfit: 990000,
+    legacyOutfitUnlock: 1000000,
+  });
+  const GACHA_POOLS = Object.freeze({
+    standard: Object.freeze({
+      id: "standard",
+      label: "常驻奖池",
+      subtitle: "永久开放",
+      price: GACHA_PRICE,
+      tenPrice: GACHA_TEN_PRICE,
+      pity: GACHA_PITY_PULLS,
+    }),
+    up: Object.freeze({
+      id: "up",
+      label: "UP 奖池",
+      subtitle: `${GACHA_UP_VERSION} · 10.25–12.20`,
+      price: GACHA_UP_PRICE,
+      tenPrice: GACHA_UP_TEN_PRICE,
+      pity: GACHA_UP_PITY_PULLS,
+      startsAt: GACHA_UP_START,
+      endsAt: GACHA_UP_END,
+    }),
   });
   const BANK_HOURS = 8;
   const BANK_RATE = 0.15;
@@ -1439,6 +1702,7 @@
     "luxury",
     "profile",
     "fashion",
+    "cultivation",
   ]);
   const dynamicShopIds = new Set();
   const dynamicFurnitureIds = new Set();
@@ -1640,11 +1904,31 @@
         if (Object.prototype.hasOwnProperty.call(item, "bonus")) {
           item.bonus = Math.max(0, Math.min(20, Number(item.bonus) || 0));
         }
+        if (item.type === "buff") {
+          item.minutes = Math.max(1, Math.min(1440, Math.round(Number(item.minutes) || 1)));
+          item.incomeMultiplier = Math.max(1, Math.min(10, Number(item.incomeMultiplier) || 1));
+          if (!validCatalogId(item.buff)) return;
+        }
         if (item.type === "fashion") {
           if (!/^fashion\/[a-z0-9_]{1,50}\.svg$/.test(String(item.overlay || ""))) return;
           item.overlayTop = Math.max(-20, Math.min(100, Number(item.overlayTop) || 0));
           item.overlayLeft = Math.max(0, Math.min(100, Number(item.overlayLeft) || 50));
           item.overlayWidth = Math.max(5, Math.min(150, Number(item.overlayWidth) || 50));
+        }
+        if (item.type === "cultivation") {
+          if (
+            !["stone", "breakthrough", "life", "technique", "cultivation", "heart", "thunder"].includes(
+              item.cultivationType
+            )
+          ) {
+            return;
+          }
+          if (
+            item.cultivationType === "stone" &&
+            !["low", "mid", "high", "supreme"].includes(item.stoneTier)
+          ) {
+            return;
+          }
         }
         if (!SHOP_ITEMS[id]) dynamicShopIds.add(id);
         SHOP_ITEMS[id] = item;
@@ -1761,11 +2045,13 @@
     return { ok: changed > 0, changed };
   }
 
-  function freshState(now) {
+  function freshState(now, rng) {
     const state = JSON.parse(JSON.stringify(DEFAULT_STATE));
     state.lastTick = now;
     state.createdAt = now;
     state.stats.sessions = 1;
+    state.cultivation = C.createCultivation(now, rng);
+    state.opportunities = O.emptyState(now);
     return state;
   }
 
@@ -1928,6 +2214,203 @@
             : { furniture: {}, dress: {} },
       });
     },
+    // 13 -> 14：榜一当日增幅状态
+    13: (raw) => {
+      return Object.assign({}, raw, {
+        version: 14,
+        leaderboardBoosts:
+          raw.leaderboardBoosts && typeof raw.leaderboardBoosts === "object"
+            ? raw.leaderboardBoosts
+            : { period: "", activeUntil: 0, boards: [] },
+      });
+    },
+    // 14 -> 15：抽卡双池计数（旧档补零即可）
+    14: (raw) => Object.assign({}, raw, { version: 15 }),
+    // 15 -> 16：修仙属性、寿元、突破与轮回
+    15: (raw) => Object.assign({}, raw, { version: 16, cultivation: raw.cultivation || null }),
+    // 16 -> 17：橘子大陆、区域特性与四档灵石
+    16: (raw) =>
+      Object.assign({}, raw, {
+        version: 17,
+        cultivation:
+          raw.cultivation && typeof raw.cultivation === "object"
+            ? {
+                ...raw.cultivation,
+                stones: raw.cultivation.stones || {
+                  low: Number(raw.cultivation.spiritStones) || 0,
+                  mid: 0,
+                  high: 0,
+                  supreme: 0,
+                },
+                selectedStoneTier: raw.cultivation.selectedStoneTier || "low",
+                regionId: raw.cultivation.regionId || null,
+              }
+            : null,
+      }),
+    // 17 -> 18：打坐吐纳与聚灵阵
+    17: (raw) =>
+      Object.assign({}, raw, {
+        version: 18,
+        cultivation:
+          raw.cultivation && typeof raw.cultivation === "object"
+            ? {
+                ...raw.cultivation,
+                formationId: raw.cultivation.formationId || "gathering",
+                meditation: raw.cultivation.meditation || {
+                  active: false,
+                  lastAt: Date.now(),
+                  totalSeconds: 0,
+                },
+              }
+            : null,
+      }),
+    // 18 -> 19：灵石固定能量与自定义购买 / 消耗数量
+    18: (raw) =>
+      Object.assign({}, raw, {
+        version: 19,
+        cultivation:
+          raw.cultivation && typeof raw.cultivation === "object"
+            ? {
+                ...raw.cultivation,
+                buyQuantity: raw.cultivation.buyQuantity || 10,
+                consumeQuantity: raw.cultivation.consumeQuantity || 1,
+              }
+            : null,
+      }),
+    // 19 -> 20：功法参悟冷却
+    19: (raw) =>
+      Object.assign({}, raw, {
+        version: 20,
+        cultivation:
+          raw.cultivation && typeof raw.cultivation === "object"
+            ? { ...raw.cultivation, techniqueReadyAt: raw.cultivation.techniqueReadyAt || 0 }
+            : null,
+      }),
+    // 20 -> 21：仙人神魂转世
+    20: (raw) =>
+      Object.assign({}, raw, {
+        version: 21,
+        cultivation:
+          raw.cultivation && typeof raw.cultivation === "object"
+            ? {
+                ...raw.cultivation,
+                soul: raw.cultivation.soul || {
+                  level: 0,
+                  count: 0,
+                  root: "",
+                  attributeBonus: 0,
+                },
+              }
+            : null,
+      }),
+    // 21 -> 22：功法卷轴、已学功法与装备槽
+    21: (raw) =>
+      Object.assign({}, raw, {
+        version: 22,
+        cultivation:
+          raw.cultivation && typeof raw.cultivation === "object"
+            ? {
+                ...raw.cultivation,
+                techniqueScrolls: raw.cultivation.techniqueScrolls || {},
+                techniquesKnown: raw.cultivation.techniquesKnown || [],
+                equippedTechnique: raw.cultivation.equippedTechnique || "",
+              }
+            : null,
+      }),
+    // 22 -> 23：完整灵根谱系与组合功法
+    22: (raw) => Object.assign({}, raw, { version: 23 }),
+    // 23 -> 24：数据驱动机缘、选项效果与机缘录
+    23: (raw) =>
+      Object.assign({}, raw, {
+        version: 24,
+        opportunities: O.normalizeState(raw.opportunities, 0),
+      }),
+    // 24 -> 25：功法分类、五类多修与单部功法修炼进度
+    24: (raw) =>
+      Object.assign({}, raw, {
+        version: 25,
+        cultivation:
+          raw.cultivation && typeof raw.cultivation === "object"
+            ? (() => {
+                const equippedTechniques =
+                  raw.cultivation.equippedTechniques || [raw.cultivation.equippedTechnique].filter(Boolean);
+                const techniqueProgress = { ...(raw.cultivation.techniqueProgress || {}) };
+                equippedTechniques.forEach((id) => {
+                  if (techniqueProgress[id] === undefined) techniqueProgress[id] = 100;
+                });
+                return { ...raw.cultivation, techniqueProgress, equippedTechniques };
+              })()
+            : null,
+      }),
+    // 25 -> 26：随机洞天福地、随机修炼效果与功法丹药
+    25: (raw) =>
+      Object.assign({}, raw, {
+        version: 26,
+        cultivation:
+          raw.cultivation && typeof raw.cultivation === "object"
+            ? {
+                ...raw.cultivation,
+                cave: raw.cultivation.cave || {
+                  refreshAt: 0,
+                  spots: [],
+                  active: null,
+                  readyAt: 0,
+                  visits: 0,
+                  lastLoot: null,
+                },
+                pills: {
+                  breakthrough: 0,
+                  life: 0,
+                  technique: 0,
+                  cultivation: 0,
+                  heart: 0,
+                  ...(raw.cultivation.pills || {}),
+                },
+              }
+            : null,
+      }),
+    // 26 -> 27：灵石批量吸收会话
+    26: (raw) =>
+      Object.assign({}, raw, {
+        version: 27,
+        cultivation:
+          raw.cultivation && typeof raw.cultivation === "object"
+            ? {
+                ...raw.cultivation,
+                stoneSession: raw.cultivation.stoneSession || C.emptyCultivation(0).stoneSession,
+              }
+            : null,
+      }),
+    // 27 -> 28：灵力、黑塔挑战、自定义快捷键、自动进食与培元丹阶段额度
+    27: (raw) =>
+      Object.assign({}, raw, {
+        version: 28,
+        cultivation:
+          raw.cultivation && typeof raw.cultivation === "object"
+            ? {
+                ...raw.cultivation,
+                cultivationPillUse: raw.cultivation.cultivationPillUse || {
+                  level: 0,
+                  count: 0,
+                },
+                spiritualPower: raw.cultivation.spiritualPower,
+                spiritualPowerUpdatedAt:
+                  raw.cultivation.spiritualPowerUpdatedAt || raw.cultivation.lastAgedAt || Date.now(),
+                blackTower: raw.cultivation.blackTower || {
+                  selectedFloor: 1,
+                  bestFloor: 0,
+                  attempts: 0,
+                  wins: 0,
+                  lastResult: null,
+                },
+              }
+            : null,
+        settings: {
+          ...(raw.settings || {}),
+          autoFeed: raw.settings && raw.settings.autoFeed === true,
+          shortcuts: normalizeShortcuts(raw.settings && raw.settings.shortcuts),
+        },
+      }),
   };
 
   function migrate(raw) {
@@ -1943,13 +2426,20 @@
   }
 
   /** 把存档文件（可能来自老版本 / 被人手改坏）合并成一份可用的状态。 */
-  function hydrate(raw, now) {
-    if (!raw || typeof raw !== "object") return freshState(now);
+  function hydrate(raw, now, rng) {
+    if (!raw || typeof raw !== "object") return freshState(now, rng);
     raw = migrate(raw);
-    const state = freshState(now);
+    const state = freshState(now, rng);
     state.coins = num(raw.coins, 0, 0);
     state.totalEarned = num(raw.totalEarned, state.coins, 0);
     state.level = Math.round(num(raw.level, 1, 1, 999));
+    state.cultivation = C.normalizeCultivation(raw.cultivation, now, rng);
+    if (!Number.isFinite(Number(raw.cultivation && raw.cultivation.spiritualPower))) {
+      state.cultivation.spiritualPowerMax = spiritualPowerCapacity(state.cultivation, state.level);
+      state.cultivation.spiritualPower = state.cultivation.spiritualPowerMax;
+      state.cultivation.spiritualPowerUpdatedAt = now;
+    }
+    state.opportunities = O.normalizeState(raw.opportunities, now);
     state.satiety = num(raw.satiety, 80, 0, 100);
     state.mood = num(raw.mood, 80, 0, 100);
     state.createdAt = num(raw.createdAt, now, 0);
@@ -2066,6 +2556,9 @@
         : { amount: 0, dueAt: 0 };
     state.gacha = {
       pulls: raw.gacha && typeof raw.gacha === "object" ? num(raw.gacha.pulls, 0, 0) : 0,
+      upPulls: raw.gacha && typeof raw.gacha === "object" ? num(raw.gacha.upPulls, 0, 0) : 0,
+      upPity:
+        raw.gacha && typeof raw.gacha === "object" ? num(raw.gacha.upPity, 0, 0, GACHA_UP_PITY_PULLS) : 0,
       history: Array.isArray(raw.gacha && raw.gacha.history)
         ? raw.gacha.history
             .filter((entry) => entry && typeof entry === "object" && typeof entry.label === "string")
@@ -2077,9 +2570,10 @@
               tier: ["common", "rare", "jackpot", "super", "legendary", "mythic"].includes(entry.tier)
                 ? entry.tier
                 : "common",
-              amount: num(entry.amount, 0, 0, 10000000),
+              amount: num(entry.amount, 0, 0, 100000000),
               durationDays: num(entry.durationDays, 0, 0, 7),
               itemId: String(entry.itemId || "").slice(0, 50),
+              pool: entry.pool === "up" ? "up" : "standard",
               guaranteed: entry.guaranteed === true,
             }))
         : [],
@@ -2187,6 +2681,8 @@
       state.settings.updateFeedUrl = DEFAULT_STATE.settings.updateFeedUrl;
     }
     state.settings.updateAutoCheck = state.settings.updateAutoCheck !== false;
+    state.settings.autoFeed = state.settings.autoFeed === true;
+    state.settings.shortcuts = normalizeShortcuts(state.settings.shortcuts);
     state.settings.scale = num(state.settings.scale, 1, 0.6, 1.8);
     state.settings.ambientIntervalSec = num(state.settings.ambientIntervalSec, 60, 5, 600);
     state.settings.autoWalkIntervalSec = num(state.settings.autoWalkIntervalSec, 45, 10, 600);
@@ -2201,6 +2697,8 @@
         ? state.settings.equippedFashion
         : "";
     if (state.lastTick > now) state.lastTick = now;
+    const lifespanEvent = advanceLifespan(state, now || Date.now(), rng);
+    if (lifespanEvent.died) state.lastTick = now || Date.now();
     return state;
   }
 
@@ -2237,14 +2735,22 @@
     );
   }
 
+  /** 多个限时产出增益同时生效时，只采用最高倍率，避免叠乘失控。 */
+  function activeIncomeBuffMultiplier(state, now) {
+    const ts = now || Date.now();
+    return Object.values(SHOP_ITEMS).reduce((highest, item) => {
+      if (item.type !== "buff" || !activeBuff(state, item.buff, ts)) return highest;
+      return Math.max(highest, Number(item.incomeMultiplier) || 1);
+    }, 1);
+  }
+
   /** 当前每秒实际产出的金币（含等级、心情、饱食度、性格与典藏影响）。 */
   function incomePerSecond(state) {
-    const base = state.level * BALANCE.baseIncomePerLevel;
+    const base = state.level * BALANCE.baseIncomePerLevel * C.realmPowerMultiplier(state.level);
     const moodFactor = 1 + BALANCE.moodBonus * (state.mood / 100);
     const personalityFactor = personalityOf(state).income;
-    const prestigeFactor = 1 + (state.prestige ? state.prestige.count : 0) * PRESTIGE_BONUS;
-    const buffUntil = (state.buffs && state.buffs.double_income) || 0;
-    const buffFactor = buffUntil > Date.now() ? 1.5 : 1;
+    const prestigeFactor = 1;
+    const buffFactor = activeIncomeBuffMultiplier(state);
     const feedFactor =
       state.satiety < BALANCE.hungryThreshold
         ? state.satiety <= BALANCE.emptyThreshold
@@ -2274,10 +2780,10 @@
   function incomeBreakdown(state) {
     return {
       perSecond: incomePerSecond(state),
-      base: state.level * BALANCE.baseIncomePerLevel,
+      base: state.level * BALANCE.baseIncomePerLevel * C.realmPowerMultiplier(state.level),
       moodFactor: 1 + BALANCE.moodBonus * (state.mood / 100),
       personalityFactor: personalityOf(state).income,
-      prestigeFactor: 1 + (state.prestige ? state.prestige.count : 0) * PRESTIGE_BONUS,
+      prestigeFactor: 1,
       luxuryBonus: luxuryIncomeBonus(state),
       permanentBonus: permanentIncomeBonus(state),
       championPermanentBonus: championPermanentIncomeBonus(state),
@@ -2292,9 +2798,10 @@
    * 推进 elapsedMs 毫秒。超过 5 分钟的空档按"离线"处理（打折结算），
    * 避免把电脑休眠的时间算成暴富。
    */
-  function tick(state, elapsedMs) {
+  function tick(state, elapsedMs, rng) {
     const seconds = Math.max(0, elapsedMs) / 1000;
     if (seconds <= 0) return { earned: 0, offline: false };
+    const tickNow = Math.max(0, Number(state.lastTick) || Date.now()) + seconds * 1000;
 
     const offline = seconds > 300;
     const efficiency = offline ? BALANCE.offlineEfficiency : 1;
@@ -2302,9 +2809,16 @@
 
     state.coins += earned;
     state.totalEarned += earned;
-    ensureDaily(state, Date.now()).progress.coinsEarned += earned;
+    ensureDaily(state, tickNow).progress.coinsEarned += earned;
     state.satiety = clamp(state.satiety - (BALANCE.satietyDecayPerMinute * seconds) / 60, 0, 100);
     state.mood = clamp(state.mood - (BALANCE.moodDecayPerMinute * seconds) / 60, 0, 100);
+    const autoFed =
+      state.settings &&
+      state.settings.autoFeed &&
+      state.satiety < BALANCE.hungryThreshold &&
+      state.coins >= BALANCE.feedCost
+        ? feed(state, tickNow).ok
+        : false;
     if (state.settings && state.settings.analytics && state.metrics) {
       const key = dayKey();
       state.metrics.days[key] = Math.min(86400, (state.metrics.days[key] || 0) + seconds);
@@ -2313,16 +2827,33 @@
         state.metrics.days = Object.fromEntries(keys.slice(-60).map((k) => [k, state.metrics.days[k]]));
       }
     }
-    state.lastTick = Date.now();
-    return { earned, offline, efficiency };
+    state.lastTick = tickNow;
+    const spiritualPower = recoverSpiritualPower(state, tickNow);
+    const meditation = settleMeditation(state, tickNow);
+    const stoneCultivation = settleStoneCultivation(state, tickNow, rng);
+    const lifespan = advanceLifespan(state, tickNow, rng);
+    return {
+      earned,
+      offline,
+      efficiency,
+      autoFed,
+      spiritualPower,
+      meditation,
+      stoneCultivation,
+      lifespan,
+      died: lifespan.died,
+    };
   }
 
   /** 从存档的 lastTick 结算到现在的收益。 */
-  function settleOffline(state, now) {
+  function settleOffline(state, now, rng) {
+    const spiritualPower = recoverSpiritualPower(state, now);
+    const meditation = settleMeditation(state, now);
+    const stoneCultivation = settleStoneCultivation(state, now, rng);
     const elapsed = Math.max(0, (now - state.lastTick) / 1000);
     if (elapsed < 60) {
       state.lastTick = now;
-      return { seconds: 0, earned: 0 };
+      return { seconds: 0, earned: 0, meditation, stoneCultivation, spiritualPower };
     }
     const capped = Math.min(elapsed, BALANCE.offlineCapHours * 3600);
     const earned = incomePerSecond(state) * capped * BALANCE.offlineEfficiency;
@@ -2334,7 +2865,16 @@
     );
     state.mood = Math.max(BALANCE.offlineMoodFloor, state.mood - (BALANCE.moodDecayPerMinute * capped) / 60);
     state.lastTick = now;
-    return { seconds: capped, earned };
+    const lifespan = advanceLifespan(state, now, rng);
+    return {
+      seconds: capped,
+      earned,
+      meditation,
+      stoneCultivation,
+      spiritualPower,
+      lifespan,
+      died: lifespan.died,
+    };
   }
 
   function canAfford(state, cost) {
@@ -2377,65 +2917,1806 @@
     return { ok: true, dialogue: "好玩！", training, intimacy };
   }
 
-  function upgradeCost(state) {
-    return Math.round(BALANCE.upgradeBaseCost * Math.pow(state.level, BALANCE.upgradeCostPower));
-  }
-
-  function upgrade(state, now) {
-    const cost = upgradeCost(state);
-    if (!canAfford(state, cost)) {
-      return { ok: false, reason: "coin", cost, dialogue: "还差一点钱……" };
+  /**
+   * 灵力上限取当前修为与此前每个小等级修为需求的总和。
+   * 这样越往后修出的灵力越浑厚，也不会只看当前一格经验而突然跌落。
+   */
+  function totalCultivationAmount(cultivation, level) {
+    let total = Math.max(0, Number(cultivation && cultivation.exp) || 0);
+    const currentLevel = Math.max(1, Math.min(C.MAX_LEVEL, Math.round(Number(level) || 1)));
+    for (let value = 1; value < currentLevel; value += 1) {
+      total += C.expRequired(value);
     }
-    state.coins -= cost;
-    state.level += 1;
-    state.stats.upgrades += 1;
-    state.lastTick = now || Date.now();
-    return { ok: true, cost, dialogue: `摸鱼等级 Lv.${state.level}！` };
+    return total;
   }
 
-  function prestigeTitle(count) {
-    const entry = PRESTIGE_TITLES.find((item) => count >= item.count);
-    return entry ? entry.name : "";
+  function spiritualPowerCapacity(cultivation, level) {
+    return Math.max(100, Math.round(totalCultivationAmount(cultivation, level) / 10));
   }
 
-  function prestigeStatus(state) {
-    const count = state.prestige ? state.prestige.count : 0;
+  function spiritualPowerRecoveryRate(state) {
+    const cultivation = state.cultivation;
+    const attrs = C.talentSummary(cultivation.attributes);
+    const root = C.ROOTS[attrs.root] || C.ROOTS.mixed;
+    const region = C.regionById(cultivation.regionId) || C.ORANGE_REGIONS[0];
+    const formation = C.formationById(cultivation.formationId);
+    const techniqueBonus = C.techniqueBonuses(cultivation);
+    const caveBonus = C.caveBonuses(cultivation);
+    const max = spiritualPowerCapacity(cultivation, state.level);
+    const meditationFactor = cultivation.meditation && cultivation.meditation.active ? 1.15 : 1;
+    const environmentFactor =
+      region.qi *
+      formation.multiplier *
+      techniqueBonus.cultivationMultiplier *
+      caveBonus.expMultiplier *
+      meditationFactor;
+    const cultivationFactor = (1 + Math.min(1.5, Math.max(0, state.level - 1) / 500)) * Math.sqrt(root.gain || 1);
+    const perSecond = Math.max(0.02, max * 0.00035 * environmentFactor * cultivationFactor);
     return {
-      requiredLevel: PRESTIGE_LEVEL,
-      level: state.level,
-      eligible: state.level >= PRESTIGE_LEVEL,
-      count,
-      multiplier: 1 + count * PRESTIGE_BONUS,
-      nextMultiplier: 1 + (count + 1) * PRESTIGE_BONUS,
-      title: prestigeTitle(count),
-      nextTitle: prestigeTitle(count + 1),
-      legacyLevel: state.prestige ? state.prestige.legacyLevel : 0,
+      perSecond,
+      max,
+      environmentFactor,
+      cultivationFactor,
+      region,
+      formation,
+      caveBonus,
     };
   }
 
-  function prestige(state, now) {
-    if (state.level < PRESTIGE_LEVEL) {
-      return { ok: false, reason: "level", requiredLevel: PRESTIGE_LEVEL, level: state.level };
+  function recoverSpiritualPower(state, now, options) {
+    const ts = now || Date.now();
+    const settings = options || {};
+    state.cultivation = C.normalizeCultivation(state.cultivation, ts);
+    const cultivation = state.cultivation;
+    const max = spiritualPowerCapacity(cultivation, state.level);
+    const last = Math.max(0, Math.min(ts, Number(cultivation.spiritualPowerUpdatedAt) || ts));
+    const elapsedSeconds = settings.recover === false ? 0 : Math.max(0, (ts - last) / 1000);
+    const rate = spiritualPowerRecoveryRate(state);
+    cultivation.spiritualPowerMax = max;
+    cultivation.spiritualPower = Math.min(
+      max,
+      Math.max(0, Number(cultivation.spiritualPower) || 0) + rate.perSecond * elapsedSeconds
+    );
+    cultivation.spiritualPowerUpdatedAt = ts;
+    return {
+      current: cultivation.spiritualPower,
+      max,
+      perSecond: rate.perSecond,
+      environmentFactor: rate.environmentFactor,
+      cultivationFactor: rate.cultivationFactor,
+      region: rate.region,
+      formation: rate.formation,
+      caveBonus: rate.caveBonus,
+    };
+  }
+
+  function blackTowerStatus(state, now) {
+    state.cultivation = C.normalizeCultivation(state.cultivation, now || Date.now());
+    const power = recoverSpiritualPower(state, now || Date.now());
+    const tower = state.cultivation.blackTower;
+    const unlocked = BLACK_TOWER_FLOORS.filter((entry) => state.level >= entry.minLevel);
+    if (!unlocked.some((entry) => entry.floor === tower.selectedFloor)) {
+      tower.selectedFloor = unlocked[unlocked.length - 1].floor;
     }
-    if (!state.prestige) state.prestige = { count: 0, legacyLevel: 0 };
-    const previousLevel = state.level;
-    state.prestige.legacyLevel += previousLevel;
-    state.prestige.count += 1;
-    state.level = 1;
-    state.lastTick = now || Date.now();
-    const status = prestigeStatus(state);
+    const selected = BLACK_TOWER_FLOORS.find((entry) => entry.floor === tower.selectedFloor);
+    return {
+      floors: BLACK_TOWER_FLOORS.map((entry) => ({
+        ...entry,
+        unlocked: state.level >= entry.minLevel,
+        cost: Math.max(1, Math.round(power.max * entry.costRatio)),
+        reward: Math.max(1, Math.round(C.expRequired(state.level) * entry.rewardRatio)),
+      })),
+      selected: {
+        ...selected,
+        unlocked: state.level >= selected.minLevel,
+        cost: Math.max(1, Math.round(power.max * selected.costRatio)),
+        reward: Math.max(1, Math.round(C.expRequired(state.level) * selected.rewardRatio)),
+      },
+      power,
+      attempts: tower.attempts,
+      wins: tower.wins,
+      bestFloor: tower.bestFloor,
+      lastResult: tower.lastResult,
+    };
+  }
+
+  function setBlackTowerFloor(state, floor, now) {
+    state.cultivation = C.normalizeCultivation(state.cultivation, now || Date.now());
+    const entry = BLACK_TOWER_FLOORS.find((item) => item.floor === Math.round(Number(floor)));
+    if (!entry) return { ok: false, reason: "floor" };
+    if (state.level < entry.minLevel) {
+      return { ok: false, reason: "locked", requiredLevel: entry.minLevel, floor: entry };
+    }
+    state.cultivation.blackTower.selectedFloor = entry.floor;
+    return { ok: true, floor: entry };
+  }
+
+  function challengeBlackTower(state, floor, now, rng) {
+    const ts = now || Date.now();
+    const random = typeof rng === "function" ? rng : Math.random;
+    state.cultivation = C.normalizeCultivation(state.cultivation, ts, random);
+    const status = blackTowerStatus(state, ts);
+    const requestedFloor = Math.round(Number(floor) || status.selected.floor);
+    const entry = BLACK_TOWER_FLOORS.find((item) => item.floor === requestedFloor);
+    if (!entry) return { ok: false, reason: "floor" };
+    if (state.level < entry.minLevel) {
+      return { ok: false, reason: "locked", requiredLevel: entry.minLevel, floor: entry };
+    }
+    if (
+      state.level < C.MAX_LEVEL &&
+      C.isBreakthroughLevel(state.level) &&
+      state.cultivation.exp >= C.expRequired(state.level)
+    ) {
+      return { ok: false, reason: "breakthrough", floor: entry };
+    }
+    const cost = Math.max(1, Math.round(status.power.max * entry.costRatio));
+    if (status.power.current + 1e-9 < cost) {
+      return {
+        ok: false,
+        reason: "power",
+        required: cost,
+        available: Math.floor(status.power.current),
+        floor: entry,
+      };
+    }
+
+    state.cultivation.blackTower.selectedFloor = entry.floor;
+    state.cultivation.spiritualPower = Math.max(0, status.power.current - cost);
+    state.cultivation.spiritualPowerUpdatedAt = ts;
+    const combatTechniques = C.activeTechniques(state.cultivation).filter(
+      (technique) => technique.category === "combat"
+    );
+    const combatProgress = combatTechniques.reduce(
+      (sum, technique) => sum + C.techniqueProgress(state.cultivation, technique.id),
+      0
+    );
+    const attrs = C.talentSummary(state.cultivation.attributes);
+    const chance = clamp(
+      0.84 -
+        entry.difficulty +
+        Math.min(0.08, attrs.insight / C.MAX_ATTRIBUTE) +
+        Math.min(0.05, attrs.fortune / C.MAX_ATTRIBUTE) +
+        Math.min(0.12, combatProgress * 0.0015) +
+        Math.min(0.06, state.cultivation.blackTower.bestFloor * 0.006),
+      0.25,
+      0.95
+    );
+    const won = random() < chance;
+    const rewardRatio = won ? entry.rewardRatio : entry.rewardRatio * 0.25;
+    const gained = Math.max(1, Math.round(C.expRequired(state.level) * rewardRatio));
+    const advanced = C.addExperience(state.cultivation, state.level, gained);
+    state.level = advanced.level;
+    state.cultivation.blackTower.attempts += 1;
+    if (won) {
+      state.cultivation.blackTower.wins += 1;
+      state.cultivation.blackTower.bestFloor = Math.max(
+        state.cultivation.blackTower.bestFloor,
+        entry.floor
+      );
+    }
+    state.cultivation.blackTower.lastResult = {
+      floor: entry.floor,
+      enemy: entry.enemy,
+      outcome: won ? "win" : "loss",
+      gained,
+      spent: cost,
+      at: ts,
+    };
     return {
       ok: true,
-      previousLevel,
-      count: status.count,
-      multiplier: status.multiplier,
-      title: status.title,
+      floor: entry,
+      enemy: entry.enemy,
+      outcome: won ? "win" : "loss",
+      chance,
+      cost,
+      gained,
+      levelsGained: advanced.levelsGained,
+      spiritualPower: state.cultivation.spiritualPower,
+      dialogue: won
+        ? `斩落${entry.enemy}，获得 ${Math.round(gained)} 修为`
+        : `${entry.enemy}守住了塔层，你仍从战斗中悟得 ${Math.round(gained)} 修为`,
     };
+  }
+
+  function cultivationStatus(state, now) {
+    state.cultivation = C.normalizeCultivation(state.cultivation, now || Date.now());
+    const spiritualPower = recoverSpiritualPower(state, now || Date.now());
+    const realm = C.realmStatus(state.level);
+    const required = C.expRequired(state.level);
+    const life = C.lifesStatus(state.cultivation, state.level);
+    const boundary = C.isBreakthroughLevel(state.level);
+    const exp = boundary
+      ? Math.min(required, Number(state.cultivation.exp) || 0)
+      : Number(state.cultivation.exp) || 0;
+    const breakthroughLevel = C.breakthroughTarget(state.level);
+    const nextRealm = realm.nextRealm;
+    const selectedStoneTier = C.STONE_TIERS[state.cultivation.selectedStoneTier]
+      ? state.cultivation.selectedStoneTier
+      : "low";
+    const stoneCounts = { ...state.cultivation.stones };
+    const totalStones = Object.values(stoneCounts).reduce((sum, count) => sum + count, 0);
+    const region = C.regionById(state.cultivation.regionId) || C.ORANGE_REGIONS[0];
+    const formation = C.formationById(state.cultivation.formationId);
+    const meditation = C.meditationRate(state.cultivation, state.level);
+    const stoneRate = C.stoneAbsorptionRate(state.cultivation, state.level);
+    const stoneChances = C.stoneBatchChances(state.cultivation);
+    const stoneSession = state.cultivation.stoneSession;
+    const pillUse = state.cultivation.cultivationPillUse;
+    if (Number(pillUse.level) !== state.level) {
+      pillUse.level = state.level;
+      pillUse.count = 0;
+    }
+    const stoneElapsed = stoneSession.active
+      ? Math.max(0, (now || Date.now()) - stoneSession.startedAt)
+      : stoneSession.completedAt
+        ? stoneSession.durationMs *
+          Math.min(
+            1,
+            (Number(stoneSession.settledEnergy) || (stoneSession.noProgress ? 0 : stoneSession.totalEnergy)) /
+              Math.max(1, stoneSession.totalEnergy)
+          )
+        : 0;
+    const stoneProgress = stoneSession.durationMs ? Math.min(1, stoneElapsed / stoneSession.durationMs) : 0;
+    return {
+      ...realm,
+      exp,
+      required,
+      progress: state.level >= C.MAX_LEVEL ? 1 : Math.min(1, exp / Math.max(1, required)),
+      boundary,
+      expFull: required > 0 && exp >= required,
+      canCultivate:
+        state.level < C.MAX_LEVEL &&
+        (!boundary || exp < required) &&
+        !stoneSession.active &&
+        (stoneCounts[selectedStoneTier] || 0) > 0,
+      life,
+      breakthroughLevel,
+      nextRealm,
+      pillName:
+        C.PILL_NAMES[
+          breakthroughLevel
+            ? C.realmStatus(breakthroughLevel).major.id
+            : nextRealm
+              ? nextRealm.id
+              : realm.major.id
+        ] || "破境丹",
+      permissions: realm.major.permissions.slice(),
+      attributes: C.talentSummary(state.cultivation.attributes),
+      root: C.ROOTS[state.cultivation.attributes.root] || C.ROOTS.mixed,
+      technique: Number(state.cultivation.technique) || 0,
+      spiritStones: Number(stoneCounts.low) || 0,
+      stoneCounts,
+      totalStones,
+      selectedStoneTier,
+      selectedStone: C.STONE_TIERS[selectedStoneTier],
+      stoneRate,
+      stoneChances,
+      stoneSession: {
+        ...stoneSession,
+        progress: stoneProgress,
+        absorbedEnergy: stoneSession.active
+          ? Math.min(stoneSession.totalEnergy, stoneSession.energyPerSecond * (stoneElapsed / 1000))
+          : stoneSession.completedAt
+            ? Number(stoneSession.settledEnergy) || 0
+            : 0,
+        remainingMs: stoneSession.active ? Math.max(0, stoneSession.endsAt - (now || Date.now())) : 0,
+      },
+      buyQuantity: Number(state.cultivation.buyQuantity) || 10,
+      consumeQuantity: Number(state.cultivation.consumeQuantity) || 1,
+      region,
+      continent: C.ORANGE_CONTINENT,
+      formation,
+      meditation: {
+        ...meditation,
+        active: Boolean(state.cultivation.meditation && state.cultivation.meditation.active),
+        totalSeconds: Number(
+          (state.cultivation.meditation && state.cultivation.meditation.totalSeconds) || 0
+        ),
+      },
+      spiritualPower,
+      herbs: Number(state.cultivation.herbs) || 0,
+      breakthroughPills: Number(state.cultivation.pills && state.cultivation.pills.breakthrough) || 0,
+      lifePills: Number(state.cultivation.pills && state.cultivation.pills.life) || 0,
+      techniquePills: Number(state.cultivation.pills && state.cultivation.pills.technique) || 0,
+      cultivationPills: Number(state.cultivation.pills && state.cultivation.pills.cultivation) || 0,
+      cultivationPillUse: { ...pillUse, max: 2 },
+      heartPills: Number(state.cultivation.pills && state.cultivation.pills.heart) || 0,
+      thunderPearls: Number(state.cultivation.thunderPearls) || 0,
+      techniqueReadyAt: Number(state.cultivation.techniqueReadyAt) || 0,
+      karma: Number(state.cultivation.karma) || 0,
+      demonized: Boolean(state.cultivation.demonized),
+      cooldown: Math.max(0, (Number(state.cultivation.cooldownUntil) || 0) - (now || Date.now())),
+    };
+  }
+
+  function techniqueStatus(state) {
+    state.cultivation = C.normalizeCultivation(state.cultivation, Date.now());
+    const cultivation = state.cultivation;
+    const equippedList = C.activeTechniques(cultivation);
+    const equipped = equippedList[0] || null;
+    const bonuses = C.techniqueBonuses(cultivation);
+    return {
+      scrolls: { ...cultivation.techniqueScrolls },
+      known: [...cultivation.techniquesKnown],
+      progress: { ...cultivation.techniqueProgress },
+      equipped,
+      equippedId: equipped ? equipped.id : "",
+      equippedIds: equippedList.map((technique) => technique.id),
+      equippedByCategory: Object.fromEntries(
+        equippedList.map((technique) => [technique.category, technique.id])
+      ),
+      bonuses,
+      root: cultivation.attributes.root,
+    };
+  }
+
+  function syncEquippedTechniques(cultivation, ids) {
+    const categories = new Set();
+    const selected = [];
+    (ids || []).forEach((id) => {
+      const technique = C.techniqueById(id);
+      if (
+        !technique ||
+        !cultivation.techniquesKnown.includes(id) ||
+        !C.techniqueCompatible(cultivation, id) ||
+        categories.has(technique.category)
+      ) {
+        return;
+      }
+      categories.add(technique.category);
+      selected.push(technique);
+    });
+    selected.sort(
+      (left, right) =>
+        Object.keys(C.TECHNIQUE_CATEGORIES).indexOf(left.category) -
+        Object.keys(C.TECHNIQUE_CATEGORIES).indexOf(right.category)
+    );
+    cultivation.equippedTechniques = selected.map((technique) => technique.id);
+    cultivation.equippedTechnique = cultivation.equippedTechniques[0] || "";
+  }
+
+  function addTechniqueScroll(state, techniqueId, count) {
+    state.cultivation = C.normalizeCultivation(state.cultivation, Date.now());
+    const technique = C.techniqueById(techniqueId);
+    if (!technique) return { ok: false, reason: "technique" };
+    const amount = Math.max(1, Math.min(99, Math.round(Number(count) || 1)));
+    state.cultivation.techniqueScrolls[technique.id] =
+      (Number(state.cultivation.techniqueScrolls[technique.id]) || 0) + amount;
+    return { ok: true, technique, count: state.cultivation.techniqueScrolls[technique.id] };
+  }
+
+  function studyTechnique(state, techniqueId, now) {
+    state.cultivation = C.normalizeCultivation(state.cultivation, now || Date.now());
+    const technique = C.techniqueById(techniqueId);
+    if (!technique) return { ok: false, reason: "technique" };
+    if (!C.techniqueCompatible(state.cultivation, technique.id)) {
+      return { ok: false, reason: "root", requiredRoot: technique.root };
+    }
+    const count = Number(state.cultivation.techniqueScrolls[technique.id]) || 0;
+    if (count <= 0) return { ok: false, reason: "missing" };
+    state.cultivation.techniqueScrolls[technique.id] = count - 1;
+    const known = state.cultivation.techniquesKnown.includes(technique.id);
+    if (known) {
+      const gainedMastery = Math.max(1, technique.masteryBonus / 2);
+      const gainedProgress = Math.max(1, technique.masteryBonus * 0.18);
+      state.cultivation.technique = Math.min(
+        C.MAX_TECHNIQUE_MASTERY,
+        state.cultivation.technique + gainedMastery
+      );
+      C.addTechniqueProgress(state.cultivation, technique.id, gainedProgress);
+      return {
+        ok: true,
+        duplicate: true,
+        technique,
+        gainedMastery,
+        gainedProgress,
+        progress: C.techniqueProgress(state.cultivation, technique.id),
+        dialogue: `再次研读${technique.name}，修炼进度与功法领悟提高`,
+      };
+    }
+    state.cultivation.techniquesKnown.push(technique.id);
+    const initialProgress = Math.max(1, Math.min(20, technique.masteryBonus * 0.35));
+    C.addTechniqueProgress(state.cultivation, technique.id, initialProgress);
+    const equippedByCategory = C.activeTechniques(state.cultivation).some(
+      (item) => item.category === technique.category
+    );
+    if (!equippedByCategory) {
+      syncEquippedTechniques(state.cultivation, [...state.cultivation.equippedTechniques, technique.id]);
+    }
+    state.cultivation.technique = Math.min(
+      C.MAX_TECHNIQUE_MASTERY,
+      state.cultivation.technique + technique.masteryBonus
+    );
+    return {
+      ok: true,
+      duplicate: false,
+      technique,
+      gainedMastery: technique.masteryBonus,
+      gainedProgress: initialProgress,
+      progress: C.techniqueProgress(state.cultivation, technique.id),
+      dialogue: equippedByCategory
+        ? `学会了${technique.name}，可在背包中替换${technique.categoryName}功法`
+        : `学会并开始修炼${technique.name}`,
+    };
+  }
+
+  function equipTechnique(state, techniqueId, now) {
+    state.cultivation = C.normalizeCultivation(state.cultivation, now || Date.now());
+    const technique = C.techniqueById(techniqueId);
+    if (!technique) return { ok: false, reason: "technique" };
+    if (!state.cultivation.techniquesKnown.includes(techniqueId)) {
+      return { ok: false, reason: "missing" };
+    }
+    if (!C.techniqueCompatible(state.cultivation, technique.id)) {
+      return { ok: false, reason: "root" };
+    }
+    const active = C.activeTechniques(state.cultivation)
+      .filter((item) => item.category !== technique.category)
+      .map((item) => item.id);
+    syncEquippedTechniques(state.cultivation, [...active, technique.id]);
+    return {
+      ok: true,
+      technique,
+      equippedIds: [...state.cultivation.equippedTechniques],
+    };
+  }
+
+  function unequipTechnique(state, techniqueId, now) {
+    state.cultivation = C.normalizeCultivation(state.cultivation, now || Date.now());
+    if (!state.cultivation.techniquesKnown.includes(techniqueId)) {
+      return { ok: false, reason: "missing" };
+    }
+    syncEquippedTechniques(
+      state.cultivation,
+      state.cultivation.equippedTechniques.filter((id) => id !== techniqueId)
+    );
+    return {
+      ok: true,
+      equippedIds: [...state.cultivation.equippedTechniques],
+    };
+  }
+
+  function buySpiritStones(state, count, tierId) {
+    state.cultivation = C.normalizeCultivation(state.cultivation, Date.now());
+    const amount = Math.max(1, Math.min(9999, Math.floor(Number(count) || 1)));
+    const tier =
+      C.STONE_TIERS[tierId] || C.STONE_TIERS[state.cultivation.selectedStoneTier] || C.STONE_TIERS.low;
+    if (state.level >= C.MAX_LEVEL) return { ok: false, reason: "max-level", amount };
+    const item = SHOP_ITEMS[`stone_${tier.id}`];
+    const result = purchaseMany(state, item, amount, Date.now());
+    if (!result.ok) {
+      return { ok: false, reason: result.reason, cost: result.total, amount };
+    }
+    return {
+      ok: true,
+      cost: result.total,
+      amount,
+      tier: tier.id,
+      total: state.cultivation.stones[tier.id],
+    };
+  }
+
+  /**
+   * 开始一次灵石批量修炼。点击只创建一次吸收会话，不按灵石颗数循环结算。
+   * 灵石在开始时一次性扣除，完成时再统一判定一次无进展、顿悟与区域反噬。
+   */
+  function cultivate(state, times, now, rng, tierId) {
+    const requested = Math.max(1, Math.min(9999, Math.floor(Number(times) || 1)));
+    const startedAt = now || Date.now();
+    state.cultivation = C.normalizeCultivation(state.cultivation, startedAt, rng);
+    if (state.cultivation.stoneSession.active) {
+      return {
+        ok: false,
+        reason: "session",
+        session: { ...state.cultivation.stoneSession },
+      };
+    }
+    if (state.level >= C.MAX_LEVEL) {
+      return { ok: false, reason: "max-level", used: 0, gained: 0, levelsGained: 0 };
+    }
+    if (C.isBreakthroughLevel(state.level) && state.cultivation.exp >= C.expRequired(state.level)) {
+      return { ok: false, reason: "breakthrough", used: 0, gained: 0, levelsGained: 0 };
+    }
+    const tier =
+      C.STONE_TIERS[tierId] || C.STONE_TIERS[state.cultivation.selectedStoneTier] || C.STONE_TIERS.low;
+    const available = Math.floor(Number(state.cultivation.stones[tier.id]) || 0);
+    if (available <= 0) return { ok: false, reason: "stones", used: 0, gained: 0, levelsGained: 0 };
+    if (available < requested) {
+      return {
+        ok: false,
+        reason: "stones",
+        required: requested,
+        available,
+        used: 0,
+        gained: 0,
+        levelsGained: 0,
+      };
+    }
+    settleMeditation(state, startedAt);
+    if (
+      state.cultivation.stoneSession.active ||
+      state.level >= C.MAX_LEVEL ||
+      (C.isBreakthroughLevel(state.level) && state.cultivation.exp >= C.expRequired(state.level))
+    ) {
+      return { ok: false, reason: "breakthrough", used: 0, gained: 0, levelsGained: 0 };
+    }
+    const used = requested;
+    const totalEnergy = used * tier.energy;
+    const rate = C.stoneAbsorptionRate(state.cultivation, state.level);
+    const durationMs = Math.max(1000, Math.ceil((totalEnergy / rate.perSecond) * 1000));
+    state.cultivation.stones[tier.id] -= used;
+    if (tier.id === "low") {
+      state.cultivation.spiritStones = state.cultivation.stones.low;
+    }
+    state.cultivation.meditation.active = false;
+    state.cultivation.meditation.lastAt = startedAt;
+    state.cultivation.stoneSession = {
+      active: true,
+      startedAt,
+      endsAt: startedAt + durationMs,
+      completedAt: 0,
+      quantity: used,
+      tier: tier.id,
+      totalEnergy,
+      energyPerSecond: rate.perSecond,
+      durationMs,
+      gained: 0,
+      levelsGained: 0,
+      noProgress: false,
+      epiphany: false,
+      damaged: 0,
+      techniqueGain: 0,
+    };
+    state.lastTick = startedAt;
+    return {
+      ok: true,
+      started: true,
+      used,
+      quantity: used,
+      tier: tier.id,
+      totalEnergy,
+      energyPerSecond: rate.perSecond,
+      durationMs,
+      endsAt: startedAt + durationMs,
+      gained: 0,
+      levelsGained: 0,
+      noProgress: 0,
+      epiphanies: 0,
+      damaged: 0,
+      rate,
+      region: C.regionById(state.cultivation.regionId) || C.ORANGE_REGIONS[0],
+      reason: used < requested ? "stones" : "",
+      dialogue: `开始炼化${used}颗${tier.short}，总能量 ${totalEnergy}`,
+    };
+  }
+
+  /**
+   * 到点后统一结算一次批量修炼；重复调用不会重复加修为。
+   * finishEarly=true 时按已炼化时间占比结算，主动结束时也能拿到已经吸收的部分。
+   */
+  function settleStoneCultivation(state, now, rng, finishEarly) {
+    const ts = now || Date.now();
+    const random = typeof rng === "function" ? rng : Math.random;
+    state.cultivation = C.normalizeCultivation(state.cultivation, ts, random);
+    const session = state.cultivation.stoneSession;
+    if (!session.active) {
+      return {
+        active: false,
+        completed: false,
+        gained: 0,
+        progress: session.completedAt ? 1 : 0,
+      };
+    }
+    if (ts < session.endsAt && finishEarly !== true) {
+      return {
+        active: true,
+        completed: false,
+        gained: 0,
+        remainingMs: session.endsAt - ts,
+        progress: Math.min(1, Math.max(0, (ts - session.startedAt) / session.durationMs)),
+      };
+    }
+
+    const elapsedRatio = session.durationMs
+      ? Math.min(1, Math.max(0, (ts - session.startedAt) / session.durationMs))
+      : 1;
+    const endedEarly = finishEarly === true && ts < session.endsAt;
+    const settledEnergy = Math.max(0, Math.min(session.totalEnergy, session.totalEnergy * elapsedRatio));
+    const startLevel = state.level;
+    const tier = C.STONE_TIERS[session.tier] || C.STONE_TIERS.low;
+    const attrs = C.talentSummary(state.cultivation.attributes);
+    const root = C.ROOTS[attrs.root] || C.ROOTS.mixed;
+    const region = C.regionById(state.cultivation.regionId) || C.ORANGE_REGIONS[0];
+    const techniqueBonus = C.techniqueBonuses(state.cultivation);
+    const caveBonus = C.caveBonuses(state.cultivation);
+    const chances = C.stoneBatchChances(state.cultivation);
+    const noProgress = random() < chances.noProgress;
+    let gained = 0;
+    let epiphany = false;
+    let damaged = 0;
+    let techniqueGain = 0;
+
+    if (!noProgress) {
+      const insightFactor = 0.65 + attrs.insight * 0.0085;
+      const qualityFactor = 0.6 + random() * 0.4;
+      const randomFactor = 0.8 + random() * 0.55;
+      const lineageFactor = 1 + attrs.rootLineage * 0.15;
+      const demonFactor = state.cultivation.demonized ? 1.25 : 1;
+      epiphany = random() < chances.epiphany;
+      const absorptionRate = epiphany
+        ? 1
+        : Math.min(
+            1,
+            qualityFactor *
+              root.gain *
+              insightFactor *
+              demonFactor *
+              randomFactor *
+              lineageFactor *
+              region.qi *
+              techniqueBonus.cultivationMultiplier *
+              caveBonus.expMultiplier
+          );
+      gained = Math.max(0, Math.round(settledEnergy * absorptionRate));
+      if (epiphany) {
+        state.cultivation.epiphanyCount = (Number(state.cultivation.epiphanyCount) || 0) + 1;
+      }
+      techniqueGain =
+        0.15 +
+        attrs.insight * 0.002 +
+        techniqueBonus.masteryBonus * 0.04 +
+        Math.log2(Math.max(1, session.quantity)) * 0.04 +
+        (epiphany ? 1 : 0);
+      state.cultivation.technique = Math.min(
+        C.MAX_TECHNIQUE_MASTERY,
+        (Number(state.cultivation.technique) || 0) + techniqueGain
+      );
+      C.advanceEquippedTechniques(
+        state.cultivation,
+        (0.06 + attrs.insight * 0.0008 + (epiphany ? 0.35 : 0)) * caveBonus.techniqueMultiplier
+      );
+      const advanced = C.addExperience(state.cultivation, state.level, gained);
+      state.level = advanced.level;
+      if (region.damageRate > 0 && random() < chances.damage) {
+        damaged = Math.round(C.expRequired(startLevel) * 0.02);
+        state.cultivation.exp = Math.max(0, state.cultivation.exp - damaged);
+      }
+    }
+
+    const levelsGained = Math.max(0, state.level - startLevel);
+    state.stats.upgrades += levelsGained;
+    Object.assign(session, {
+      active: false,
+      completedAt: ts,
+      endedEarly,
+      settledEnergy,
+      gained,
+      levelsGained,
+      noProgress,
+      epiphany,
+      damaged,
+      techniqueGain,
+    });
+    const stoppedAtBreakthrough =
+      state.level < C.MAX_LEVEL &&
+      C.isBreakthroughLevel(state.level) &&
+      state.cultivation.exp >= C.expRequired(state.level);
+    return {
+      active: false,
+      completed: true,
+      progress: elapsedRatio,
+      used: session.quantity,
+      totalEnergy: session.totalEnergy,
+      settledEnergy,
+      endedEarly,
+      gained,
+      levelsGained,
+      noProgress,
+      epiphanies: epiphany ? 1 : 0,
+      epiphany,
+      damaged,
+      techniqueGain,
+      tier: tier.id,
+      region,
+      stoppedAtBreakthrough,
+      dialogue: noProgress
+        ? `${endedEarly ? "提前结束修炼，" : ""}${session.quantity}颗${tier.short}化作飞灰，这次毫无进展……`
+        : `${endedEarly ? "提前结束修炼，" : ""}${session.quantity}颗${tier.short}炼化${endedEarly ? "了一部分" : "完成"}，修为 +${gained}${
+            levelsGained ? `，晋升 ${levelsGained} 级` : ""
+          }${damaged ? `，受损 ${damaged}` : ""}`,
+    };
+  }
+
+  function endStoneCultivation(state, now, rng) {
+    return settleStoneCultivation(state, now || Date.now(), rng, true);
+  }
+
+  function nextCultivationRealm(state) {
+    const realm = C.realmStatus(state.level);
+    return realm.nextRealm || null;
+  }
+
+  function purchaseCultivationItem(state, type, now) {
+    state.cultivation = C.normalizeCultivation(state.cultivation, now || Date.now());
+    const targetRealm = nextCultivationRealm(state);
+    if (!targetRealm) return { ok: false, reason: "max-level" };
+    const itemId = {
+      breakthrough: "breakthrough_pill",
+      life: "life_pill",
+      thunder: "thunder_pearl",
+    }[type];
+    const item = SHOP_ITEMS[itemId];
+    if (!item) return { ok: false, reason: "item" };
+    const result = purchase(state, item, now || Date.now());
+    if (!result.ok) return { ...result, cost: result.price };
+    return {
+      ok: true,
+      cost: result.price,
+      amount: result.cultivationCount,
+      label: type === "breakthrough" ? C.PILL_NAMES[targetRealm.id] || "破境丹" : item.name,
+    };
+  }
+
+  function takeLifePill(state) {
+    state.cultivation = C.normalizeCultivation(state.cultivation, Date.now());
+    if (!state.cultivation.pills || state.cultivation.pills.life <= 0) {
+      return { ok: false, reason: "item" };
+    }
+    state.cultivation.pills.life -= 1;
+    state.cultivation.bonusLifespan += 100;
+    return {
+      ok: true,
+      gained: 100,
+      max: C.lifesStatus(state.cultivation, state.level).max,
+    };
+  }
+
+  function takeCultivationPill(state, pillId, now, rng) {
+    const startedAt = now || Date.now();
+    const random = typeof rng === "function" ? rng : Math.random;
+    state.cultivation = C.normalizeCultivation(state.cultivation, startedAt, random);
+    const id = ["technique", "cultivation", "heart"].includes(pillId) ? pillId : "";
+    if (!id || (Number(state.cultivation.pills[id]) || 0) <= 0) {
+      return { ok: false, reason: "item" };
+    }
+    if (id === "technique") {
+      const known = state.cultivation.techniquesKnown
+        .map((techniqueId) => C.techniqueById(techniqueId))
+        .filter(Boolean);
+      if (!known.length) return { ok: false, reason: "technique" };
+      const target = known[Math.floor(random() * known.length) % known.length];
+      const gained = Math.round((8 + random() * 10) * 10) / 10;
+      C.addTechniqueProgress(state.cultivation, target.id, gained);
+      state.cultivation.pills.technique -= 1;
+      return {
+        ok: true,
+        type: id,
+        pill: C.CULTIVATION_PILLS.technique,
+        technique: target,
+        gained,
+        progress: C.techniqueProgress(state.cultivation, target.id),
+        dialogue: `服下悟道丹，${target.name}修炼进度 +${gained}`,
+      };
+    }
+    if (id === "cultivation") {
+      const use = state.cultivation.cultivationPillUse || { level: state.level, count: 0 };
+      if (Number(use.level) !== state.level) {
+        use.level = state.level;
+        use.count = 0;
+      }
+      if (Number(use.count) >= 2) {
+        return {
+          ok: false,
+          reason: "stage-limit",
+          limit: 2,
+          used: Number(use.count),
+          level: state.level,
+          dialogue: "当前小阶段已经服用过 2 颗培元丹",
+        };
+      }
+      const ratio = 0.08 + random() * 0.08;
+      const gained = Math.round(C.expRequired(state.level) * ratio);
+      const advanced = C.addExperience(state.cultivation, state.level, gained);
+      state.level = advanced.level;
+      state.cultivation.pills.cultivation -= 1;
+      use.count += 1;
+      state.cultivation.cultivationPillUse = use;
+      return {
+        ok: true,
+        type: id,
+        pill: C.CULTIVATION_PILLS.cultivation,
+        gained,
+        levelsGained: advanced.levelsGained,
+        used: use.count,
+        limit: 2,
+        dialogue: `服下培元丹，修为 +${Math.round(gained)}`,
+      };
+    }
+    const gained = 2 + Math.floor(random() * 4);
+    state.cultivation.attributes.daoHeart = Math.min(
+      C.MAX_ATTRIBUTE,
+      (Number(state.cultivation.attributes.daoHeart) || 0) + gained
+    );
+    state.cultivation.pills.heart -= 1;
+    return {
+      ok: true,
+      type: id,
+      pill: C.CULTIVATION_PILLS.heart,
+      gained,
+      dialogue: `服下静心丹，道心 +${gained}`,
+    };
+  }
+
+  function attemptBreakthrough(state, route, now, rng) {
+    const startedAt = now || Date.now();
+    const random = typeof rng === "function" ? rng : Math.random;
+    state.cultivation = C.normalizeCultivation(state.cultivation, startedAt, random);
+    const status = C.breakthroughStatus(state.cultivation, state.level, route, startedAt);
+    if (!status.ok) {
+      return {
+        ok: false,
+        reason: status.reason || "requirements",
+        missing: status.missing || [],
+        status,
+        dialogue: (status.missing && status.missing[0]) || "当前无法突破",
+      };
+    }
+    const previousLevel = state.level;
+    if (status.route === "pill") {
+      state.cultivation.pills.breakthrough -= 1;
+    }
+    if (status.tribulation.event === "tribulation" && state.cultivation.thunderPearls > 0) {
+      state.cultivation.thunderPearls -= 1;
+    }
+    const roll = random();
+    if (roll <= status.chance) {
+      state.level = status.targetLevel;
+      state.cultivation.exp = 0;
+      state.cultivation.technique = Math.min(
+        C.MAX_TECHNIQUE_MASTERY,
+        state.cultivation.technique + 0.5
+      );
+      state.cultivation.cooldownUntil = 0;
+      state.cultivation.lastBreakthrough = {
+        level: state.level,
+        at: startedAt,
+        chance: status.chance,
+        route: status.route,
+      };
+      state.lastTick = startedAt;
+      return {
+        ok: true,
+        previousLevel,
+        level: state.level,
+        chance: status.chance,
+        event: status.tribulation.event,
+        title: C.realmStatus(state.level).fullName,
+        dialogue: `破境成功！踏入${C.realmStatus(state.level).fullName}`,
+      };
+    }
+    const fortuneRelief = Math.floor(status.attributes.fortune / 22);
+    const damage =
+      8 +
+      (status.route === "mind" ? 7 : 0) +
+      (status.tribulation.event === "tribulation" ? 3 : 0) -
+      fortuneRelief;
+    state.cultivation.attributes.daoHeart = Math.max(
+      0,
+      state.cultivation.attributes.daoHeart - Math.max(2, damage)
+    );
+    state.cultivation.exp = Math.floor(state.cultivation.exp * 0.5);
+    state.cultivation.technique = Math.max(0, state.cultivation.technique - 1);
+    state.cultivation.cooldownUntil = startedAt + C.MAJOR_BREAKTHROUGH_COOLDOWN_MS;
+    state.cultivation.karma += status.tribulation.event === "tribulation" ? 1 : 0;
+    const becameDemon = state.cultivation.attributes.daoHeart <= 0;
+    if (becameDemon) state.cultivation.demonized = true;
+    state.lastTick = startedAt;
+    return {
+      ok: false,
+      reason: "failed",
+      chance: status.chance,
+      level: state.level,
+      lostExperience: true,
+      cooldownUntil: state.cultivation.cooldownUntil,
+      becameDemon,
+      dialogue: becameDemon
+        ? "道心崩坏，魔念入体……你踏入了魔修分支"
+        : "突破失败，修为倒退，道心受创，需调息后再试",
+    };
+  }
+
+  function collectHerbs(state, now, rng) {
+    const startedAt = now || Date.now();
+    const random = typeof rng === "function" ? rng : Math.random;
+    state.cultivation = C.normalizeCultivation(state.cultivation, startedAt, random);
+    if (state.level < 11) return { ok: false, reason: "realm", requiredLevel: 11 };
+    if (state.cultivation.herbReadyAt > startedAt) {
+      return { ok: false, reason: "cooldown", readyAt: state.cultivation.herbReadyAt };
+    }
+    const fortune = state.cultivation.attributes.fortune;
+    const region = C.regionById(state.cultivation.regionId) || C.ORANGE_REGIONS[0];
+    const amount = Math.max(1, Math.round((1 + fortune / 45 + random() * 2) * (1 + region.herbBonus)));
+    state.cultivation.herbs += amount;
+    state.cultivation.herbReadyAt = startedAt + 5 * 60000;
+    let pill = "";
+    if (random() < 0.025 + fortune * 0.001 + Math.max(0, region.stoneBonus) * 0.05) {
+      state.cultivation.pills.breakthrough += 1;
+      pill = nextCultivationRealm(state)
+        ? C.PILL_NAMES[nextCultivationRealm(state).id] || "破境丹"
+        : "破境丹";
+    }
+    return {
+      ok: true,
+      herbs: amount,
+      pill,
+      readyAt: state.cultivation.herbReadyAt,
+      region: region.id,
+      dialogue: pill
+        ? `在${region.name}采到 ${amount} 株灵药，还发现了${pill}`
+        : `在${region.name}采到 ${amount} 株灵药`,
+    };
+  }
+
+  function comprehendTechnique(state, now, rng, techniqueId) {
+    const startedAt = now || Date.now();
+    const random = typeof rng === "function" ? rng : Math.random;
+    state.cultivation = C.normalizeCultivation(state.cultivation, startedAt, random);
+    if (state.level < 11) {
+      return { ok: false, reason: "realm", requiredLevel: 11 };
+    }
+    const request = C.techniqueById(techniqueId);
+    const target =
+      request && state.cultivation.techniquesKnown.includes(request.id)
+        ? request
+        : C.activeTechniques(state.cultivation)
+            .map((technique) => ({
+              technique,
+              progress: C.techniqueProgress(state.cultivation, technique.id),
+            }))
+            .sort((left, right) => left.progress - right.progress)[0]?.technique ||
+          C.techniqueById(state.cultivation.techniquesKnown[0]);
+    if (!target) return { ok: false, reason: "missing" };
+    if (state.cultivation.techniqueReadyAt > startedAt) {
+      return {
+        ok: false,
+        reason: "cooldown",
+        readyAt: state.cultivation.techniqueReadyAt,
+      };
+    }
+    state.cultivation.techniqueReadyAt = startedAt + 5 * 60000;
+    const attrs = state.cultivation.attributes;
+    const formation = C.formationById(state.cultivation.formationId);
+    const region = C.regionById(state.cultivation.regionId) || C.ORANGE_REGIONS[0];
+    const successChance = Math.max(
+      0.45,
+      Math.min(0.95, 0.55 + attrs.insight * 0.003 + attrs.fortune * 0.0008)
+    );
+    if (random() > successChance) {
+      return {
+        ok: false,
+        reason: "failed",
+        chance: successChance,
+        dialogue: "功法运转晦涩，这次参悟没有收获",
+      };
+    }
+    const epiphany =
+      random() < Math.max(0.02, Math.min(0.2, 0.03 + attrs.insight * 0.001 + attrs.fortune * 0.0005));
+    let gained = Math.max(
+      0.1,
+      Math.round(
+        (1 + attrs.insight / 20) *
+          (1 + Math.max(0, formation.multiplier - 1) * 0.12) *
+          Math.sqrt(region.qi) *
+          (0.8 + random() * 0.4) *
+          (epiphany ? 2 : 1) *
+          10
+      ) / 10
+    );
+    gained = Math.min(gained, Math.max(0, C.MAX_TECHNIQUE_MASTERY - state.cultivation.technique));
+    state.cultivation.technique += gained;
+    const gainedProgress = Math.max(0.5, Math.round(Math.max(1, gained * 0.8) * 10) / 10);
+    C.addTechniqueProgress(state.cultivation, target.id, gainedProgress);
+    return {
+      ok: true,
+      gained,
+      gainedProgress,
+      epiphany,
+      successChance,
+      technique: state.cultivation.technique,
+      techniqueItem: target,
+      techniqueProgress: C.techniqueProgress(state.cultivation, target.id),
+      readyAt: state.cultivation.techniqueReadyAt,
+      dialogue: epiphany
+        ? `顿悟${target.name}真意，修炼进度 +${gainedProgress}`
+        : `${target.name}参悟完成，修炼进度 +${gainedProgress}`,
+    };
+  }
+
+  function mineSpiritStones(state, now, rng) {
+    const startedAt = now || Date.now();
+    const random = typeof rng === "function" ? rng : Math.random;
+    state.cultivation = C.normalizeCultivation(state.cultivation, startedAt, random);
+    if (state.level < 11) return { ok: false, reason: "realm", requiredLevel: 11 };
+    if (state.cultivation.mineReadyAt > startedAt) {
+      return { ok: false, reason: "cooldown", readyAt: state.cultivation.mineReadyAt };
+    }
+    const region = C.regionById(state.cultivation.regionId) || C.ORANGE_REGIONS[0];
+    const fortune = state.cultivation.attributes.fortune;
+    const amount = Math.max(1, Math.round(1 + fortune / 45 + region.stoneBonus * 2 + random() * 2));
+    const tierRoll = random() + region.stoneBonus + Math.min(0.2, state.level / 500);
+    const tier = tierRoll >= 1.05 ? "supreme" : tierRoll >= 0.75 ? "high" : tierRoll >= 0.4 ? "mid" : "low";
+    state.cultivation.stones[tier] += amount;
+    state.cultivation.spiritStones = state.cultivation.stones.low;
+    state.cultivation.mineReadyAt = startedAt + 5 * 60000;
+    return {
+      ok: true,
+      amount,
+      tier,
+      tierName: C.STONE_TIERS[tier].name,
+      region,
+      readyAt: state.cultivation.mineReadyAt,
+      dialogue: `在${region.name}采得 ${amount} 枚${C.STONE_TIERS[tier].name}`,
+    };
+  }
+
+  function craftPill(state, now, rng) {
+    const startedAt = now || Date.now();
+    const random = typeof rng === "function" ? rng : Math.random;
+    state.cultivation = C.normalizeCultivation(state.cultivation, startedAt, random);
+    if (state.level < 21) return { ok: false, reason: "realm", requiredLevel: 21 };
+    if (state.cultivation.alchemyReadyAt > startedAt) {
+      return { ok: false, reason: "cooldown", readyAt: state.cultivation.alchemyReadyAt };
+    }
+    if (state.cultivation.herbs < 3) return { ok: false, reason: "herbs", required: 3 };
+    state.cultivation.herbs -= 3;
+    state.cultivation.alchemyReadyAt = startedAt + 10 * 60000;
+    const chance = Math.min(
+      0.92,
+      0.45 + state.cultivation.attributes.insight * 0.0025 + state.cultivation.attributes.fortune * 0.0012
+    );
+    if (random() > chance) {
+      return { ok: false, reason: "failed", chance, dialogue: "丹炉炸响，三株灵药化为灰烬" };
+    }
+    const life = random() < 0.24;
+    if (life) state.cultivation.pills.life += 1;
+    else state.cultivation.pills.breakthrough += 1;
+    return {
+      ok: true,
+      item: life ? "life" : "breakthrough",
+      label: life ? "延寿丹" : "破境丹",
+      chance,
+      dialogue: life ? "丹成！炼出一枚延寿丹" : "丹成！炼出一枚破境丹",
+    };
+  }
+
+  function rollTechniqueReward(state, region, rng) {
+    const random = typeof rng === "function" ? rng : Math.random;
+    const tierRoll = random() + Math.min(0.25, state.level / 1000) + Math.max(0, region.stoneBonus) * 0.25;
+    const tier =
+      tierRoll >= 1.08
+        ? C.TECHNIQUE_TIERS[3]
+        : tierRoll >= 0.82
+          ? C.TECHNIQUE_TIERS[2]
+          : tierRoll >= 0.5
+            ? C.TECHNIQUE_TIERS[1]
+            : C.TECHNIQUE_TIERS[0];
+    const gradeRoll = random();
+    const grade =
+      gradeRoll >= 0.82
+        ? C.TECHNIQUE_GRADES[2]
+        : gradeRoll >= 0.45
+          ? C.TECHNIQUE_GRADES[1]
+          : C.TECHNIQUE_GRADES[0];
+    const technique = C.TECHNIQUES[`tech_${state.cultivation.attributes.root}_${tier.id}_${grade.id}`];
+    if (!technique) return null;
+    addTechniqueScroll(state, technique.id, 1);
+    return technique;
+  }
+
+  function exploreSecretRealm(state, now, rng) {
+    const startedAt = now || Date.now();
+    const random = typeof rng === "function" ? rng : Math.random;
+    state.cultivation = C.normalizeCultivation(state.cultivation, startedAt, random);
+    if (state.level < 31) return { ok: false, reason: "realm", requiredLevel: 31 };
+    if (state.cultivation.secretReadyAt > startedAt) {
+      return { ok: false, reason: "cooldown", readyAt: state.cultivation.secretReadyAt };
+    }
+    if (state.cultivation.stones.low < 1) return { ok: false, reason: "stones" };
+    state.cultivation.stones.low -= 1;
+    state.cultivation.spiritStones = state.cultivation.stones.low;
+    state.cultivation.secretReadyAt = startedAt + 30 * 60000;
+    const fortune = state.cultivation.attributes.fortune;
+    const region = C.regionById(state.cultivation.regionId) || C.ORANGE_REGIONS[0];
+    const trapChance = Math.max(0.05, Math.min(0.35, 0.3 - fortune * 0.0018 + region.damageRate));
+    if (random() < trapChance) {
+      state.cultivation.karma += 1;
+      return { ok: false, reason: "trap", karma: state.cultivation.karma, dialogue: "误触禁制，沾上因果" };
+    }
+    const gained = C.cultivateOnce(state.cultivation, state.level, random, "low").gained * 3 * region.qi;
+    const advanced = C.addExperience(state.cultivation, state.level, gained);
+    state.level = advanced.level;
+    let pill = "";
+    if (random() < 0.12 + fortune * 0.0015 + Math.max(0, region.stoneBonus) * 0.1) {
+      state.cultivation.pills.breakthrough += 1;
+      pill = nextCultivationRealm(state)
+        ? C.PILL_NAMES[nextCultivationRealm(state).id] || "破境丹"
+        : "破境丹";
+    }
+    let technique = null;
+    const techniqueChance = Math.min(0.55, 0.15 + fortune * 0.0015 + Math.max(0, region.stoneBonus) * 0.1);
+    if (random() < techniqueChance) {
+      technique = rollTechniqueReward(state, region, random);
+    }
+    return {
+      ok: true,
+      gained,
+      levelsGained: advanced.levelsGained,
+      pill,
+      technique,
+      region: region.id,
+      dialogue: `在${region.name}秘境探索，修为 +${Math.round(gained)}${
+        pill ? `，并寻得${pill}` : ""
+      }${technique ? `，发现功法「${technique.name}」` : ""}`,
+    };
+  }
+
+  const CAVE_REFRESH_MS = 2 * 60 * 60 * 1000;
+  const CAVE_DURATION_MS = 30 * 60 * 1000;
+
+  function generateCaveSpots(random) {
+    const largeCount = 1 + Math.floor(random() * 3);
+    const shuffled = C.CAVE_HEAVENS.map((_, index) => index);
+    for (let index = shuffled.length - 1; index > 0; index -= 1) {
+      const swap = Math.floor(random() * (index + 1));
+      [shuffled[index], shuffled[swap]] = [shuffled[swap], shuffled[index]];
+    }
+    const largeIds = new Set(shuffled.slice(0, largeCount).map((index) => C.CAVE_HEAVENS[index].id));
+    return C.CAVE_HEAVENS.map((cave) => {
+      const large = largeIds.has(cave.id);
+      const effectIds = Object.keys(C.CAVE_EFFECTS);
+      const effectType = effectIds[Math.floor(random() * effectIds.length) % effectIds.length];
+      const effectValue =
+        effectType === "breakthrough"
+          ? Math.round((large ? 0.05 + random() * 0.07 : 0.02 + random() * 0.03) * 1000) / 1000
+          : Math.round((large ? 0.45 + random() * 0.8 : 0.15 + random() * 0.35) * 100) / 100;
+      return {
+        id: cave.id,
+        name: cave.name,
+        icon: cave.icon,
+        desc: cave.desc,
+        size: large ? "large" : "small",
+        qiMultiplier: Math.round((large ? 1.8 + random() * 1.2 : 1.15 + random() * 0.6) * 100) / 100,
+        effectType,
+        effectName: C.CAVE_EFFECTS[effectType].name,
+        effectValue,
+      };
+    });
+  }
+
+  function ensureCaveHeavens(state, now, rng) {
+    const ts = now || Date.now();
+    const random = typeof rng === "function" ? rng : Math.random;
+    state.cultivation = C.normalizeCultivation(state.cultivation, ts, random);
+    const cave = state.cultivation.cave;
+    if (cave.active && cave.active.expiresAt <= ts) cave.active = null;
+    if (!cave.spots || cave.spots.length !== C.CAVE_HEAVENS.length || cave.refreshAt <= ts) {
+      cave.spots = generateCaveSpots(random);
+      cave.refreshAt = ts + CAVE_REFRESH_MS;
+    }
+    return cave;
+  }
+
+  function caveHeavenStatus(state, now, rng) {
+    const ts = now || Date.now();
+    const cave = ensureCaveHeavens(state, ts, rng);
+    return {
+      spots: cave.spots.map((spot) => {
+        const base = C.CAVE_HEAVENS.find((item) => item.id === spot.id);
+        return { ...spot, ...base };
+      }),
+      active: cave.active
+        ? {
+            ...cave.active,
+            ...C.CAVE_HEAVENS.find((item) => item.id === cave.active.id),
+            remainingMs: Math.max(0, cave.active.expiresAt - ts),
+          }
+        : null,
+      challenge: cave.challenge
+        ? {
+            ...cave.challenge,
+            ...C.CAVE_HEAVENS.find((item) => item.id === cave.challenge.id),
+          }
+        : null,
+      refreshAt: cave.refreshAt,
+      visits: cave.visits,
+      lastLoot: cave.lastLoot,
+      largeCount: cave.spots.filter((spot) => spot.size === "large").length,
+    };
+  }
+
+  function activateCaveSpot(cave, spot, ts) {
+    cave.active = {
+      id: spot.id,
+      size: spot.size,
+      qiMultiplier: spot.qiMultiplier,
+      effectType: spot.effectType,
+      effectValue: spot.effectValue,
+      enteredAt: ts,
+      expiresAt: ts + CAVE_DURATION_MS,
+    };
+    cave.visits += 1;
+    return cave.active;
+  }
+
+  function grantCaveLoot(state, spot, random, lootMultiplier) {
+    const rewards = [];
+    const techniqueChance = Math.min(1, 0.8 * lootMultiplier);
+    const pillChance = Math.min(1, 0.8 * lootMultiplier);
+    if (spot.size === "large") {
+      if (random() < techniqueChance) {
+        const candidates = Object.values(C.TECHNIQUES).filter((technique) =>
+          C.techniqueCompatible(state.cultivation, technique.id)
+        );
+        const technique = candidates[Math.floor(random() * candidates.length) % candidates.length];
+        if (technique) {
+          state.cultivation.techniqueScrolls[technique.id] =
+            (Number(state.cultivation.techniqueScrolls[technique.id]) || 0) + 1;
+          rewards.push({ type: "technique", item: technique });
+        }
+      }
+      if (random() < pillChance) {
+        const pillIds = Object.keys(C.CULTIVATION_PILLS);
+        const pillId = pillIds[Math.floor(random() * pillIds.length) % pillIds.length];
+        state.cultivation.pills[pillId] = (Number(state.cultivation.pills[pillId]) || 0) + 1;
+        rewards.push({ type: "pill", item: C.CULTIVATION_PILLS[pillId] });
+      }
+    } else if (random() < Math.min(1, 1.2 * lootMultiplier)) {
+      if (random() < 0.5) {
+        const candidates = Object.values(C.TECHNIQUES).filter((technique) =>
+          C.techniqueCompatible(state.cultivation, technique.id)
+        );
+        const technique = candidates[Math.floor(random() * candidates.length) % candidates.length];
+        if (technique) {
+          state.cultivation.techniqueScrolls[technique.id] =
+            (Number(state.cultivation.techniqueScrolls[technique.id]) || 0) + 1;
+          rewards.push({ type: "technique", item: technique });
+        }
+      } else {
+        const pillIds = Object.keys(C.CULTIVATION_PILLS);
+        const pillId = pillIds[Math.floor(random() * pillIds.length) % pillIds.length];
+        state.cultivation.pills[pillId] = (Number(state.cultivation.pills[pillId]) || 0) + 1;
+        rewards.push({ type: "pill", item: C.CULTIVATION_PILLS[pillId] });
+      }
+    }
+    if (!rewards.length) rewards.push({ type: "none", item: { name: "空手而归" } });
+    return rewards;
+  }
+
+  function enterCaveHeaven(state, spotId, now, rng) {
+    const ts = now || Date.now();
+    const random = typeof rng === "function" ? rng : Math.random;
+    state.cultivation = C.normalizeCultivation(state.cultivation, ts, random);
+    if (state.level < 11) return { ok: false, reason: "realm", requiredLevel: 11 };
+    const cave = ensureCaveHeavens(state, ts, random);
+    if (cave.active && cave.active.expiresAt > ts) {
+      return { ok: false, reason: "active", active: cave.active };
+    }
+    if (cave.challenge) return { ok: false, reason: "challenge", challenge: cave.challenge };
+    const spot = cave.spots.find((item) => item.id === spotId);
+    if (!spot) return { ok: false, reason: "spot" };
+    if ((Number(state.cultivation.stones.low) || 0) < 1) return { ok: false, reason: "stones" };
+    state.cultivation.stones.low -= 1;
+    state.cultivation.spiritStones = state.cultivation.stones.low;
+    const base = C.CAVE_HEAVENS.find((item) => item.id === spot.id);
+    // 大型福地有 75% 概率遭遇守灵，必须先做选择。
+    if (spot.size === "large" && random() < 0.75) {
+      const guardian =
+        C.CAVE_GUARDIANS[Math.floor(random() * C.CAVE_GUARDIANS.length) % C.CAVE_GUARDIANS.length];
+      cave.challenge = {
+        id: spot.id,
+        size: "large",
+        qiMultiplier: spot.qiMultiplier,
+        effectType: spot.effectType,
+        effectValue: spot.effectValue,
+        guardian,
+        createdAt: ts,
+      };
+      return {
+        ok: true,
+        challenge: true,
+        spot: { ...spot, ...base },
+        event: {
+          title: `${base.name}的守灵`,
+          text: `大型福地深处盘踞着${guardian}。它的气息与这片天地相连，似乎正等你作出回应。`,
+        },
+        dialogue: `进入${base.name}时遭遇${guardian}`,
+      };
+    }
+    const active = activateCaveSpot(cave, spot, ts);
+    const rewards = grantCaveLoot(state, spot, random, 1);
+    cave.lastLoot = {
+      techniqueName: rewards.find((reward) => reward.type === "technique")?.item.name || "",
+      pillName: rewards.find((reward) => reward.type === "pill")?.item.name || "",
+      at: ts,
+    };
+    return {
+      ok: true,
+      challenge: false,
+      spot: { ...spot, ...base },
+      active,
+      rewards,
+      dialogue: `进入${base.name}（${spot.size === "large" ? "大型福地" : "小型福地"}）`,
+    };
+  }
+
+  function resolveCaveChallenge(state, choice, now, rng) {
+    const ts = now || Date.now();
+    const random = typeof rng === "function" ? rng : Math.random;
+    state.cultivation = C.normalizeCultivation(state.cultivation, ts, random);
+    const cave = state.cultivation.cave;
+    const challenge = cave.challenge;
+    if (!challenge) return { ok: false, reason: "no-challenge" };
+    const type = ["avoid", "observe", "fight"].includes(choice) ? choice : "";
+    if (!type) return { ok: false, reason: "choice" };
+    const lootMultiplier = type === "avoid" ? 0.2 : type === "observe" ? 0.5 : 1.2;
+    const spot = challenge;
+    const active = activateCaveSpot(cave, spot, ts);
+    cave.challenge = null;
+    let combat = null;
+    if (type === "fight") {
+      const combatTechniques = C.activeTechniques(state.cultivation).filter(
+        (technique) => technique.category === "combat"
+      );
+      const combatProgress = combatTechniques.reduce(
+        (sum, technique) => sum + C.techniqueProgress(state.cultivation, technique.id),
+        0
+      );
+      const chance = Math.max(
+        0.35,
+        Math.min(
+          0.9,
+          0.55 +
+            state.cultivation.attributes.insight * 0.001 +
+            state.cultivation.attributes.fortune * 0.0005 +
+            combatProgress * 0.0025
+        )
+      );
+      const won = random() < chance;
+      if (won) {
+        const gainedRatio = 0.25 + random() * 0.35;
+        const gained = Math.round(C.expRequired(state.level) * gainedRatio);
+        const advanced = C.addExperience(state.cultivation, state.level, gained);
+        state.level = advanced.level;
+        combat = {
+          outcome: "win",
+          chance,
+          gained,
+          levelsGained: advanced.levelsGained,
+          text: `激战之后击杀守灵，暴涨 ${Math.round(gained)} 修为。`,
+        };
+      } else {
+        const lossRatio = 0.12 + random() * 0.18;
+        const lost = Math.min(state.cultivation.exp, Math.round(C.expRequired(state.level) * lossRatio));
+        state.cultivation.exp = Math.max(0, state.cultivation.exp - lost);
+        combat = {
+          outcome: "loss",
+          chance,
+          lost,
+          text: `守灵反扑，损失 ${lost} 修为后狼狈退开。`,
+        };
+      }
+    }
+    const rewards = grantCaveLoot(state, spot, random, lootMultiplier);
+    cave.lastLoot = {
+      techniqueName: rewards.find((reward) => reward.type === "technique")?.item.name || "",
+      pillName: rewards.find((reward) => reward.type === "pill")?.item.name || "",
+      at: ts,
+    };
+    return {
+      ok: true,
+      choice: type,
+      active,
+      rewards,
+      combat,
+      lootMultiplier,
+      dialogue:
+        type === "avoid"
+          ? `避开守灵，进入可探索区域；爆率降低 80%`
+          : type === "observe"
+            ? `远远观察守灵；爆率降低 50%`
+            : `${combat.text}；爆率提高 20%`,
+    };
+  }
+
+  function leaveCaveHeaven(state, now) {
+    state.cultivation = C.normalizeCultivation(state.cultivation, now || Date.now());
+    const cave = state.cultivation.cave;
+    if (!cave.active && !cave.challenge) return { ok: false, reason: "not-in-cave" };
+    const leavingId = (cave.active && cave.active.id) || (cave.challenge && cave.challenge.id);
+    const base = C.CAVE_HEAVENS.find((item) => item.id === leavingId);
+    const wasChallenge = Boolean(cave.challenge);
+    cave.active = null;
+    cave.challenge = null;
+    return {
+      ok: true,
+      name: base ? base.name : "洞天福地",
+      wasChallenge,
+      dialogue: `主动离开${base ? base.name : "洞天福地"}${wasChallenge ? "，守灵也归于沉寂" : ""}`,
+    };
+  }
+
+  function opportunityStatus(state, now) {
+    state.opportunities = O.normalizeState(state.opportunities, now || Date.now());
+    return O.status(state, now || Date.now());
+  }
+
+  function drawOpportunity(state, now, rng) {
+    return O.draw(state, now || Date.now(), rng);
+  }
+
+  function resolveOpportunityChoice(state, choiceId, now, rng) {
+    return O.resolveChoice(state, choiceId, now || Date.now(), rng);
+  }
+
+  function setSpiritStoneTier(state, tierId, now) {
+    state.cultivation = C.normalizeCultivation(state.cultivation, now || Date.now());
+    if (!C.STONE_TIERS[tierId]) return { ok: false, reason: "tier" };
+    state.cultivation.selectedStoneTier = tierId;
+    return { ok: true, tier: C.STONE_TIERS[tierId] };
+  }
+
+  function setStoneQuantities(state, buyQuantity, consumeQuantity, now) {
+    state.cultivation = C.normalizeCultivation(state.cultivation, now || Date.now());
+    state.cultivation.buyQuantity = Math.max(
+      1,
+      Math.min(9999, Math.round(Number(buyQuantity) || state.cultivation.buyQuantity || 10))
+    );
+    state.cultivation.consumeQuantity = Math.max(
+      1,
+      Math.min(9999, Math.round(Number(consumeQuantity) || state.cultivation.consumeQuantity || 1))
+    );
+    return {
+      ok: true,
+      buyQuantity: state.cultivation.buyQuantity,
+      consumeQuantity: state.cultivation.consumeQuantity,
+    };
+  }
+
+  function settleMeditation(state, now) {
+    state.cultivation = C.normalizeCultivation(state.cultivation, now || Date.now());
+    const meditation = state.cultivation.meditation;
+    if (!meditation || !meditation.active) {
+      if (meditation) meditation.lastAt = now || Date.now();
+      return { active: false, gained: 0, seconds: 0 };
+    }
+    const ts = now || Date.now();
+    const elapsedMs = Math.max(0, ts - (Number(meditation.lastAt) || ts));
+    const cappedMs = Math.min(elapsedMs, C.MEDITATION_OFFLINE_CAP_HOURS * 3600 * 1000);
+    const seconds = cappedMs / 1000;
+    let gained = 0;
+    let techniqueGained = 0;
+    if (seconds > 0 && state.level < C.MAX_LEVEL) {
+      const rate = C.meditationRate(state.cultivation, state.level);
+      gained = rate.perSecond * seconds;
+      const advanced = C.addExperience(state.cultivation, state.level, gained);
+      state.level = advanced.level;
+      techniqueGained =
+        (seconds / 3600) *
+        (0.25 + state.cultivation.attributes.insight * 0.012) *
+        rate.formation.multiplier *
+        Math.sqrt(rate.region.qi);
+      state.cultivation.technique = Math.min(
+        1000,
+        (Number(state.cultivation.technique) || 0) + techniqueGained
+      );
+      C.advanceEquippedTechniques(state.cultivation, techniqueGained * 0.6);
+      meditation.totalSeconds = (Number(meditation.totalSeconds) || 0) + seconds;
+    }
+    meditation.lastAt = ts;
+    const atCap =
+      state.level >= C.MAX_LEVEL ||
+      (C.isBreakthroughLevel(state.level) && state.cultivation.exp >= C.expRequired(state.level));
+    if (atCap) meditation.active = false;
+    return {
+      active: meditation.active,
+      gained,
+      techniqueGained,
+      seconds,
+      atCap,
+      level: state.level,
+    };
+  }
+
+  function setMeditation(state, active, now) {
+    const ts = now || Date.now();
+    state.cultivation = C.normalizeCultivation(state.cultivation, ts);
+    settleMeditation(state, ts);
+    if (active && state.level >= C.MAX_LEVEL) {
+      return { ok: false, reason: "max-level" };
+    }
+    if (active && state.cultivation.stoneSession.active) {
+      return { ok: false, reason: "stone-session" };
+    }
+    if (active && C.isBreakthroughLevel(state.level) && state.cultivation.exp >= C.expRequired(state.level)) {
+      return { ok: false, reason: "breakthrough" };
+    }
+    state.cultivation.meditation.active = Boolean(active);
+    state.cultivation.meditation.lastAt = ts;
+    return {
+      ok: true,
+      active: state.cultivation.meditation.active,
+      rate: C.meditationRate(state.cultivation, state.level),
+    };
+  }
+
+  function setFormation(state, formationId, now) {
+    state.cultivation = C.normalizeCultivation(state.cultivation, now || Date.now());
+    const formation = C.FORMATIONS[formationId];
+    if (!formation) return { ok: false, reason: "formation" };
+    if (state.level < formation.minLevel) {
+      return {
+        ok: false,
+        reason: "locked",
+        requiredLevel: formation.minLevel,
+        formation,
+      };
+    }
+    if (state.cultivation.stoneSession.active) return { ok: false, reason: "stone-session", formation };
+    settleMeditation(state, now || Date.now());
+    state.cultivation.formationId = formation.id;
+    return { ok: true, formation };
+  }
+
+  function travelToRegion(state, regionId, now) {
+    state.cultivation = C.normalizeCultivation(state.cultivation, now || Date.now());
+    const region = C.regionById(regionId);
+    if (!region) return { ok: false, reason: "region" };
+    if (state.level < region.minLevel) {
+      return {
+        ok: false,
+        reason: "locked",
+        requiredLevel: region.minLevel,
+        region,
+      };
+    }
+    if (state.cultivation.stoneSession.active) return { ok: false, reason: "stone-session", region };
+    settleMeditation(state, now || Date.now());
+    state.cultivation.regionId = region.id;
+    state.lastTick = now || Date.now();
+    return { ok: true, region };
+  }
+
+  function advanceLifespan(state, now, rng) {
+    state.cultivation = C.normalizeCultivation(state.cultivation, now || Date.now(), rng);
+    const previousLevel = state.level;
+    const previousCycle = state.cultivation.cycle || 0;
+    const aging = C.advanceAge(state.cultivation, now || Date.now(), state.level);
+    if (!aging.died) return { died: false, years: aging.years };
+    const oldAge = state.cultivation.age;
+    resetForNewLife(state, now || Date.now(), rng, {
+      type: "lifespan",
+      at: now || Date.now(),
+      age: oldAge,
+      level: previousLevel,
+      carried: "",
+      cycle: previousCycle + 1,
+    });
+    return {
+      died: true,
+      years: aging.years,
+      age: oldAge,
+      level: previousLevel,
+      dialogue: `寿元耗尽，${realmLabelForLevel(previousLevel)}的肉身化作尘烟；新的命格已经生成`,
+    };
+  }
+
+  function resetForNewLife(state, now, rng, event) {
+    const settings = JSON.parse(JSON.stringify(state.settings || DEFAULT_STATE.settings));
+    const window = JSON.parse(JSON.stringify(state.window || DEFAULT_STATE.window));
+    const next = freshState(now, rng);
+    next.settings = settings;
+    next.window = window;
+    next.createdAt = now;
+    next.cultivation.cycle = Math.max(0, Number(event && event.cycle) || 0);
+    next.cultivation.lastLifeEvent = {
+      type: event && event.type === "rebirth" ? "rebirth" : "lifespan",
+      at: now,
+      age: Math.max(0, Number(event && event.age) || 0),
+      level: Math.max(1, Math.min(C.MAX_LEVEL, Number(event && event.level) || 1)),
+      carried: C.ATTRIBUTE_KEYS.includes(event && event.carried) ? event.carried : "",
+    };
+    Object.keys(state).forEach((key) => delete state[key]);
+    Object.assign(state, next);
+    return state;
+  }
+
+  function soulAttributeBonus(level, rootId, count) {
+    const root = C.ROOTS[rootId] || C.ROOTS.mixed;
+    return Math.max(
+      0,
+      Math.min(
+        250,
+        Math.round(Math.max(0, Number(level) || 0) * 0.1 * (root.soulPower || 1)) +
+          Math.max(0, Number(count) || 0) * 2
+      )
+    );
+  }
+
+  function rebirthStatus(state) {
+    const attributes = C.talentSummary(state.cultivation && state.cultivation.attributes);
+    const soul = (state.cultivation && state.cultivation.soul) || {
+      level: 0,
+      count: 0,
+      root: "",
+      attributeBonus: 0,
+    };
+    const immortal = state.level >= 101;
+    const nextSoulLevel = immortal ? Math.max(soul.level, state.level) : soul.level;
+    const nextSoulRoot = immortal ? attributes.root : soul.root;
+    const nextAttributeBonus = immortal
+      ? soulAttributeBonus(nextSoulLevel, nextSoulRoot, soul.count + 1)
+      : soul.attributeBonus;
+    return {
+      requiredLevel: 41,
+      level: state.level,
+      eligible: state.level >= 41,
+      immortal,
+      realm: realmLabelForLevel(state.level),
+      realmName: C.realmStatus(state.level).major.name,
+      cycle: Number(state.cultivation && state.cultivation.cycle) || 0,
+      attributes,
+      soul: {
+        level: soul.level,
+        count: soul.count,
+        root: soul.root,
+        rootName: soul.root ? C.ROOTS[soul.root].name : "",
+        attributeBonus: soul.attributeBonus,
+        nextLevel: nextSoulLevel,
+        nextRoot: nextSoulRoot,
+        nextRootName: nextSoulRoot ? C.ROOTS[nextSoulRoot].name : "",
+        nextAttributeBonus,
+      },
+      choices: C.ATTRIBUTE_KEYS.map((key) => ({
+        key,
+        label: C.ATTRIBUTE_META[key].label,
+        value: key === "root" ? C.ROOTS[attributes.root].name : attributes[key],
+      })),
+    };
+  }
+
+  function soulRebirth(state, previous, startedAt, nextRng) {
+    const oldSoul = state.cultivation.soul;
+    const soulLevel = Math.max(oldSoul.level || 0, previous.level);
+    const soulCount = (oldSoul.count || 0) + 1;
+    const soulRoot = previous.attributes.root;
+    const attributeBonus = soulAttributeBonus(soulLevel, soulRoot, soulCount);
+    resetForNewLife(state, startedAt, nextRng, {
+      type: "rebirth",
+      age: previous.age,
+      level: previous.level,
+      carried: "root",
+      cycle: previous.cycle + 1,
+    });
+    const generatedRoot = state.cultivation.attributes.root;
+    const rootUpgraded = C.rootsAreSymbiotic(soulRoot, generatedRoot);
+    state.cultivation.attributes.root = soulRoot;
+    state.cultivation.attributes.rootLineage = Math.min(
+      100,
+      (Number(previous.attributes.rootLineage) || 0) + (rootUpgraded ? 1 : 0)
+    );
+    state.cultivation.attributes.insight = Math.min(
+      C.MAX_ATTRIBUTE,
+      state.cultivation.attributes.insight + attributeBonus
+    );
+    state.cultivation.attributes.fortune = Math.min(
+      C.MAX_ATTRIBUTE,
+      state.cultivation.attributes.fortune + attributeBonus
+    );
+    state.cultivation.attributes.daoHeart = Math.min(
+      C.MAX_ATTRIBUTE,
+      state.cultivation.attributes.daoHeart + attributeBonus
+    );
+    state.cultivation.attributes.lifespan = Math.min(
+      C.MAX_ATTRIBUTE,
+      state.cultivation.attributes.lifespan + attributeBonus
+    );
+    state.cultivation.technique = Math.min(
+      C.MAX_TECHNIQUE_MASTERY,
+      (Number(state.cultivation.technique) || 0) + Math.floor(attributeBonus / 2)
+    );
+    state.cultivation.soul = {
+      level: soulLevel,
+      count: soulCount,
+      root: soulRoot,
+      attributeBonus,
+    };
+    state.cultivation.cycle = previous.cycle + 1;
+    return {
+      ok: true,
+      immortal: true,
+      previousLevel: previous.level,
+      soulLevel,
+      soulCount,
+      soulRoot,
+      soulRootName: C.ROOTS[soulRoot].name,
+      generatedRoot,
+      generatedRootName: C.ROOTS[generatedRoot].name,
+      attributeBonus,
+      rootUpgraded,
+      rootLineage: state.cultivation.attributes.rootLineage,
+      cycle: state.cultivation.cycle,
+      attributes: C.talentSummary(state.cultivation.attributes),
+      root: C.ROOTS[state.cultivation.attributes.root],
+      dialogue: `仙人神魂转世：保留Lv.${soulLevel}${C.ROOTS[soulRoot].name}神魂，全属性 +${attributeBonus}；${
+        rootUpgraded
+          ? `今生随机为${C.ROOTS[generatedRoot].name}，与前世灵根共生，根骨等阶 +1`
+          : `今生随机为${C.ROOTS[generatedRoot].name}，未能共生，保留原有根骨等阶`
+      }`,
+    };
+  }
+
+  function rebirth(state, attributeKey, now, rng) {
+    const startedAt = now || Date.now();
+    const random = typeof rng === "function" ? rng : Math.random;
+    state.cultivation = C.normalizeCultivation(state.cultivation, startedAt, random);
+    if (state.level < 41) {
+      return { ok: false, reason: "level", requiredLevel: 41 };
+    }
+    if (!C.ATTRIBUTE_KEYS.includes(attributeKey)) {
+      return { ok: false, reason: "attribute" };
+    }
+    const previous = {
+      level: state.level,
+      age: state.cultivation.age,
+      cycle: state.cultivation.cycle || 0,
+      realmName: C.realmStatus(state.level).major.name,
+      attributes: JSON.parse(JSON.stringify(state.cultivation.attributes)),
+    };
+    const nextRng = () => random();
+    if (previous.level >= 101) {
+      return soulRebirth(state, previous, startedAt, nextRng);
+    }
+    resetForNewLife(state, startedAt, nextRng, {
+      type: "rebirth",
+      age: previous.age,
+      level: previous.level,
+      carried: attributeKey,
+      cycle: previous.cycle + 1,
+    });
+    const carried = {
+      root: previous.attributes.root,
+      insight: previous.attributes.insight,
+      fortune: previous.attributes.fortune,
+      daoHeart: previous.attributes.daoHeart,
+      lifespan: previous.attributes.lifespan,
+      rootLineage: previous.attributes.rootLineage,
+    };
+    const merged = C.mergeCarriedAttribute(state.cultivation.attributes, carried, attributeKey, nextRng);
+    state.cultivation.attributes = merged.attributes;
+    state.cultivation.cycle = previous.cycle + 1;
+    return {
+      ok: true,
+      previousLevel: previous.level,
+      previousRealmName: previous.realmName,
+      carried: attributeKey,
+      mergeMode: merged.mode,
+      cycle: state.cultivation.cycle,
+      attributes: C.talentSummary(state.cultivation.attributes),
+      root: C.ROOTS[state.cultivation.attributes.root],
+      dialogue:
+        merged.mode === "merge"
+          ? `${previous.realmName}转世成功，${C.ATTRIBUTE_META[attributeKey].label}与新生命格叠加`
+          : `${previous.realmName}转世成功，新生命格覆盖了${C.ATTRIBUTE_META[attributeKey].label}`,
+    };
+  }
+
+  function realmLabelForLevel(level) {
+    const status = C.realmStatus(level);
+    return status.fullName;
   }
 
   function titleForState(state) {
-    const title = prestigeTitle(state.prestige ? state.prestige.count : 0);
-    return title || titleForLevel(state.level);
+    return realmLabelForLevel(state.level);
   }
 
   /** 摸头：加心情 + 偶尔掉金币。 */
@@ -2759,10 +5040,7 @@
 
   function leaderboardScores(state, actions, now) {
     return {
-      level: Math.max(
-        1,
-        (Number(state.level) || 1) + (Number(state.prestige && state.prestige.legacyLevel) || 0)
-      ),
+      level: Math.max(1, Number(state.level) || 1),
       furniture: furnitureScore(state, now),
       fashion: fashionScore(state, actions, now),
       collection: collectionScore(state),
@@ -2815,9 +5093,50 @@
     return until && until > (now || Date.now()) ? until : 0;
   }
 
+  function shopItemPrice(state, item) {
+    if (!item) return 0;
+    if (item.type !== "cultivation") return Number(item.price) || 0;
+    if (item.cultivationType === "breakthrough") return C.breakthroughCost(state.level);
+    if (item.cultivationType === "life") return C.lifePillCost(state.level);
+    if (item.cultivationType === "thunder") return C.thunderPearlCost(state.level);
+    if (item.cultivationType === "technique") return Math.max(600, 500 + state.level * 16);
+    if (item.cultivationType === "cultivation") return Math.max(700, 600 + state.level * 12);
+    if (item.cultivationType === "heart") return Math.max(400, 300 + state.level * 9);
+    if (item.cultivationType === "stone" && C.STONE_TIERS[item.stoneTier]) {
+      return Number(item.price) || C.STONE_TIERS[item.stoneTier].price;
+    }
+    return Number(item.price) || 0;
+  }
+
+  function cultivationItemCount(state, item) {
+    if (!item || item.type !== "cultivation" || !state.cultivation) return 0;
+    if (item.cultivationType === "stone") {
+      return Number(state.cultivation.stones && state.cultivation.stones[item.stoneTier]) || 0;
+    }
+    if (item.cultivationType === "breakthrough") {
+      return Number(state.cultivation.pills && state.cultivation.pills.breakthrough) || 0;
+    }
+    if (item.cultivationType === "life") {
+      return Number(state.cultivation.pills && state.cultivation.pills.life) || 0;
+    }
+    if (item.cultivationType === "thunder") {
+      return Number(state.cultivation.thunderPearls) || 0;
+    }
+    if (["technique", "cultivation", "heart"].includes(item.cultivationType)) {
+      return Number(state.cultivation.pills && state.cultivation.pills[item.cultivationType]) || 0;
+    }
+    return 0;
+  }
+
   function purchase(state, item, now) {
     if (!item || !item.id) return { ok: false, reason: "bad-item" };
     if (item.type === "champion") return { ok: false, reason: "not-sale" };
+    if (
+      item.type === "technique" &&
+      (!state.cultivation || item.root !== state.cultivation.attributes.root)
+    ) {
+      return { ok: false, reason: "root" };
+    }
     if (!state.rentals || typeof state.rentals !== "object") {
       state.rentals = { furniture: {}, dress: {} };
     }
@@ -2860,7 +5179,7 @@
     if (item.type === "luxury" && state.perks[item.id]) return { ok: false, reason: "owned" };
     const price = ["dress", "fashion", "furniture", "companion"].includes(item.type)
       ? rentalPrice(item.price, requestedDuration)
-      : item.price;
+      : shopItemPrice(state, item);
     if (!canAfford(state, price)) return { ok: false, reason: "coin", price };
 
     state.coins -= price;
@@ -2921,6 +5240,27 @@
       state.perks[item.id] = true;
     } else if (item.type === "profile") {
       reshapeProfile(state, item.profileAction);
+    } else if (item.type === "cultivation") {
+      if (!state.cultivation) state.cultivation = C.createCultivation(ts);
+      if (item.cultivationType === "stone" && C.STONE_TIERS[item.stoneTier]) {
+        state.cultivation.stones[item.stoneTier] += 1;
+        state.cultivation.spiritStones = state.cultivation.stones.low;
+      } else if (item.cultivationType === "breakthrough") {
+        state.cultivation.pills.breakthrough += 1;
+      } else if (item.cultivationType === "life") {
+        state.cultivation.pills.life += 1;
+      } else if (
+        item.cultivationType === "technique" ||
+        item.cultivationType === "cultivation" ||
+        item.cultivationType === "heart"
+      ) {
+        state.cultivation.pills[item.cultivationType] += 1;
+      } else if (item.cultivationType === "thunder") {
+        state.cultivation.thunderPearls += 1;
+      }
+    } else if (item.type === "technique") {
+      state.cultivation.techniqueScrolls[item.id] =
+        (Number(state.cultivation.techniqueScrolls[item.id]) || 0) + 1;
     }
     state.lastTick = ts;
     return {
@@ -2929,6 +5269,39 @@
       price,
       rentalDuration: isPurchasableRental ? (isTimed ? requestedDuration : "permanent") : undefined,
       profile: item.type === "profile" ? profileDetails(state) : undefined,
+      cultivationCount: item.type === "cultivation" ? cultivationItemCount(state, item) : undefined,
+    };
+  }
+
+  function purchaseMany(state, item, quantity, now) {
+    const amount = Math.max(1, Math.min(9999, Math.floor(Number(quantity) || 1)));
+    if (!item) return { ok: false, reason: "bad-item" };
+    const unitPrice = shopItemPrice(state, item);
+    const total = unitPrice * amount;
+    if (!canAfford(state, total)) {
+      return { ok: false, reason: "coin", price: unitPrice, total, amount };
+    }
+    let purchased = 0;
+    for (; purchased < amount; purchased += 1) {
+      const result = purchase(state, item, now);
+      if (!result.ok) {
+        return {
+          ok: purchased > 0,
+          reason: result.reason,
+          price: unitPrice,
+          total: purchased * unitPrice,
+          amount: purchased,
+          item,
+        };
+      }
+    }
+    return {
+      ok: true,
+      price: unitPrice,
+      total,
+      amount,
+      item,
+      cultivationCount: item.type === "cultivation" ? cultivationItemCount(state, item) : undefined,
     };
   }
 
@@ -3327,11 +5700,6 @@
     return { total: list.length, seen: seenCount, groups };
   }
 
-  function titleForLevel(level) {
-    const entry = TITLES.find((item) => level >= item.level);
-    return entry ? entry.name : TITLES[TITLES.length - 1].name;
-  }
-
   function wishStatus(state, now) {
     const wish = state.wish;
     if (!wish) return null;
@@ -3508,7 +5876,28 @@
     };
   }
 
-  function recordGachaHistory(state, result, now) {
+  function gachaCommonCoinAmount(rng) {
+    const lowBand = rng() < GACHA_COMMON_COIN_LOW_RATE;
+    const min = lowBand ? GACHA_COMMON_COIN_LOW_MIN : GACHA_COMMON_COIN_HIGH_MIN;
+    const max = lowBand ? GACHA_COMMON_COIN_LOW_MAX : GACHA_COMMON_COIN_HIGH_MAX;
+    return min + Math.floor(rng() * (max - min + 1));
+  }
+
+  function grantGachaBuff(state, item, now) {
+    const start = Math.max(Number(now) || Date.now(), activeBuff(state, item.buff, now));
+    state.buffs[item.buff] = start + item.minutes * 60000;
+    return {
+      ok: true,
+      type: "buff",
+      rewardCategory: "buff",
+      label: `${item.icon} ${item.name}（${item.minutes} 分钟）`,
+      itemId: item.id,
+      durationMinutes: item.minutes,
+      tier: "rare",
+    };
+  }
+
+  function recordGachaHistory(state, result, now, pool) {
     if (!state.gacha || typeof state.gacha !== "object") state.gacha = { pulls: 0, history: [] };
     const history = Array.isArray(state.gacha.history) ? state.gacha.history : [];
     const entry = {
@@ -3519,6 +5908,7 @@
       amount: Math.max(0, Number(result.amount) || 0),
       durationDays: Math.max(0, Math.min(7, Number(result.durationDays) || 0)),
       itemId: String(result.itemId || result.furnitureId || result.action || result.theme || "").slice(0, 50),
+      pool: pool === "up" ? "up" : "standard",
       guaranteed: result.guaranteed === true,
     };
     state.gacha.history = [entry, ...history].slice(0, 50);
@@ -3557,6 +5947,9 @@
 
     const roll = rng();
     const items = Object.values(SHOP_ITEMS).filter((item) => item.type === "food" || item.type === "toy");
+    const buffItems = Object.values(SHOP_ITEMS).filter(
+      (item) => item.type === "buff" && item.listed !== false
+    );
     const dressActions = (Array.isArray(actions) ? actions : []).filter(
       (action) => action && action.category === "dress"
     );
@@ -3585,7 +5978,7 @@
     );
 
     if (roll < GACHA_BRANCH_ENDS.commonCoins) {
-      const amount = 100 + Math.floor(rng() * 401);
+      const amount = gachaCommonCoinAmount(rng);
       state.coins += amount;
       state.totalEarned += amount;
       return recordGachaHistory(
@@ -3614,6 +6007,10 @@
         ),
         now
       );
+    }
+    if (roll < GACHA_BRANCH_ENDS.buff && buffItems.length) {
+      const item = randomEntry(buffItems, rng);
+      return recordGachaHistory(state, grantGachaBuff(state, item, now), now);
     }
     if (roll < GACHA_BRANCH_ENDS.timedOutfit && timedOutfits.length) {
       return recordGachaHistory(
@@ -3686,6 +6083,197 @@
     const results = [];
     for (let index = 0; index < draws; index += 1) {
       results.push(rollGachaReward(state, actions, random, ts));
+    }
+    return { ok: true, cost, count: draws, results };
+  }
+
+  function gachaUpActive(now) {
+    const ts = Number.isFinite(Number(now)) ? Number(now) : Date.now();
+    return ts >= GACHA_UP_START && ts < GACHA_UP_END;
+  }
+
+  function grantUpCollection(state, item, duplicateCoins, now, guaranteed) {
+    if (state.perks[item.id]) {
+      state.coins += duplicateCoins;
+      state.totalEarned += duplicateCoins;
+      return recordGachaHistory(
+        state,
+        {
+          ok: true,
+          type: "coins",
+          label: `${item.icon} ${item.name}（重复）折算 +${duplicateCoins.toLocaleString("zh-CN")} 金币`,
+          amount: duplicateCoins,
+          itemId: item.id,
+          tier: item.id === GACHA_UP_BIG_ID ? "mythic" : "legendary",
+          guaranteed,
+        },
+        now,
+        "up"
+      );
+    }
+    state.perks[item.id] = true;
+    return recordGachaHistory(
+      state,
+      {
+        ok: true,
+        type: "luxury",
+        rewardCategory: "collection",
+        label: `${item.icon} 典藏道具「${item.name}」`,
+        itemId: item.id,
+        tier: item.id === GACHA_UP_BIG_ID ? "mythic" : "legendary",
+        guaranteed,
+      },
+      now,
+      "up"
+    );
+  }
+
+  function rollUpGachaReward(state, actions, random, now) {
+    const rng = typeof random === "function" ? random : Math.random;
+    state.gacha.upPulls = (state.gacha.upPulls || 0) + 1;
+    state.gacha.upPity = Math.max(0, Number(state.gacha.upPity) || 0) + 1;
+    const guaranteed = state.gacha.upPity >= GACHA_UP_PITY_PULLS;
+    const bigItem = SHOP_ITEMS[GACHA_UP_BIG_ID];
+    if (guaranteed || Math.floor(rng() * 1000000) < GACHA_UP_BRANCH_ENDS.bigCollection) {
+      state.gacha.upPity = 0;
+      return grantUpCollection(state, bigItem, GACHA_UP_BIG_DUPLICATE_COINS, now, guaranteed);
+    }
+
+    const roll = Math.floor(rng() * 1000000);
+    if (roll < GACHA_UP_BRANCH_ENDS.officeCollection) {
+      return grantUpCollection(
+        state,
+        SHOP_ITEMS[GACHA_UP_OFFICE_ID],
+        GACHA_UP_OFFICE_DUPLICATE_COINS,
+        now,
+        false
+      );
+    }
+
+    const items = Object.values(SHOP_ITEMS).filter((item) => item.type === "food" || item.type === "toy");
+    const buffItems = Object.values(SHOP_ITEMS).filter(
+      (item) => item.type === "buff" && item.listed !== false
+    );
+    const dressActions = (Array.isArray(actions) ? actions : []).filter(
+      (action) => action && action.category === "dress"
+    );
+    const lockedDress = dressActions
+      .map((action, index) => ({
+        kind: "dress",
+        id: action.name,
+        item: action,
+        price: dressPrice(index, action.name),
+      }))
+      .filter((source) => source.id && dressListed(source.id) && !state.unlocked.includes(source.id));
+    const permanentFurniture = new Set((state.room && state.room.furniture) || []);
+    const timedFurniture = Object.values(FURNITURE).filter(
+      (item) => item.id !== "companion" && item.listed !== false && !permanentFurniture.has(item.id)
+    );
+    const timedOutfits = [
+      ...lockedDress,
+      ...Object.values(SHOP_ITEMS)
+        .filter(
+          (item) => item.type === "fashion" && item.listed !== false && !state.unlocked.includes(item.id)
+        )
+        .map((item) => ({ kind: "fashion", id: item.id, item, price: item.price })),
+    ];
+
+    if (roll < GACHA_UP_BRANCH_ENDS.commonCoins) {
+      const amount = gachaCommonCoinAmount(rng);
+      state.coins += amount;
+      state.totalEarned += amount;
+      return recordGachaHistory(
+        state,
+        { ok: true, type: "coins", label: `金币 +${amount}`, amount, tier: "common" },
+        now,
+        "up"
+      );
+    }
+    if (roll < GACHA_UP_BRANCH_ENDS.consumable && items.length) {
+      const item = randomEntry(items, rng);
+      state.inventory[item.id] = (state.inventory[item.id] || 0) + 1;
+      return recordGachaHistory(
+        state,
+        { ok: true, type: "item", label: `${item.icon} ${item.name}`, itemId: item.id, tier: "common" },
+        now,
+        "up"
+      );
+    }
+    if (roll < GACHA_UP_BRANCH_ENDS.timedFurniture && timedFurniture.length) {
+      return recordGachaHistory(
+        state,
+        grantGachaFurniture(
+          state,
+          gachaWeightedEntry(timedFurniture, rng, (item) => gachaPriceWeight(item.price)),
+          rng,
+          now
+        ),
+        now,
+        "up"
+      );
+    }
+    if (roll < GACHA_UP_BRANCH_ENDS.buff && buffItems.length) {
+      return recordGachaHistory(state, grantGachaBuff(state, randomEntry(buffItems, rng), now), now, "up");
+    }
+    if (roll < GACHA_UP_BRANCH_ENDS.timedOutfit && timedOutfits.length) {
+      return recordGachaHistory(
+        state,
+        grantGachaOutfit(
+          state,
+          gachaWeightedEntry(timedOutfits, rng, (source) => gachaPriceWeight(source.price)),
+          rng,
+          now
+        ),
+        now,
+        "up"
+      );
+    }
+    if (roll < GACHA_UP_BRANCH_ENDS.legacyOutfitUnlock && lockedDress.length) {
+      const source = gachaWeightedEntry(lockedDress, rng, (entry) => gachaPriceWeight(entry.price));
+      state.unlocked.push(source.item.name);
+      return recordGachaHistory(
+        state,
+        {
+          ok: true,
+          type: "dress",
+          label: `解锁「${source.item.label || source.item.name}」`,
+          action: source.item.name,
+          tier: "rare",
+        },
+        now,
+        "up"
+      );
+    }
+
+    const amount = 100 + Math.floor(rng() * 401);
+    state.coins += amount;
+    state.totalEarned += amount;
+    return recordGachaHistory(
+      state,
+      { ok: true, type: "coins", label: `金币 +${amount}`, amount, tier: "common" },
+      now,
+      "up"
+    );
+  }
+
+  function pullUpGacha(state, actions, now, random) {
+    const ts = Number.isFinite(Number(now)) ? Number(now) : Date.now();
+    if (!gachaUpActive(ts)) return { ok: false, reason: "up-ended" };
+    if (state.coins < GACHA_UP_PRICE) return { ok: false, reason: "coin", cost: GACHA_UP_PRICE };
+    state.coins -= GACHA_UP_PRICE;
+    return rollUpGachaReward(state, actions, random, ts);
+  }
+
+  function pullUpGachaMany(state, actions, count, now, random) {
+    const ts = Number.isFinite(Number(now)) ? Number(now) : Date.now();
+    const draws = Math.max(1, Math.min(10, Math.round(Number(count) || 1)));
+    const cost = draws === 10 ? GACHA_UP_TEN_PRICE : draws * GACHA_UP_PRICE;
+    if (!gachaUpActive(ts)) return { ok: false, reason: "up-ended", cost };
+    if (state.coins < cost) return { ok: false, reason: "coin", cost };
+    state.coins -= cost;
+    const results = [];
+    for (let index = 0; index < draws; index += 1) {
+      results.push(rollUpGachaReward(state, actions, random, ts));
     }
     return { ok: true, cost, count: draws, results };
   }
@@ -3886,6 +6474,7 @@
     mergeShopEntitlements,
     actionKind,
     SHOP_ITEMS,
+    BLACK_TOWER_FLOORS,
     CHAMPION_BY_BOARD,
     CHAMPION_ITEM_IDS,
     LEADERBOARD_BOARD_IDS,
@@ -3895,20 +6484,35 @@
     DAILY_TASKS,
     ACHIEVEMENTS,
     WISH_CATEGORIES,
-    TITLES,
-    PRESTIGE_LEVEL,
-    PRESTIGE_BONUS,
-    PRESTIGE_TITLES,
     INTIMACY_LEVELS,
     INTIMACY_ACTIONS,
     GACHA_PRICE,
     GACHA_TEN_PRICE,
     GACHA_PITY_PULLS,
+    GACHA_UP_ID,
+    GACHA_UP_VERSION,
+    GACHA_UP_START,
+    GACHA_UP_END,
+    GACHA_UP_PRICE,
+    GACHA_UP_TEN_PRICE,
+    GACHA_UP_PITY_PULLS,
+    GACHA_UP_BIG_ID,
+    GACHA_UP_OFFICE_ID,
+    GACHA_UP_BIG_DUPLICATE_COINS,
+    GACHA_UP_OFFICE_DUPLICATE_COINS,
+    GACHA_UP_RATES,
+    GACHA_POOLS,
+    GACHA_COMMON_COIN_LOW_RATE,
+    GACHA_COMMON_COIN_LOW_MIN,
+    GACHA_COMMON_COIN_LOW_MAX,
+    GACHA_COMMON_COIN_HIGH_MIN,
+    GACHA_COMMON_COIN_HIGH_MAX,
     GACHA_PITY_PRIZES,
     GACHA_RATES,
     GACHA_LIMITED_DAYS,
     GACHA_TOP_PRIZES,
     gachaPriceWeight,
+    gachaUpActive,
     BANK_HOURS,
     BANK_RATE,
     MINIGAME_COOLDOWN_MS,
@@ -3965,7 +6569,11 @@
     championPermanentIncomeBonus,
     championIncomeBonus,
     activeBuff,
+    activeIncomeBuffMultiplier,
+    shopItemPrice,
+    cultivationItemCount,
     purchase,
+    purchaseMany,
     useItem,
     dayKey,
     addScheduleItem,
@@ -3985,10 +6593,6 @@
     analyticsSummary,
     markSeen,
     codexSummary,
-    titleForLevel,
-    prestigeTitle,
-    prestigeStatus,
-    prestige,
     titleForState,
     intimacyLevelForPoints,
     intimacyStatus,
@@ -4005,6 +6609,8 @@
     bankWithdraw,
     pullGacha,
     pullGachaMany,
+    pullUpGacha,
+    pullUpGachaMany,
     minigameStatus,
     minigameTrainingGain,
     finishMinigame,
@@ -4031,8 +6637,51 @@
     settleOffline,
     feed,
     play,
-    upgrade,
-    upgradeCost,
+    cultivationStatus,
+    totalCultivationAmount,
+    spiritualPowerCapacity,
+    recoverSpiritualPower,
+    blackTowerStatus,
+    setBlackTowerFloor,
+    challengeBlackTower,
+    buySpiritStones,
+    setSpiritStoneTier,
+    setStoneQuantities,
+    techniqueStatus,
+    addTechniqueScroll,
+    studyTechnique,
+    equipTechnique,
+    unequipTechnique,
+    rollTechniqueReward,
+    setMeditation,
+    settleMeditation,
+    setFormation,
+    travelToRegion,
+    cultivate,
+    settleStoneCultivation,
+    endStoneCultivation,
+    purchaseCultivationItem,
+    takeLifePill,
+    takeCultivationPill,
+    attemptBreakthrough,
+    collectHerbs,
+    comprehendTechnique,
+    mineSpiritStones,
+    craftPill,
+    exploreSecretRealm,
+    caveHeavenStatus,
+    enterCaveHeaven,
+    resolveCaveChallenge,
+    leaveCaveHeaven,
+    opportunityStatus,
+    drawOpportunity,
+    resolveOpportunityChoice,
+    OPPORTUNITIES: O,
+    advanceLifespan,
+    rebirthStatus,
+    rebirth,
+    realmLabelForLevel,
+    CULTIVATION: C,
     pet,
     moodFace,
     dialogueFor,

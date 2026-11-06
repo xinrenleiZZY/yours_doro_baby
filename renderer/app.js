@@ -7,7 +7,7 @@
   const DoroQuiz = window.DoroQuiz;
   // 冒烟测试用 ?test=1 打开：关掉自动计时，并暴露少量只读/操作钩子
   const TEST_MODE = new URLSearchParams(location.search).has("test");
-  const EXTERNAL_TOOLS = new Set(["shop", "gacha", "minigame", "sticker"]);
+  const EXTERNAL_TOOLS = new Set(["shop", "inventory", "opportunity", "gacha", "minigame", "sticker"]);
 
   // 渲染进程的异常统一上报到主进程日志，避免"点了没反应但查不到原因"
   window.addEventListener("error", (event) => {
@@ -51,6 +51,8 @@
     cfgUpdateStatus: $("cfg-update-status"),
     cfgUpdateSave: $("cfg-update-save"),
     cfgUpdateCheck: $("cfg-update-check"),
+    menuUpdateApp: $("menu-update-app"),
+    menuUpdateStatus: $("menu-update-status"),
     panel: $("panel"),
     panelCoins: $("panel-coins"),
     panelIncome: $("panel-income"),
@@ -63,6 +65,8 @@
     btnFeed: $("btn-feed"),
     btnPlay: $("btn-play"),
     btnUpgrade: $("btn-upgrade"),
+    btnUpgradeAll: $("btn-upgrade-all"),
+    btnUpgradeTen: $("btn-upgrade-ten"),
     upgradeCost: $("upgrade-cost"),
     menuUpgradeCost: $("menu-upgrade-cost"),
     panelHint: $("panel-hint"),
@@ -104,6 +108,11 @@
     cfgScale: $("cfg-scale"),
     cfgScaleVal: $("cfg-scale-val"),
     cfgReset: $("cfg-reset"),
+    cfgShortcutStatus: $("cfg-shortcut-status"),
+    cfgShortcutToggle: $("cfg-shortcut-toggle"),
+    cfgShortcutSummon: $("cfg-shortcut-summon"),
+    cfgShortcutChat: $("cfg-shortcut-chat"),
+    cfgShortcutsReset: $("cfg-shortcuts-reset"),
     sticker: $("sticker"),
     stickerCount: $("sticker-count"),
     stickerSearch: $("sticker-search"),
@@ -120,6 +129,8 @@
     stickerPrev: $("sticker-prev"),
     stickerNext: $("sticker-next"),
     growth: $("growth"),
+    cultivationPanel: $("cultivation-panel"),
+    cultPanelCoins: $("cult-panel-coins"),
     growthCoins: $("growth-coins"),
     growthDaily: $("growth-daily"),
     growthDailyDate: $("growth-daily-date"),
@@ -129,9 +140,61 @@
     growthIntimacy: $("growth-intimacy"),
     growthDiaryTitle: $("growth-diary-title"),
     growthDiary: $("growth-diary"),
-    growthPrestigeTitle: $("growth-prestige-title"),
-    growthPrestige: $("growth-prestige"),
-    btnPrestige: $("btn-prestige"),
+    cultRealmTitle: $("cult-realm-title"),
+    cultRealm: $("cult-realm"),
+    cultRoot: $("cult-root"),
+    cultExpBar: $("cult-exp-bar"),
+    cultExp: $("cult-exp"),
+    cultAttrs: $("cult-attrs"),
+    cultLife: $("cult-life"),
+    cultResources: $("cult-resources"),
+    cultRegion: $("cult-region"),
+    cultRegionTrait: $("cult-region-trait"),
+    cultMeditation: $("cult-meditation"),
+    cultSpiritualPower: $("cult-spiritual-power"),
+    btnEndCultivation: $("btn-end-cultivation"),
+    cultCaveStatus: $("cult-cave-status"),
+    cultCaveSelect: $("cult-cave-select"),
+    btnEnterCave: $("btn-enter-cave"),
+    btnLeaveCave: $("btn-leave-cave"),
+    cultCaveChallenge: $("cult-cave-challenge"),
+    cultCaveBattleActions: $("cult-cave-battle-actions"),
+    btnCaveAvoid: $("btn-cave-avoid"),
+    btnCaveObserve: $("btn-cave-observe"),
+    btnCaveFight: $("btn-cave-fight"),
+    cultTowerRecord: $("cult-tower-record"),
+    cultTowerStatus: $("cult-tower-status"),
+    cultTowerFloor: $("cult-tower-floor"),
+    btnChallengeTower: $("btn-challenge-tower"),
+    cultFormationSelect: $("cult-formation-select"),
+    btnMeditate: $("btn-meditate"),
+    btnComprehend: $("btn-comprehend"),
+    cultStoneTier: $("cult-stone-tier"),
+    cultRegionSelect: $("cult-region-select"),
+    btnTravelRegion: $("btn-travel-region"),
+    cultBuyQuantity: $("cult-buy-quantity"),
+    cultConsumeQuantity: $("cult-consume-quantity"),
+    cultStoneSession: $("cult-stone-session"),
+    cultBreakthrough: $("cult-breakthrough"),
+    cultPermissions: $("cult-permissions"),
+    cultSoul: $("cult-soul"),
+    cultLifeEvent: $("cult-life-event"),
+    btnCultivateOne: $("btn-cultivate-one"),
+    btnCultivateTen: $("btn-cultivate-ten"),
+    btnBuyStones: $("btn-buy-stones"),
+    btnBreakthroughPill: $("btn-breakthrough-pill"),
+    btnBreakthroughHeart: $("btn-breakthrough-heart"),
+    btnBuyBreakthrough: $("btn-buy-breakthrough"),
+    btnHerbs: $("btn-herbs"),
+    btnMine: $("btn-mine"),
+    btnAlchemy: $("btn-alchemy"),
+    btnSecret: $("btn-secret"),
+    btnOpportunity: $("btn-opportunity"),
+    btnBuyLife: $("btn-buy-life"),
+    btnUseLife: $("btn-use-life"),
+    btnBuyThunder: $("btn-buy-thunder"),
+    rebirthAttribute: $("rebirth-attribute"),
+    btnRebirth: $("btn-rebirth"),
     growthAchievements: $("growth-achievements"),
     growthAchCount: $("growth-ach-count"),
     growthStats: $("growth-stats"),
@@ -175,13 +238,14 @@
   let shopOpen = false;
   let scheduleOpen = false;
   let configOpen = false;
+  let cultivationOpen = false;
   let growthOpen = false;
   let gachaOpen = false;
   let minigameOpen = false;
   let stickerOpen = false;
   const stickerState = { name: null, query: "", page: 0 };
   let stickerPendingDelete = null;
-  let prestigePending = null;
+  let rebirthPending = null;
   let quizOpen = false;
   let toolOpen = false;
   let toolStateRevision = 0;
@@ -215,6 +279,16 @@
   // ------------------------------------------------------------- 基础工具
   function rand(min, max) {
     return min + Math.random() * (max - min);
+  }
+
+  function formatDuration(ms) {
+    const seconds = Math.max(0, Math.ceil(ms / 1000));
+    if (seconds < 60) return `${seconds} 秒`;
+    const minutes = Math.floor(seconds / 60);
+    const rest = seconds % 60;
+    if (minutes < 60) return rest ? `${minutes} 分 ${rest} 秒` : `${minutes} 分钟`;
+    const hours = Math.floor(minutes / 60);
+    return `${hours} 小时 ${minutes % 60} 分`;
   }
 
   function actionImageUrl(action) {
@@ -385,7 +459,7 @@
     updateEventChips();
     scheduleWish(rand(15, 30) * 60000);
     updateMenu();
-    if (growthOpen) renderGrowth();
+    renderOpenProgressPanels();
   }
 
   function syncCompanion() {
@@ -477,6 +551,7 @@
       add(el.shop, 4);
       add(el.schedule, 4);
       add(el.config, 4);
+      add(el.cultivationPanel, 4);
       add(el.growth, 4);
       add(el.gacha, 4);
       add(el.minigame, 4);
@@ -632,6 +707,10 @@
       playReaction(action.name, Math.min(6500, Math.max(2400, Number(action.durationMs) * 2 + 800)));
   }
 
+  function meditationActionName() {
+    return byName.has("dress_nurse") ? "dress_nurse" : baseAction;
+  }
+
   function scheduleAmbient(delay) {
     if (TEST_MODE) return;
     if (ambientTimer) clearTimeout(ambientTimer);
@@ -639,10 +718,14 @@
       delay === undefined ? G.nextActionDelay(undefined, state.settings.ambientIntervalSec) : delay;
     ambientTimer = setTimeout(() => {
       if (!dragging && !systemSleeping && !state.settings.dnd && Date.now() >= busyUntil) {
-        const action = G.pickAmbientAction(actions, state);
-        if (action && action.name !== currentAction) {
-          playReaction(action.name, Math.min(6000, action.durationMs * 2 + 900));
-          if (Math.random() < 0.45) speak(G.dialogueFor("auto", state), 2200);
+        if (state.cultivation.meditation.active) {
+          setAction(meditationActionName(), { force: true });
+        } else {
+          const action = G.pickAmbientAction(actions, state);
+          if (action && action.name !== currentAction) {
+            playReaction(action.name, Math.min(6000, action.durationMs * 2 + 900));
+            if (Math.random() < 0.45) speak(G.dialogueFor("auto", state), 2200);
+          }
         }
       }
       scheduleAmbient();
@@ -670,15 +753,43 @@
     el.valSatiety.textContent = Math.round(state.satiety);
     el.valMood.textContent = Math.round(state.mood);
 
-    const cost = G.upgradeCost(state);
-    el.upgradeCost.textContent = `${cost}`;
-    el.menuUpgradeCost.textContent = `${cost}`;
-    el.btnUpgrade.disabled = state.coins < cost;
+    const cultivation = G.cultivationStatus(state, Date.now());
+    const spiritStones = cultivation.stoneCounts[cultivation.selectedStoneTier] || 0;
+    const canBuyStone = state.coins >= cultivation.selectedStone.price;
+    const atCultivationCap = cultivation.expFull || state.level >= G.CULTIVATION.MAX_LEVEL;
+    const canCultivate =
+      !cultivation.stoneSession.active && !atCultivationCap && (spiritStones > 0 || canBuyStone);
+    const costLabel =
+      spiritStones > 0
+        ? `${cultivation.selectedStone.short}${spiritStones}`
+        : `${cultivation.selectedStone.price}`;
+    el.upgradeCost.textContent = costLabel;
+    el.menuUpgradeCost.textContent = costLabel;
+    el.btnUpgrade.disabled = !canCultivate;
+    el.btnUpgradeAll.disabled = !canCultivate;
+    el.btnUpgradeTen.disabled = false;
+    el.menu.querySelectorAll("[data-upgrade-command]").forEach((button) => {
+      button.disabled = String(button.dataset.cmd).startsWith("upgrade") && !canCultivate;
+    });
     el.btnFeed.disabled = state.coins < G.BALANCE.feedCost;
     el.btnPlay.disabled = state.coins < G.BALANCE.playCost;
 
     const hint = G.incomeBreakdown(state);
-    if (hint.starving) {
+    if (cultivation.stoneSession.active) {
+      el.panelHint.textContent = `灵石修炼中：已吸收 ${Math.round(
+        cultivation.stoneSession.absorbedEnergy
+      )} / ${cultivation.stoneSession.totalEnergy} 能量 · 剩余 ${formatDuration(
+        cultivation.stoneSession.remainingMs
+      )}`;
+    } else if (cultivation.meditation.active) {
+      el.panelHint.textContent = `打坐吐纳中：${G.formatCoins(
+        cultivation.meditation.perHour
+      )} 修为/小时 · ${cultivation.region.name} · ${cultivation.formation.name}`;
+    } else if (cultivation.expFull && cultivation.boundary) {
+      el.panelHint.textContent = `修为圆满：准备冲击${cultivation.nextRealm ? cultivation.nextRealm.name : "下一境"}，打开境界面板完成突破`;
+    } else if (cultivation.life.danger) {
+      el.panelHint.textContent = `寿元仅余 ${cultivation.life.remaining.toFixed(1)} 年，必须尽快破境或服用延寿丹`;
+    } else if (hint.starving) {
       el.panelHint.textContent = `饿得不行了，产出只剩 ${Math.round(G.BALANCE.starvingMultiplier * 100)}%，快喂点饭！`;
     } else if (hint.hungry) {
       el.panelHint.textContent = `肚子饿了，产出只剩 ${Math.round(G.BALANCE.hungryMultiplier * 100)}%`;
@@ -735,6 +846,22 @@
     if (el.menuQuizSummary) {
       const daily = G.quizDailyStatus(state, Date.now());
       el.menuQuizSummary.textContent = daily.done ? "今日已答" : "今日未答";
+    }
+    if (el.menuUpdateApp && el.menuUpdateStatus) {
+      const status = updateStatus || { state: "idle" };
+      const labels = {
+        dev: "开发模式",
+        idle: "检查更新",
+        checking: "正在检查…",
+        available: `v${status.version || ""} 可更新`,
+        "not-available": "已是最新",
+        downloading: `下载 ${status.percent || 0}%`,
+        downloaded: "重启安装",
+        installing: "正在安装…",
+        error: "检查失败，重试",
+      };
+      el.menuUpdateStatus.textContent = labels[status.state] || "检查更新";
+      el.menuUpdateApp.disabled = ["checking", "downloading", "installing"].includes(status.state);
     }
   }
 
@@ -905,6 +1032,12 @@
   }
 
   // ------------------------------------------------------------- 配置中心
+  function shortcutLabel(accelerator) {
+    return String(accelerator || "")
+      .replace("CommandOrControl", "Ctrl/⌘")
+      .replace("Control", "Ctrl");
+  }
+
   function renderConfig() {
     const settings = state.settings;
     const ambient = Math.round(settings.ambientIntervalSec || 60);
@@ -921,7 +1054,90 @@
     });
     if (el.cfgQuizApi) el.cfgQuizApi.value = settings.quizApiBase || "";
     if (el.cfgUpdateFeed) el.cfgUpdateFeed.value = settings.updateFeedUrl || "";
+    const shortcuts = Object.assign({}, G.CULTIVATION.DEFAULT_SHORTCUTS, settings.shortcuts || {});
+    if (el.cfgShortcutToggle) el.cfgShortcutToggle.value = shortcutLabel(shortcuts.toggle);
+    if (el.cfgShortcutSummon) el.cfgShortcutSummon.value = shortcutLabel(shortcuts.summon);
+    if (el.cfgShortcutChat) el.cfgShortcutChat.value = shortcutLabel(shortcuts.chat);
     renderUpdateStatus();
+  }
+
+  function acceleratorFromKeyboard(event) {
+    const key = String(event.key || "");
+    const code = String(event.code || "");
+    if (["Control", "Alt", "Shift", "Meta"].includes(key)) return null;
+    const modifiers = [];
+    if (event.ctrlKey) modifiers.push("Ctrl");
+    if (event.altKey) modifiers.push("Alt");
+    if (event.shiftKey) modifiers.push("Shift");
+    if (event.metaKey) modifiers.push("Super");
+    let mainKey = "";
+    const letter = code.match(/^Key([A-Z])$/);
+    const digit = code.match(/^Digit([0-9])$/);
+    if (letter) mainKey = letter[1];
+    else if (digit) mainKey = digit[1];
+    else if (/^[a-z]$/i.test(key)) mainKey = key.toUpperCase();
+    else if (/^[0-9]$/.test(key)) mainKey = key;
+    else if (/^F(?:[1-9]|1[0-9]|2[0-4])$/i.test(key)) mainKey = key.toUpperCase();
+    else {
+      const named = {
+        ArrowUp: "Up",
+        ArrowDown: "Down",
+        ArrowLeft: "Left",
+        ArrowRight: "Right",
+        Enter: "Enter",
+        Tab: "Tab",
+        Home: "Home",
+        End: "End",
+        PageUp: "PageUp",
+        PageDown: "PageDown",
+        Insert: "Insert",
+        Delete: "Delete",
+        "-": "-",
+      };
+      mainKey = named[key] || "";
+    }
+    if (!mainKey) return null;
+    if (!modifiers.length && !/^F(?:[1-9]|1[0-9]|2[0-4])$/.test(mainKey)) {
+      return { error: "组合键至少需要 Ctrl、Alt、Shift 或 Super" };
+    }
+    return { accelerator: [...modifiers, mainKey].join("+") };
+  }
+
+  async function applyShortcuts(shortcuts) {
+    const defaults = G.CULTIVATION.DEFAULT_SHORTCUTS;
+    const next = Object.assign({}, defaults, shortcuts);
+    if (typeof api.updateShortcuts !== "function") {
+      state.settings.shortcuts = next;
+      scheduleSave(300);
+      renderConfig();
+      return true;
+    }
+    let result = null;
+    try {
+      result = await api.updateShortcuts(next);
+    } catch (err) {
+      if (el.cfgShortcutStatus) el.cfgShortcutStatus.textContent = "快捷键服务不可用";
+      api.log("warn", "快捷键注册失败", err && (err.stack || String(err)));
+      return false;
+    }
+    if (!result || !result.ok) {
+      const reason =
+        result && result.error === "duplicate"
+          ? "快捷键不能重复"
+          : result && result.failed && result.failed.length
+            ? `系统占用了 ${result.failed.map((item) => shortcutLabel(item.accelerator)).join("、")}`
+            : "快捷键注册失败";
+      if (el.cfgShortcutStatus) el.cfgShortcutStatus.textContent = reason;
+      toast(reason, 3600);
+      renderConfig();
+      return false;
+    }
+    state.settings.shortcuts = Object.assign({}, result.shortcuts);
+    scheduleSave(300);
+    if (el.cfgShortcutStatus) el.cfgShortcutStatus.textContent = "快捷键已生效";
+    renderConfig();
+    toast("快捷键已保存并生效");
+    return true;
   }
 
   function renderUpdateStatus() {
@@ -1011,7 +1227,7 @@
     updateHud(0);
     updateEventChips();
     updateMenu();
-    if (growthOpen) renderGrowth();
+    renderOpenProgressPanels();
     scheduleSave(500);
     if (!silent) api.notify({ title: "doro 打工归来", body: summary });
     return finished;
@@ -1034,6 +1250,324 @@
     updateHud(0);
     renderGrowth();
     scheduleSave(500);
+  }
+
+  function renderCultivation() {
+    const now = Date.now();
+    const status = G.cultivationStatus(state, now);
+    el.cultPanelCoins.textContent = `${G.formatCoins(state.coins)} 金币`;
+    const root = status.root;
+    const attrs = status.attributes;
+    el.cultRealmTitle.textContent = `${root.icon} ${status.fullName}`;
+    el.cultRealm.textContent = `Lv.${state.level} ${status.fullName}`;
+    el.cultRoot.textContent = `${root.icon} ${root.name}${
+      root.name.includes(root.tierLabel) ? "" : ` · ${root.tierLabel}`
+    } · 修炼 ${root.speedLabel}`;
+    el.cultRoot.title = `${root.desc} 功法适配：${root.techniqueScope}；天才上限：${root.talentCap}`;
+    el.cultExpBar.style.width = `${Math.round(status.progress * 100)}%`;
+    el.cultExp.textContent =
+      state.level >= G.CULTIVATION.MAX_LEVEL
+        ? "已至等级上限 Lv.999"
+        : `修为 ${G.formatCoins(status.exp)} / ${G.formatCoins(status.required)} · 实力 ${(
+            attrs.insight +
+            attrs.fortune +
+            attrs.daoHeart
+          ).toFixed(0)} · 大境需求 ×${G.CULTIVATION.REALM_EXP_FACTOR} · 小境 ×${
+            G.CULTIVATION.LAYER_EXP_FACTOR
+          } · 灵石品质 60~100%`;
+
+    const attrRows = [
+      ["✦ 悟性", attrs.insight, false],
+      ["🍀 福缘", attrs.fortune, false],
+      ["🪷 道心", attrs.daoHeart, status.demonized],
+      ["⌛ 基础寿元", attrs.lifespan, false],
+      ["📖 功法领悟", status.technique.toFixed(1), false],
+      ["📚 多修功法", `${status.meditation.techniques.length}/5`, false],
+      ["☯ 根骨加成", `+${(Number(state.cultivation.attributes.rootLineage) || 0) * 15}%`, false],
+    ];
+    el.cultAttrs.innerHTML = "";
+    attrRows.forEach(([label, value, danger]) => {
+      const row = document.createElement("div");
+      row.className = `cult-attr${danger ? " danger" : ""}`;
+      const name = document.createElement("span");
+      name.textContent = label;
+      const amount = document.createElement("b");
+      amount.textContent = String(value);
+      row.append(name, amount);
+      el.cultAttrs.appendChild(row);
+    });
+
+    el.cultLife.textContent = `寿元：${status.life.age.toFixed(1)} / ${status.life.max} 年 · 剩余 ${status.life.remaining.toFixed(
+      1
+    )} 年（现实 1 天 = 修仙界 1 年）`;
+    el.cultResources.textContent = `灵石：下品 ${status.stoneCounts.low} · 中品 ${
+      status.stoneCounts.mid
+    } · 上品 ${status.stoneCounts.high} · 极品 ${status.stoneCounts.supreme} · 灵药 ${
+      status.herbs
+    } · 破境丹 ${status.breakthroughPills} · 延寿丹 ${status.lifePills} · 避雷珠 ${
+      status.thunderPearls
+    } · 悟道丹 ${status.techniquePills} · 培元丹 ${status.cultivationPills} · 静心丹 ${
+      status.heartPills
+    } · 本阶段培元丹 ${status.cultivationPillUse.count}/2 · 业力 ${status.karma}${
+      status.demonized ? " · 已入魔修分支" : ""
+    }`;
+    el.cultRegion.textContent = `${status.continent.name} · ${status.region.name} · 灵气浓度 ×${
+      status.region.qi
+    }`;
+    el.cultRegionTrait.textContent = `区域特性：${status.region.trait}${
+      status.region.damageRate
+        ? ` · 修炼时有 ${Math.round(status.region.damageRate * 100)}% 概率损失修为`
+        : ""
+    }`;
+    el.cultMeditation.textContent = `打坐吐纳：${
+      status.meditation.active ? "进行中" : "未开始"
+    } · ${G.formatCoins(status.meditation.perSecond)} 修为/秒 · ${G.formatCoins(
+      status.meditation.perHour
+    )}/小时 · 阵法 ${status.formation.name} · 多修 ${status.meditation.techniques.length}/5`;
+    el.cultSpiritualPower.textContent = `灵力：${G.formatCoins(
+      status.spiritualPower.current
+    )} / ${G.formatCoins(status.spiritualPower.max)} · 恢复 ${status.spiritualPower.perSecond.toFixed(
+      2
+    )}/秒 · 环境×${status.spiritualPower.environmentFactor.toFixed(2)} · 修为效率×${status.spiritualPower.cultivationFactor.toFixed(
+      2
+    )}`;
+    const stoneSession = status.stoneSession;
+    if (stoneSession.active) {
+      el.cultStoneSession.textContent = `灵石修炼中：${stoneSession.quantity} 颗${
+        G.CULTIVATION.STONE_TIERS[stoneSession.tier].short
+      } · 总能量 ${G.formatCoins(stoneSession.totalEnergy)} · 已吸收 ${G.formatCoins(
+        stoneSession.absorbedEnergy
+      )}（${Math.round(stoneSession.progress * 100)}%）· ${G.formatCoins(
+        stoneSession.energyPerSecond
+      )} 能量/秒 · 剩余 ${formatDuration(stoneSession.remainingMs)}`;
+    } else if (stoneSession.completedAt) {
+      el.cultStoneSession.textContent = stoneSession.noProgress
+        ? `上次批量修炼：${stoneSession.quantity} 颗全部耗损，本次毫无进展。当前无进展率 ${(
+            status.stoneChances.noProgress * 100
+          ).toFixed(1)}%`
+        : `上次批量修炼：${stoneSession.quantity} 颗 · 总能量 ${G.formatCoins(
+            stoneSession.totalEnergy
+          )} · 修为 +${G.formatCoins(stoneSession.gained)}${
+            stoneSession.levelsGained ? ` · 晋升 ${stoneSession.levelsGained} 级` : ""
+          }${stoneSession.epiphany ? " · 顿悟一次" : ""}${
+            stoneSession.damaged ? ` · 区域反噬 -${G.formatCoins(stoneSession.damaged)}` : ""
+          }`;
+    } else {
+      const previewEnergy = status.consumeQuantity * status.selectedStone.energy;
+      const previewMs = Math.ceil((previewEnergy / status.stoneRate.perSecond) * 1000);
+      el.cultStoneSession.textContent = `批量修炼：${status.consumeQuantity} 颗${
+        status.selectedStone.short
+      } = ${G.formatCoins(previewEnergy)} 总能量 · 当前 ${G.formatCoins(
+        status.stoneRate.perSecond
+      )} 能量/秒 · 预计 ${formatDuration(previewMs)} · 一次最多判定一次无进展（${(
+        status.stoneChances.noProgress * 100
+      ).toFixed(1)}%）。`;
+    }
+    const caveStatus = G.caveHeavenStatus(state, now);
+    el.cultCaveStatus.textContent = caveStatus.challenge
+      ? `洞天福地：${caveStatus.challenge.name}的${caveStatus.challenge.guardian}正在守门`
+      : caveStatus.active
+        ? `洞天福地：${caveStatus.active.name} · ${caveStatus.active.size === "large" ? "大型" : "小型"} · 灵气 ×${caveStatus.active.qiMultiplier} · ${caveStatus.active.effectName} +${Math.round(caveStatus.active.effectValue * 100)}% · 剩余 ${Math.ceil(caveStatus.active.remainingMs / 60000)} 分钟`
+        : `洞天福地：本轮 ${caveStatus.largeCount} 个大型、${10 - caveStatus.largeCount} 个小型 · ${Math.max(0, Math.ceil((caveStatus.refreshAt - now) / 60000))} 分钟后轮换`;
+    el.cultCaveChallenge.hidden = !caveStatus.challenge;
+    el.cultCaveBattleActions.hidden = !caveStatus.challenge;
+    el.cultCaveChallenge.textContent = caveStatus.challenge
+      ? `${caveStatus.challenge.name}深处传来守灵的低吼。避战：爆率 -80%；观望：爆率 -50%；战斗：爆率 +20%，可能损失修为，也可能获得大量修为。`
+      : "";
+    el.cultCaveSelect.innerHTML = "";
+    caveStatus.spots.forEach((spot) => {
+      const option = document.createElement("option");
+      option.value = spot.id;
+      option.textContent = `${spot.size === "large" ? "【大型】" : "【小型】"}${spot.name} · 灵气×${spot.qiMultiplier} · ${spot.effectName}+${Math.round(spot.effectValue * 100)}%`;
+      el.cultCaveSelect.appendChild(option);
+    });
+    if (caveStatus.active) el.cultCaveSelect.value = caveStatus.active.id;
+    el.cultCaveSelect.disabled =
+      Boolean(caveStatus.active || caveStatus.challenge || stoneSession.active) || state.level < 11;
+    el.btnEnterCave.disabled =
+      Boolean(caveStatus.active || caveStatus.challenge || stoneSession.active) || state.level < 11;
+    el.btnEnterCave.textContent = caveStatus.challenge
+      ? "先应对守灵"
+      : caveStatus.active
+        ? "福地修炼中"
+        : state.level < 11
+          ? "炼气后开放"
+          : "前往（1 下品灵石）";
+    el.btnLeaveCave.disabled = !caveStatus.active && !caveStatus.challenge;
+    el.btnMeditate.textContent = stoneSession.active
+      ? "灵石炼化中"
+      : status.meditation.active
+        ? "停止打坐"
+        : "开始打坐";
+    el.btnMeditate.disabled = stoneSession.active || (!status.meditation.active && status.expFull);
+    el.btnEndCultivation.disabled = !stoneSession.active && !status.meditation.active;
+    el.btnEndCultivation.textContent = stoneSession.active
+      ? "提前结束灵石修炼"
+      : status.meditation.active
+        ? "结束打坐"
+        : "当前未在修炼";
+    const techniqueCooldown = Math.max(0, status.techniqueReadyAt - now);
+    const knownTechniques = state.cultivation.techniquesKnown.length;
+    el.btnComprehend.disabled = state.level < 11 || techniqueCooldown > 0 || knownTechniques <= 0;
+    el.btnComprehend.textContent =
+      state.level < 11
+        ? "炼气后参悟功法"
+        : knownTechniques <= 0
+          ? "尚未习得功法"
+          : techniqueCooldown > 0
+            ? `参悟冷却 ${Math.ceil(techniqueCooldown / 1000)} 秒`
+            : `参悟功法（${status.meditation.techniques.length}/5 多修）`;
+    el.cultFormationSelect.innerHTML = "";
+    Object.values(G.CULTIVATION.FORMATIONS).forEach((formation) => {
+      const option = document.createElement("option");
+      const unlocked = state.level >= formation.minLevel;
+      option.value = formation.id;
+      option.disabled = !unlocked;
+      option.textContent = `${unlocked ? "" : "🔒 "}${formation.name} ×${formation.multiplier}${
+        unlocked ? "" : ` · Lv.${formation.minLevel}`
+      }`;
+      el.cultFormationSelect.appendChild(option);
+    });
+    el.cultFormationSelect.value = status.formation.id;
+    el.cultFormationSelect.disabled = stoneSession.active;
+    el.cultRegionSelect.disabled = stoneSession.active;
+    el.btnTravelRegion.disabled = stoneSession.active;
+
+    Array.from(el.cultStoneTier.options).forEach((option) => {
+      const tier = G.CULTIVATION.STONE_TIERS[option.value];
+      option.textContent = `${tier.short} ${status.stoneCounts[tier.id]} · 能量${tier.energy}`;
+    });
+    el.cultStoneTier.value = status.selectedStoneTier;
+    el.cultBuyQuantity.value = status.buyQuantity;
+    el.cultConsumeQuantity.value = status.consumeQuantity;
+    el.btnBuyStones.textContent = `买 ${status.buyQuantity} ${status.selectedStone.short}`;
+    el.btnCultivateOne.textContent = stoneSession.active
+      ? `修炼中 ${Math.round(stoneSession.progress * 100)}%`
+      : `一次修炼 ${status.consumeQuantity} 颗`;
+    el.btnCultivateTen.textContent = stoneSession.active ? "等待本次完成" : "一次修炼 10 颗";
+    el.btnCultivateOne.disabled = stoneSession.active;
+    el.btnCultivateTen.disabled = stoneSession.active;
+    const towerStatus = G.blackTowerStatus(state, now);
+    el.cultTowerRecord.textContent = `最高 ${towerStatus.bestFloor} 层 · ${towerStatus.wins}/${towerStatus.attempts} 胜`;
+    const towerLast = towerStatus.lastResult;
+    el.cultTowerStatus.textContent = `灵力 ${G.formatCoins(
+      towerStatus.power.current
+    )}/${G.formatCoins(towerStatus.power.max)} · ${towerStatus.selected.name} · ${towerStatus.selected.enemy} · 消耗 ${G.formatCoins(
+      towerStatus.selected.cost
+    )} 灵力 · 预计修为 +${G.formatCoins(towerStatus.selected.reward)}${
+      towerLast
+        ? ` · 上次${towerLast.outcome === "win" ? "胜" : "败"}，修为 +${G.formatCoins(towerLast.gained)}`
+        : ""
+    }`;
+    el.cultTowerFloor.innerHTML = "";
+    towerStatus.floors.forEach((floor) => {
+      const option = document.createElement("option");
+      option.value = String(floor.floor);
+      option.disabled = !floor.unlocked;
+      option.textContent = `${floor.unlocked ? "" : "🔒 "}${floor.name} · Lv.${floor.minLevel} · ${floor.enemy}`;
+      el.cultTowerFloor.appendChild(option);
+    });
+    el.cultTowerFloor.value = String(towerStatus.selected.floor);
+    el.cultTowerFloor.disabled = status.expFull && status.boundary;
+    el.btnChallengeTower.disabled =
+      (status.expFull && status.boundary) ||
+      towerStatus.power.current + 1e-9 < towerStatus.selected.cost;
+    el.btnChallengeTower.textContent =
+      status.expFull && status.boundary
+        ? "突破后可继续挑战"
+        : towerStatus.power.current + 1e-9 < towerStatus.selected.cost
+          ? `灵力不足（需 ${G.formatCoins(towerStatus.selected.cost)}）`
+          : `挑战 ${towerStatus.selected.name}`;
+
+    el.cultRegionSelect.innerHTML = "";
+    G.CULTIVATION.ORANGE_REGIONS.forEach((region) => {
+      const option = document.createElement("option");
+      const unlocked = state.level >= region.minLevel;
+      option.value = region.id;
+      option.disabled = !unlocked;
+      option.textContent = `${unlocked ? "" : "🔒 "}${region.name} · 灵气×${region.qi}${
+        unlocked ? "" : ` · Lv.${region.minLevel}`
+      }`;
+      el.cultRegionSelect.appendChild(option);
+    });
+    el.cultRegionSelect.value = status.region.id;
+
+    const pillStatus = status.boundary
+      ? G.CULTIVATION.breakthroughStatus(state.cultivation, state.level, "pill", now)
+      : null;
+    const heartStatus = status.boundary
+      ? G.CULTIVATION.breakthroughStatus(state.cultivation, state.level, "mind", now)
+      : null;
+    el.cultBreakthrough.classList.toggle("ready", Boolean(status.expFull));
+    el.cultBreakthrough.classList.toggle("danger", Boolean(status.expFull && status.demonized));
+    if (!status.boundary) {
+      el.cultBreakthrough.textContent = `距离${status.nextRealm ? status.nextRealm.name : "下一境"}大突破还有 ${Math.max(
+        0,
+        (status.nextRealm ? status.nextRealm.start : state.level) - state.level
+      )} 个小等级。小境界修为满后自动晋升。`;
+    } else if (!status.expFull) {
+      el.cultBreakthrough.textContent = `大境界圆满前需补满修为：还差 ${G.formatCoins(
+        status.required - status.exp
+      )}。`;
+    } else {
+      const missing =
+        pillStatus && pillStatus.missing.length ? `缺少：${pillStatus.missing.join("、")}` : "条件已满足";
+      const tribulation = pillStatus && pillStatus.tribulation;
+      el.cultBreakthrough.textContent = `冲击 ${status.breakthroughLevel ? G.realmLabelForLevel(status.breakthroughLevel) : "下一境"} · 丹药成功 ${Math.round(
+        (pillStatus ? pillStatus.chance : 0) * 100
+      )}% · 心魔路线 ${Math.round((heartStatus ? heartStatus.chance : 0) * 100)}% · ${missing}${
+        tribulation && tribulation.steps.length ? ` · 天劫 ${tribulation.steps.join("→")}` : ""
+      }`;
+    }
+    el.cultPermissions.textContent = `当前境界权限：${status.permissions.join("、")}${
+      status.nextRealm ? `；突破后开放：${status.nextRealm.permissions.join("、")}` : ""
+    }`;
+    const rebirthState = G.rebirthStatus(state);
+    el.cultSoul.textContent = rebirthState.immortal
+      ? `神魂：本轮将化为 Lv.${rebirthState.soul.nextLevel} ${rebirthState.soul.nextRootName}神魂，全属性 +${rebirthState.soul.nextAttributeBonus}；若今生随机为相同灵根或包含前世属性的共生多灵根，根骨等阶 +1`
+      : rebirthState.soul.level
+        ? `神魂：Lv.${rebirthState.soul.level} ${rebirthState.soul.rootName} · 全属性 +${rebirthState.soul.attributeBonus}`
+        : "神魂：渡劫飞升后，主动转世可凝结前世神魂";
+    const lifeEvent = state.cultivation.lastLifeEvent;
+    el.cultLifeEvent.textContent = lifeEvent
+      ? `${lifeEvent.type === "lifespan" ? "上一世寿元耗尽" : "上一世主动转世"}：Lv.${lifeEvent.level}，享年 ${Math.floor(
+          lifeEvent.age
+        )} 年${lifeEvent.carried ? `，尝试携带${G.CULTIVATION.ATTRIBUTE_META[lifeEvent.carried].label}` : ""}。`
+      : "这是第一世命格；寿元归零会自动投胎并重选属性。";
+
+    const coolingUntil = status.cooldown ? now + status.cooldown : 0;
+    el.btnBreakthroughPill.disabled = !pillStatus || !pillStatus.ok;
+    el.btnBreakthroughHeart.disabled = !heartStatus || !heartStatus.ok;
+    el.btnBreakthroughPill.textContent = !pillStatus
+      ? "尚未大境界圆满"
+      : !pillStatus.checks.cooldown
+        ? `冷却 ${Math.ceil(status.cooldown / 1000)} 秒`
+        : pillStatus.checks.pill
+          ? `丹药突破 ${status.breakthroughPills > 0 ? `(${status.pillName})` : "（无丹）"}`
+          : `丹药突破（缺${status.pillName}）`;
+    el.btnBreakthroughHeart.textContent = coolingUntil ? "心魔试炼冷却中" : "心魔试炼（免丹）";
+    el.btnBuyBreakthrough.textContent = `购买${status.pillName}`;
+    el.btnHerbs.disabled = state.level < 11 || state.cultivation.herbReadyAt > now;
+    el.btnMine.disabled = state.level < 11 || state.cultivation.mineReadyAt > now;
+    el.btnAlchemy.disabled = state.level < 21 || status.herbs < 3 || state.cultivation.alchemyReadyAt > now;
+    el.btnSecret.disabled =
+      state.level < 31 || status.spiritStones < 1 || state.cultivation.secretReadyAt > now;
+    el.btnUseLife.disabled = status.lifePills < 1;
+
+    const rebirth = rebirthState;
+    el.btnRebirth.disabled = !rebirth.eligible;
+    el.rebirthAttribute.disabled = rebirth.immortal;
+    el.btnRebirth.textContent = !rebirth.eligible
+      ? `Lv.${rebirth.requiredLevel} 开启转世`
+      : rebirthPending
+        ? "再次点击确认转世"
+        : rebirth.immortal
+          ? `仙人神魂转世（Lv.${rebirth.soul.nextLevel}）`
+          : `${rebirth.realmName}转世（第 ${rebirth.cycle + 1} 世）`;
+    Array.from(el.rebirthAttribute.options).forEach((option) => {
+      const choice = rebirth.choices.find((item) => item.key === option.value);
+      if (choice) option.textContent = `${choice.label} ${choice.value}`;
+    });
   }
 
   function renderGrowth() {
@@ -1103,26 +1637,6 @@
         el.growthDiary.appendChild(row);
       });
     }
-
-    const prestige = G.prestigeStatus(state);
-    el.growthPrestigeTitle.textContent = prestige.count
-      ? `${prestige.title} · ${prestige.count} 转`
-      : `Lv.${prestige.requiredLevel} 解锁`;
-    el.growthPrestige.textContent = prestige.count
-      ? `永久产出 ×${prestige.multiplier.toFixed(2)} · 累计重置等级 ${prestige.legacyLevel} · 下次转生 ×${prestige.nextMultiplier.toFixed(
-          2
-        )}${prestige.nextTitle ? ` · 下一称号「${prestige.nextTitle}」` : ""}`
-      : `达到 Lv.${prestige.requiredLevel} 后可重置等级，获得永久产出 ×${prestige.nextMultiplier.toFixed(
-          2
-        )} 和限定称号。图鉴、招式、装扮、伙伴与金币全部保留。`;
-    el.btnPrestige.disabled = !prestige.eligible;
-    el.btnPrestige.textContent = !prestige.eligible
-      ? `Lv.${prestige.requiredLevel} 解锁转生`
-      : prestigePending === "confirm"
-        ? "再次点击确认转生"
-        : prestige.count
-          ? "再次转生"
-          : "转生";
 
     const codex = G.codexSummary(state, actions);
     el.growthCodex.textContent = `${codex.seen} / ${codex.total}`;
@@ -1262,6 +1776,11 @@
     el.growthStats.textContent = state.settings.analytics
       ? `累计 ${stats.days} 天 · 今日 ${Math.round(stats.todaySeconds / 60)} 分钟 · 会话 ${stats.sessions} 次（仅存本机）`
       : "在配置中心开启「本地统计」后显示；只存本机，不上传。";
+  }
+
+  function renderOpenProgressPanels() {
+    if (cultivationOpen) renderCultivation();
+    if (growthOpen) renderGrowth();
   }
 
   function renderGacha() {
@@ -1419,7 +1938,7 @@
       scheduleSave(600);
     }
     renderMinigame();
-    if (growthOpen) renderGrowth();
+    renderOpenProgressPanels();
   }
 
   function spawnMinigameCoin() {
@@ -1458,7 +1977,7 @@
       openQuizWindow("home");
       return;
     }
-    if (!TEST_MODE && EXTERNAL_TOOLS.has(name)) {
+    if (name === "inventory" || name === "opportunity" || (!TEST_MODE && EXTERNAL_TOOLS.has(name))) {
       void openToolWindow(name, name === "shop" ? { tab: shopTab } : undefined);
       return;
     }
@@ -1466,6 +1985,7 @@
     shopOpen = name === "shop";
     scheduleOpen = name === "schedule";
     configOpen = name === "config";
+    cultivationOpen = name === "cultivation";
     growthOpen = name === "growth";
     gachaOpen = name === "gacha";
     minigameOpen = name === "minigame";
@@ -1473,11 +1993,18 @@
     closeMenu();
     el.panel.classList.remove("show");
     document.body.classList.add("lib-open");
-    api.setUiSize(libraryOpen ? libraryWindowSize : { width: 600, height: 400 });
+    api.setUiSize(
+      libraryOpen
+        ? libraryWindowSize
+        : cultivationOpen
+          ? { width: 680, height: 620 }
+          : { width: 600, height: 400 }
+    );
     el.library.classList.toggle("show", libraryOpen);
     el.shop.classList.toggle("show", shopOpen);
     el.schedule.classList.toggle("show", scheduleOpen);
     el.config.classList.toggle("show", configOpen);
+    el.cultivationPanel.classList.toggle("show", cultivationOpen);
     el.growth.classList.toggle("show", growthOpen);
     el.gacha.classList.toggle("show", gachaOpen);
     el.minigame.classList.toggle("show", minigameOpen);
@@ -1486,6 +2013,7 @@
     if (shopOpen) renderShop();
     if (scheduleOpen) renderSchedule();
     if (configOpen) renderConfig();
+    if (cultivationOpen) renderCultivation();
     if (growthOpen) renderGrowth();
     if (gachaOpen) renderGacha();
     if (minigameOpen) renderMinigame();
@@ -1501,6 +2029,7 @@
       !shopOpen &&
       !scheduleOpen &&
       !configOpen &&
+      !cultivationOpen &&
       !growthOpen &&
       !gachaOpen &&
       !minigameOpen &&
@@ -1511,6 +2040,7 @@
     shopOpen = false;
     scheduleOpen = false;
     configOpen = false;
+    cultivationOpen = false;
     growthOpen = false;
     gachaOpen = false;
     minigameOpen = false;
@@ -1521,6 +2051,7 @@
     el.shop.classList.remove("show");
     el.schedule.classList.remove("show");
     el.config.classList.remove("show");
+    el.cultivationPanel.classList.remove("show");
     el.growth.classList.remove("show");
     el.gacha.classList.remove("show");
     el.minigame.classList.remove("show");
@@ -1557,7 +2088,7 @@
     updateHud(0);
     updateMenu();
     updateEventChips();
-    if (growthOpen) renderGrowth();
+    renderOpenProgressPanels();
     if (G.isStickerHidden(state, byName.get(baseAction))) baseAction = IDLE_ACTION;
     if (
       !byName.has(currentAction) ||
@@ -1589,7 +2120,7 @@
   }
 
   // ------------------------------------------------------------- 商城
-  const SHOP_TABS = ["食物", "家具", "装扮", "典藏", "玩具", "增益", "主题"];
+  const SHOP_TABS = ["食物", "修炼", "功法", "家具", "装扮", "典藏", "玩具", "增益", "主题"];
 
   function dressShopItems() {
     return actions
@@ -1613,6 +2144,9 @@
   }
 
   function shopCatalog(tab) {
+    if (tab === "功法") {
+      return Object.values(G.CULTIVATION.TECHNIQUES);
+    }
     if (tab === "装扮") return [...fashionShopItems(), ...dressShopItems()];
     if (tab === "家具") {
       return Object.values(G.FURNITURE)
@@ -1630,6 +2164,7 @@
     }
     const map = {
       食物: ["food"],
+      修炼: ["cultivation"],
       玩具: ["toy"],
       增益: ["buff", "permanent"],
       主题: ["theme"],
@@ -1641,6 +2176,13 @@
   }
 
   function shopOwned(item) {
+    if (item.type === "cultivation") return G.cultivationItemCount(state, item);
+    if (item.type === "technique") {
+      return (
+        state.cultivation.techniqueScrolls[item.id] ||
+        (state.cultivation.techniquesKnown.includes(item.id) ? 1 : 0)
+      );
+    }
     if (item.type === "dress") {
       return state.unlocked.includes(item.action) || G.rentalActive(state, "dress", item.action) ? 1 : 0;
     }
@@ -1696,7 +2238,7 @@
   }
 
   function currentShopPrice(item) {
-    return isRentalItem(item) ? G.rentalPrice(item.price, shopDuration) : item.price;
+    return isRentalItem(item) ? G.rentalPrice(item.price, shopDuration) : G.shopItemPrice(state, item);
   }
 
   function durationText() {
@@ -1769,7 +2311,13 @@
       const name = document.createElement("div");
       name.className = "shop-name";
       name.textContent = item.name;
-      if (owned && (item.type === "food" || item.type === "toy")) {
+      if (
+        owned &&
+        (item.type === "food" ||
+          item.type === "toy" ||
+          item.type === "cultivation" ||
+          item.type === "technique")
+      ) {
         const count = document.createElement("em");
         count.textContent = `×${owned}`;
         name.appendChild(count);
@@ -1795,7 +2343,9 @@
       price.textContent =
         item.type === "champion"
           ? "榜单限定"
-          : `${G.formatCoins(priceValue)} 币${isRentalItem(item) ? ` / ${durationText()}` : ""}`;
+          : `${G.formatCoins(priceValue)} 币${
+              isRentalItem(item) ? ` / ${durationText()}` : item.type === "cultivation" ? " / 个" : ""
+            }`;
 
       const buy = document.createElement("button");
       if (item.type === "champion") {
@@ -1807,8 +2357,19 @@
         buy.disabled = equipped || (!owned && state.coins < priceValue);
         buy.addEventListener("click", () => (owned ? equipTheme(item.theme) : buyShopItem(item)));
       } else {
-        buy.textContent = permanentOwned ? "已永久" : timedOwned ? "续费" : "购买";
-        buy.disabled = permanentOwned || state.coins < priceValue;
+        const quantity = item.type === "cultivation" ? Math.max(1, state.cultivation.buyQuantity || 1) : 1;
+        const rootMismatch =
+          item.type === "technique" && !G.CULTIVATION.techniqueCompatible(state.cultivation, item.id);
+        buy.textContent = rootMismatch
+          ? "异灵根"
+          : item.type === "cultivation"
+            ? `购买 ×${quantity}`
+            : permanentOwned
+              ? "已永久"
+              : timedOwned
+                ? "续费"
+                : "购买";
+        buy.disabled = rootMismatch || permanentOwned || state.coins < priceValue * quantity;
         buy.addEventListener("click", () => buyShopItem(item));
       }
 
@@ -1827,19 +2388,54 @@
         use.addEventListener("click", () => useShopItem(item));
         row.appendChild(use);
       }
+      if (item.type === "technique" && owned > 0) {
+        const study = document.createElement("button");
+        study.className = "use";
+        study.textContent = state.cultivation.techniquesKnown.includes(item.id) ? "重温" : "研习";
+        study.addEventListener("click", () => {
+          const result = G.studyTechnique(state, item.id, Date.now());
+          if (!result.ok) {
+            toast(result.reason === "root" ? "灵根不匹配，无法研习" : "无法研习这部功法");
+            return;
+          }
+          toast(result.dialogue);
+          playSound("upgrade");
+          updateHud(0);
+          renderShop();
+          renderOpenProgressPanels();
+          scheduleSave(700);
+        });
+        row.appendChild(study);
+      }
       el.shopList.appendChild(row);
     });
   }
 
   function buyShopItem(item) {
     const duration = isRentalItem(item) ? shopDuration : undefined;
-    const result = G.purchase(state, duration ? { ...item, rentalDuration: duration } : item, Date.now());
+    const quantity = item.type === "cultivation" ? Math.max(1, state.cultivation.buyQuantity || 1) : 1;
+    const result =
+      quantity > 1
+        ? G.purchaseMany(state, duration ? { ...item, rentalDuration: duration } : item, quantity, Date.now())
+        : G.purchase(state, duration ? { ...item, rentalDuration: duration } : item, Date.now());
     if (!result.ok) {
-      toast(result.reason === "coin" ? "金币不够，再搬会儿砖吧" : "已经拥有啦");
+      toast(
+        result.reason === "coin"
+          ? "金币不够，再搬会儿砖吧"
+          : result.reason === "root"
+            ? "灵根不匹配，无法购买"
+            : "已经拥有啦"
+      );
       return;
     }
     const timed = result.rentalDuration && result.rentalDuration !== "permanent";
-    toast(timed ? `租到了：${item.name}（${result.rentalDuration} 日）` : `买到了：${item.name}`);
+    toast(
+      timed
+        ? `租到了：${item.name}（${result.rentalDuration} 日）`
+        : quantity > 1
+          ? `买到了：${item.name} ×${quantity}`
+          : `买到了：${item.name}`
+    );
     playSound("buy");
     if (item.type === "dress") {
       speak(timed ? `租到了「${item.name}」，有效期内可以去动作库换上` : `永久解锁了「${item.name}」`, 2600);
@@ -1862,6 +2458,10 @@
       speak(`${item.name} 到手，产出又提高了`, 2400);
     } else if (item.type === "permanent") {
       speak("招财猫会带来好运的", 2200);
+    } else if (item.type === "cultivation") {
+      speak(`${item.name} 已收入修炼储物袋`, 2200);
+    } else if (item.type === "technique") {
+      speak(`得到功法卷轴「${item.name}」，去背包研习吧`, 2400);
     } else {
       speak(`${item.name} 到手～`, 1800);
     }
@@ -1869,7 +2469,7 @@
     renderShop();
     syncFashionOverlay();
     updateMenu();
-    if (growthOpen) renderGrowth();
+    renderOpenProgressPanels();
     scheduleSave(800);
   }
 
@@ -2024,7 +2624,30 @@
       const elapsed = now - lastFrameAt;
       lastFrameAt = now;
       const before = state.coins;
-      G.tick(state, elapsed);
+      const tickResult = G.tick(state, elapsed);
+      if (tickResult.died) {
+        toast(tickResult.lifespan.dialogue, 5200);
+        speak("这一世的寿元走到了尽头……幸好还有来生。", 4200);
+        playSound("upgrade");
+        currentAction = null;
+        baseAction = byName.has(state.settings.baseAction) ? state.settings.baseAction : IDLE_ACTION;
+        if (!G.isUnlocked(state, byName.get(baseAction))) baseAction = IDLE_ACTION;
+        setAction(baseAction, { force: true });
+        syncCompanion();
+        syncFashionOverlay();
+        updateMenu();
+        updateEventChips();
+        renderOpenProgressPanels();
+        api.notify({ title: "寿元耗尽", body: "旧命格消散，已开启新一世" });
+      }
+      if (tickResult.meditation && tickResult.meditation.atCap) {
+        setAction(baseAction, { force: true });
+        toast("打坐结束：修为已满，请准备大境界突破");
+        speak("灵台清明，修为已经圆满了。", 2800);
+      }
+      if (tickResult.stoneCultivation && tickResult.stoneCultivation.completed) {
+        announceStoneCultivation(tickResult.stoneCultivation);
+      }
       api.syncToolState(state, toolStateRevision);
       syncCompanion();
       syncFashionOverlay();
@@ -2040,6 +2663,7 @@
       coinWindow += state.coins - before;
       const isPayday = now - lastPaydayAt > 5000;
       updateHud(isPayday);
+      if (cultivationOpen) renderCultivation();
 
       if (isPayday && coinWindow >= 1) {
         floatText(`+${G.formatCoins(coinWindow)}`, {
@@ -2127,19 +2751,89 @@
     scheduleSave(1200);
   }
 
-  function doUpgrade() {
-    const result = G.upgrade(state, Date.now());
-    if (result.ok) {
-      playSound("upgrade");
-      floatText(`Lv.${state.level}`, { x: rand(120, 200), y: rand(160, 195) });
-      speak(result.dialogue, 2400);
-      bounce("hop");
-      playReaction(pickByCategory("work", "angry").name, 2200);
+  function announceStoneCultivation(result) {
+    if (!result || !result.completed) return;
+    toast(result.dialogue, result.noProgress ? 4200 : 3400);
+    speak(result.dialogue, 3200);
+    if (result.noProgress) {
+      playSound("error");
+      bounce("hurt");
     } else {
-      speak(result.dialogue, 2200);
+      playSound("upgrade");
+      floatText(
+        result.levelsGained ? `+${result.levelsGained} 级` : `修为 +${G.formatCoins(result.gained)}`,
+        { x: rand(120, 200), y: rand(160, 195) }
+      );
+      bounce("hop");
     }
     updateHud(0);
+    updateMenu();
+    renderOpenProgressPanels();
+    scheduleSave(500);
+    api.notify({
+      title: result.noProgress ? "灵石修炼完成" : "灵石修炼有所收获",
+      body: result.dialogue,
+    });
+  }
+
+  function performCultivate(times) {
+    const requested = Math.max(1, Math.min(9999, Math.floor(Number(times) || 1)));
+    const tierId = state.cultivation.selectedStoneTier || "low";
+    const stones = state.cultivation.stones || { low: state.cultivation.spiritStones || 0 };
+    if (state.cultivation.stoneSession && state.cultivation.stoneSession.active) {
+      toast(
+        `本次修炼尚需 ${formatDuration(Math.max(0, state.cultivation.stoneSession.endsAt - Date.now()))}`
+      );
+      return;
+    }
+    const available = Math.floor(Number(stones[tierId]) || 0);
+    if (available < requested) {
+      const purchase = G.buySpiritStones(state, requested - available, tierId);
+      if (!purchase.ok) {
+        const tier = G.CULTIVATION.STONE_TIERS[tierId];
+        toast(
+          `批量修炼需要 ${requested} 颗${tier.short}，还缺 ${requested - available} 颗；购买需要 ${
+            purchase.cost || (requested - available) * tier.price
+          } 金币`
+        );
+        return;
+      }
+    }
+    const result = G.cultivate(state, requested, Date.now(), Math.random, tierId);
+    if (result.ok && result.started) {
+      toast(
+        `开始炼化 ${result.used} 颗，总能量 ${G.formatCoins(
+          result.totalEnergy
+        )}，预计 ${formatDuration(result.durationMs)}`,
+        4200
+      );
+      speak(result.dialogue, 2400);
+      playReaction(meditationActionName(), 3000);
+    } else {
+      const reasonMessages = {
+        breakthrough: "修为已圆满，请先完成大境界突破",
+        "max-level": "已经抵达最高境界",
+        stones: "没有可用的灵石",
+        session: "本次灵石修炼尚未结束",
+      };
+      toast(reasonMessages[result.reason] || result.dialogue || "当前无法修炼", 3000);
+    }
+    updateHud(0);
+    if (cultivationOpen) renderCultivation();
+    if (growthOpen) renderGrowth();
     scheduleSave(1200);
+  }
+
+  function doUpgrade() {
+    performCultivate(1);
+  }
+
+  function doUpgradeAll() {
+    performCultivate(10);
+  }
+
+  function doUpgradeTen() {
+    openSidePanel("cultivation");
   }
 
   function nextAction() {
@@ -2180,6 +2874,7 @@
       analytics: "本地统计",
       followCursor: "跟随鼠标",
       dnd: "勿扰模式",
+      autoFeed: "自动购买并进食",
       updateAutoCheck: "每日自动检查更新",
     };
     toast(`${labels[key] || key}：${state.settings[key] ? "开" : "关"}`);
@@ -2365,6 +3060,7 @@
       shopOpen ||
       scheduleOpen ||
       configOpen ||
+      cultivationOpen ||
       growthOpen ||
       gachaOpen ||
       minigameOpen ||
@@ -2436,6 +3132,7 @@
       shopOpen ||
       scheduleOpen ||
       configOpen ||
+      cultivationOpen ||
       growthOpen ||
       gachaOpen ||
       minigameOpen ||
@@ -2458,6 +3155,30 @@
     menuOpen = false;
     el.menu.classList.remove("show");
     reportHitboxes();
+  }
+
+  async function updateFromRightClick() {
+    toast("正在检查新版本…", 2400);
+    try {
+      const result = await api.updateAction(state.settings.updateFeedUrl);
+      if (result) updateStatus = result;
+      renderUpdateStatus();
+      updateMenu();
+      if (!result) {
+        toast("更新服务未初始化");
+        return;
+      }
+      if (result.state === "error") toast(result.message || "更新失败");
+      else if (result.state === "dev") toast("开发模式不检查更新，请使用打包版");
+      else if (result.state === "not-available") toast("当前已经是最新版本");
+      else if (result.state === "available") {
+        toast(`发现新版本 v${result.version || ""}，正在下载`);
+      } else if (result.state === "downloaded") toast("更新已下载，正在重启安装");
+      else if (result.state === "installing") toast("正在重启并安装新版本");
+    } catch (err) {
+      api.log("warn", "右键更新失败", err && err.message ? err.message : String(err));
+      toast("检查更新失败，请稍后重试");
+    }
   }
 
   function wireEvents() {
@@ -2487,13 +3208,14 @@
           shopOpen ||
           scheduleOpen ||
           configOpen ||
+          cultivationOpen ||
           growthOpen ||
           gachaOpen ||
           minigameOpen ||
           stickerOpen ||
           quizOpen) &&
         !event.target.closest(
-          "#library, #shop, #schedule, #config, #growth, #gacha, #minigame, #sticker, #quiz"
+          "#library, #shop, #schedule, #config, #cultivation-panel, #growth, #gacha, #minigame, #sticker, #quiz"
         ) &&
         !event.target.closest("#pet-wrap")
       ) {
@@ -2520,6 +3242,8 @@
       else if (cmd === "feed") doFeed();
       else if (cmd === "play") doPlay();
       else if (cmd === "upgrade") doUpgrade();
+      else if (cmd === "upgrade-all") doUpgradeAll();
+      else if (cmd === "upgrade-ten") doUpgradeTen();
       else if (cmd === "next-action") nextAction();
       else if (cmd === "summon") {
         api.summon().then(() => {
@@ -2528,10 +3252,14 @@
           toast("我在这儿！");
         });
       } else if (cmd === "library") openLibrary();
+      else if (cmd === "update-app") updateFromRightClick();
       else if (cmd === "shop") openSidePanel("shop");
       else if (cmd === "schedule") openSidePanel("schedule");
       else if (cmd === "config") openSidePanel("config");
+      else if (cmd === "cultivation") openSidePanel("cultivation");
       else if (cmd === "growth") openSidePanel("growth");
+      else if (cmd === "inventory") openSidePanel("inventory");
+      else if (cmd === "opportunity") openSidePanel("opportunity");
       else if (cmd === "gacha") openSidePanel("gacha");
       else if (cmd === "minigame") openSidePanel("minigame");
       else if (cmd === "quiz") openQuizWindow("home");
@@ -2560,6 +3288,7 @@
         shopOpen ||
         scheduleOpen ||
         configOpen ||
+        cultivationOpen ||
         growthOpen ||
         gachaOpen ||
         minigameOpen ||
@@ -2602,7 +3331,7 @@
       updateHud(0);
       updateEventChips();
       scheduleSave(600);
-      if (growthOpen) renderGrowth();
+      renderOpenProgressPanels();
     });
 
     el.workChip.addEventListener("click", () => openSidePanel("growth"));
@@ -2618,30 +3347,325 @@
       scheduleSave(600);
     });
 
-    el.btnPrestige.addEventListener("click", () => {
-      const status = G.prestigeStatus(state);
+    const refreshCultivation = () => {
+      updateHud(0);
+      updateMenu();
+      renderOpenProgressPanels();
+      scheduleSave(900);
+    };
+
+    el.btnCultivateOne.addEventListener("click", () =>
+      performCultivate(state.cultivation.consumeQuantity || 1)
+    );
+    el.btnCultivateTen.addEventListener("click", () => performCultivate(10));
+    const saveStoneQuantities = () => {
+      G.setStoneQuantities(state, el.cultBuyQuantity.value, el.cultConsumeQuantity.value, Date.now());
+      refreshCultivation();
+    };
+    el.cultBuyQuantity.addEventListener("change", saveStoneQuantities);
+    el.cultConsumeQuantity.addEventListener("change", saveStoneQuantities);
+    el.cultStoneTier.addEventListener("change", () => {
+      G.setSpiritStoneTier(state, el.cultStoneTier.value, Date.now());
+      refreshCultivation();
+    });
+    el.btnTravelRegion.addEventListener("click", () => {
+      const result = G.travelToRegion(state, el.cultRegionSelect.value, Date.now());
+      if (!result.ok) {
+        toast(
+          result.reason === "locked"
+            ? `该区域需要 Lv.${result.requiredLevel} 解锁`
+            : result.reason === "stone-session"
+              ? "请等待本次灵石炼化完成"
+              : "无法前往该区域"
+        );
+        return;
+      }
+      toast(`已抵达 ${result.region.name}，灵气浓度 ×${result.region.qi}`);
+      refreshCultivation();
+    });
+    el.cultFormationSelect.addEventListener("change", () => {
+      const result = G.setFormation(state, el.cultFormationSelect.value, Date.now());
+      if (!result.ok) {
+        toast(
+          result.reason === "locked"
+            ? `该阵法需要 Lv.${result.requiredLevel} 解锁`
+            : result.reason === "stone-session"
+              ? "请等待本次灵石炼化完成"
+              : "无法布置该阵法"
+        );
+        renderCultivation();
+        return;
+      }
+      toast(`已布置${result.formation.name}，修炼速度 ×${result.formation.multiplier}`);
+      refreshCultivation();
+    });
+    el.btnMeditate.addEventListener("click", () => {
+      const active = !state.cultivation.meditation.active;
+      const result = G.setMeditation(state, active, Date.now());
+      if (!result.ok) {
+        toast(
+          result.reason === "breakthrough"
+            ? "大境界圆满，请先完成突破"
+            : result.reason === "stone-session"
+              ? "请等待本次灵石炼化完成"
+              : "当前无法打坐"
+        );
+        return;
+      }
+      if (result.active) {
+        setAction(meditationActionName(), { force: true });
+        toast(`开始打坐吐纳：${G.formatCoins(result.rate.perHour)} 修为/小时`);
+        speak("静心吐纳，灵气正缓缓汇入丹田……", 2800);
+      } else {
+        setAction(baseAction, { force: true });
+        toast("已停止打坐");
+      }
+      refreshCultivation();
+    });
+    el.btnEndCultivation.addEventListener("click", () => {
+      if (state.cultivation.stoneSession.active) {
+        const result = G.endStoneCultivation(state, Date.now());
+        toast(result.dialogue || "灵石修炼已提前结束", 4200);
+        speak(result.endedEarly ? "已经收功了，吸收多少算多少吧。" : "灵石修炼已完成。", 2400);
+      } else if (state.cultivation.meditation.active) {
+        const result = G.setMeditation(state, false, Date.now());
+        toast(result.ok ? "已主动结束打坐" : "当前无法结束打坐");
+        setAction(baseAction, { force: true });
+      }
+      refreshCultivation();
+      scheduleSave(700);
+    });
+    el.btnOpportunity.addEventListener("click", () => openSidePanel("opportunity"));
+    el.btnComprehend.addEventListener("click", () => {
+      const result = G.comprehendTechnique(state, Date.now());
+      toast(result.dialogue || `参悟失败，成功率 ${Math.round((result.chance || 0) * 100)}%`);
+      if (result.ok) {
+        speak(result.epiphany ? "灵台澄明，我悟到了！" : "功法运转更顺畅了。", 2400);
+        playSound("upgrade");
+      }
+      refreshCultivation();
+    });
+    el.btnBuyStones.addEventListener("click", () => {
+      const tierId = state.cultivation.selectedStoneTier || "low";
+      const result = G.buySpiritStones(state, state.cultivation.buyQuantity || 10, tierId);
+      if (!result.ok) {
+        toast(`需要 ${result.cost} 金币`);
+        return;
+      }
+      toast(`购得 ${result.amount} 枚${G.CULTIVATION.STONE_TIERS[tierId].name}`);
+      refreshCultivation();
+    });
+
+    const doBreakthrough = (route) => {
+      const result = G.attemptBreakthrough(state, route, Date.now());
+      if (result.ok) {
+        toast(`破境成功：${result.title}（成功率 ${Math.round(result.chance * 100)}%）`, 4200);
+        speak(result.dialogue, 3400);
+        playSound("upgrade");
+        floatText(`破境 ${result.title}`, { x: 155, y: 175 });
+        bounce("hop");
+      } else {
+        toast(result.dialogue, 4200);
+        speak(result.dialogue, 3000);
+        if (result.becameDemon) api.notify({ title: "道心崩坏", body: "已踏入魔修分支" });
+      }
+      refreshCultivation();
+    };
+    el.btnBreakthroughPill.addEventListener("click", () => doBreakthrough("pill"));
+    el.btnBreakthroughHeart.addEventListener("click", () => doBreakthrough("mind"));
+
+    const buyCultivationItem = (type, successText) => {
+      const result = G.purchaseCultivationItem(state, type, Date.now());
+      if (!result.ok) {
+        toast(result.reason === "coin" ? `需要 ${result.cost} 金币` : "当前无法购买");
+        return;
+      }
+      toast(`${successText}（${result.cost} 金币）`);
+      refreshCultivation();
+    };
+    el.btnBuyBreakthrough.addEventListener("click", () =>
+      buyCultivationItem("breakthrough", "破境丹已收入储物袋")
+    );
+    el.btnBuyLife.addEventListener("click", () => buyCultivationItem("life", "延寿丹已收入储物袋"));
+    el.btnBuyThunder.addEventListener("click", () => buyCultivationItem("thunder", "避雷珠已收入储物袋"));
+    el.btnUseLife.addEventListener("click", () => {
+      const result = G.takeLifePill(state);
+      if (!result.ok) return;
+      toast(`服下延寿丹，寿元上限 +${result.gained} 年`);
+      refreshCultivation();
+    });
+    el.btnHerbs.addEventListener("click", () => {
+      const result = G.collectHerbs(state, Date.now());
+      toast(
+        result.ok ? result.dialogue : result.reason === "cooldown" ? "灵药尚未长成" : "炼气期后才能采集灵药"
+      );
+      refreshCultivation();
+    });
+    el.btnMine.addEventListener("click", () => {
+      const result = G.mineSpiritStones(state, Date.now());
+      toast(
+        result.ok ? result.dialogue : result.reason === "cooldown" ? "矿脉尚未恢复" : "炼气期后才能开采灵石"
+      );
+      refreshCultivation();
+    });
+    el.btnAlchemy.addEventListener("click", () => {
+      const result = G.craftPill(state, Date.now());
+      toast(
+        result.ok
+          ? result.dialogue
+          : result.reason === "herbs"
+            ? "炼丹需要 3 株灵药"
+            : result.reason === "cooldown"
+              ? "丹炉尚有余温"
+              : result.dialogue || "筑基期后才能炼丹"
+      );
+      refreshCultivation();
+    });
+    el.btnSecret.addEventListener("click", () => {
+      const result = G.exploreSecretRealm(state, Date.now());
+      toast(
+        result.ok
+          ? result.dialogue
+          : result.reason === "stones"
+            ? "秘境需要 1 枚灵石引路"
+            : result.reason === "cooldown"
+              ? "秘境入口尚未稳定"
+              : result.dialogue || "金丹期后才能进入中层秘境"
+      );
+      refreshCultivation();
+    });
+    el.btnEnterCave.addEventListener("click", () => {
+      const result = G.enterCaveHeaven(state, el.cultCaveSelect.value, Date.now());
+      if (!result.ok) {
+        toast(
+          result.reason === "realm"
+            ? "炼气期后才能进入洞天福地"
+            : result.reason === "stones"
+              ? "需要 1 枚下品灵石引路"
+              : result.reason === "active"
+                ? "当前洞天尚未离开"
+                : "这处福地已经关闭"
+        );
+        renderCultivation();
+        return;
+      }
+      if (result.challenge) {
+        toast(result.dialogue, 4200);
+        speak("里面有东西醒了……", 2400);
+        refreshCultivation();
+        scheduleSave(700);
+        return;
+      }
+      const loot = result.rewards.map((reward) => reward.item.name).join("、");
+      toast(`${result.dialogue}${loot ? `，获得${loot}` : ""}`, 4200);
+      speak("这处福地的灵气不太一样", 2400);
+      refreshCultivation();
+      scheduleSave(700);
+    });
+    el.btnLeaveCave.addEventListener("click", () => {
+      const result = G.leaveCaveHeaven(state, Date.now());
+      if (!result.ok) {
+        toast("当前不在洞天福地");
+        renderCultivation();
+        return;
+      }
+      toast(result.dialogue, 3600);
+      speak("这里的灵气先留给下次吧。", 2200);
+      refreshCultivation();
+      scheduleSave(700);
+    });
+    const resolveCaveBattle = (choice) => {
+      const result = G.resolveCaveChallenge(state, choice, Date.now());
+      if (!result.ok) {
+        toast("当前没有需要应对的守灵");
+        renderCultivation();
+        return;
+      }
+      const loot = result.rewards
+        .filter((reward) => reward.type !== "none")
+        .map((reward) => reward.item.name)
+        .join("、");
+      toast(`${result.dialogue}${loot ? `，获得${loot}` : "，这次没有额外收获"}`, 4800);
+      if (result.combat) {
+        speak(result.combat.outcome === "win" ? "打赢了！" : "好险，差点交代在里面", 2600);
+      }
+      refreshCultivation();
+      scheduleSave(700);
+    };
+    el.btnCaveAvoid.addEventListener("click", () => resolveCaveBattle("avoid"));
+    el.btnCaveObserve.addEventListener("click", () => resolveCaveBattle("observe"));
+    el.btnCaveFight.addEventListener("click", () => resolveCaveBattle("fight"));
+    el.cultTowerFloor.addEventListener("change", () => {
+      const result = G.setBlackTowerFloor(state, el.cultTowerFloor.value, Date.now());
+      if (!result.ok) {
+        toast(`该层需要 Lv.${result.requiredLevel} 解锁`);
+      }
+      refreshCultivation();
+    });
+    el.btnChallengeTower.addEventListener("click", () => {
+      const result = G.challengeBlackTower(
+        state,
+        Number(el.cultTowerFloor.value),
+        Date.now()
+      );
+      if (!result.ok) {
+        const messages = {
+          power: `灵力不足，需要 ${G.formatCoins(result.required)} 点`,
+          locked: `该层需要 Lv.${result.requiredLevel}`,
+          breakthrough: "当前大境界修为已满，请先完成突破",
+        };
+        toast(messages[result.reason] || "当前无法挑战黑塔");
+        refreshCultivation();
+        return;
+      }
+      toast(`${result.dialogue} · 消耗 ${G.formatCoins(result.cost)} 灵力`, 4600);
+      if (result.outcome === "win") {
+        speak("黑塔这一层，拿下了！", 2200);
+        playSound("upgrade");
+      } else {
+        speak("差一点，下次恢复灵力再来。", 2200);
+      }
+      refreshCultivation();
+      scheduleSave(700);
+    });
+
+    el.btnRebirth.addEventListener("click", () => {
+      const status = G.rebirthStatus(state);
       if (!status.eligible) return;
-      if (prestigePending !== "confirm") {
-        prestigePending = "confirm";
-        el.btnPrestige.textContent = "再次点击确认转生";
+      if (!rebirthPending) {
+        rebirthPending = "confirm";
+        el.btnRebirth.textContent = "再次点击确认转世";
         setTimeout(() => {
-          if (prestigePending !== "confirm") return;
-          prestigePending = null;
-          el.btnPrestige.textContent = state.prestige.count ? "再次转生" : "转生";
+          if (!rebirthPending) return;
+          rebirthPending = null;
+          renderCultivation();
         }, 4000);
         return;
       }
-      prestigePending = null;
-      const result = G.prestige(state, Date.now());
+      rebirthPending = null;
+      const result = G.rebirth(state, el.rebirthAttribute.value, Date.now());
       if (!result.ok) return;
-      toast(`转生成功：${result.title} · 永久产出 ×${result.multiplier.toFixed(2)}`, 4200);
-      speak(`摸鱼传奇，从现在开始！我是${result.title}`, 3600);
+      toast(
+        result.immortal
+          ? `神魂转世成功：Lv.${result.soulLevel} ${result.soulRootName}神魂 · 全属性 +${result.attributeBonus}${
+              result.rootUpgraded
+                ? ` · ${result.generatedRootName}与前世灵根共生，根骨 +1`
+                : ` · 今生${result.generatedRootName}未能共生，根骨不变`
+            }`
+          : `转世成功：第 ${result.cycle + 1} 世 · 携带属性${
+              result.mergeMode === "merge" ? "叠加" : "被覆盖"
+            }`,
+        4600
+      );
+      speak(result.dialogue, 3600);
       playSound("upgrade");
-      setAction(currentAction, { force: true });
-      updateHud(0);
-      updateMenu();
-      renderGrowth();
-      scheduleSave(500);
+      baseAction = byName.has(state.settings.baseAction) ? state.settings.baseAction : IDLE_ACTION;
+      if (!G.isUnlocked(state, byName.get(baseAction))) baseAction = IDLE_ACTION;
+      setAction(baseAction, { force: true });
+      syncCompanion();
+      syncFashionOverlay();
+      updateEventChips();
+      refreshCultivation();
     });
 
     const deposit = (amount) => {
@@ -2711,6 +3735,8 @@
     el.btnFeed.addEventListener("click", doFeed);
     el.btnPlay.addEventListener("click", doPlay);
     el.btnUpgrade.addEventListener("click", doUpgrade);
+    el.btnUpgradeAll.addEventListener("click", doUpgradeAll);
+    el.btnUpgradeTen.addEventListener("click", doUpgradeTen);
 
     el.librarySearch.addEventListener("input", () => {
       libState.query = el.librarySearch.value;
@@ -2783,6 +3809,7 @@
     }
     $("schedule-close").addEventListener("click", closeSidePanels);
     $("config-close").addEventListener("click", closeSidePanels);
+    $("cultivation-close").addEventListener("click", closeSidePanels);
     $("growth-close").addEventListener("click", closeSidePanels);
 
     $("sticker-close").addEventListener("click", closeSidePanels);
@@ -2946,6 +3973,42 @@
       scheduleSave(500);
     });
 
+    [
+      [el.cfgShortcutToggle, "toggle"],
+      [el.cfgShortcutSummon, "summon"],
+      [el.cfgShortcutChat, "chat"],
+    ].forEach(([input, action]) => {
+      if (!input) return;
+      input.addEventListener("focus", () => {
+        if (el.cfgShortcutStatus) el.cfgShortcutStatus.textContent = "请按下新的组合键";
+      });
+      input.addEventListener("keydown", async (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.key === "Escape") {
+          input.blur();
+          renderConfig();
+          return;
+        }
+        const parsed = acceleratorFromKeyboard(event);
+        if (!parsed) return;
+        if (parsed.error) {
+          if (el.cfgShortcutStatus) el.cfgShortcutStatus.textContent = parsed.error;
+          return;
+        }
+        await applyShortcuts({
+          ...(state.settings.shortcuts || {}),
+          [action]: parsed.accelerator,
+        });
+        input.blur();
+      });
+    });
+    if (el.cfgShortcutsReset) {
+      el.cfgShortcutsReset.addEventListener("click", () =>
+        applyShortcuts({ ...G.CULTIVATION.DEFAULT_SHORTCUTS })
+      );
+    }
+
     const probeQuiz = async (force) => {
       if (el.cfgQuizStatus) el.cfgQuizStatus.textContent = "正在连接题库…";
       const res = await api.quizExams({ force: Boolean(force) });
@@ -2989,11 +4052,13 @@
         scheduleSave(200);
         updateStatus = await api.updateCheck(raw || undefined);
         renderUpdateStatus();
+        updateMenu();
       });
     }
     api.onUpdateStatus((status) => {
       updateStatus = status;
       renderUpdateStatus();
+      updateMenu();
       if (configOpen) renderConfig();
     });
     el.config.querySelectorAll("[data-ambient]").forEach((button) => {
@@ -3006,12 +4071,14 @@
       const toggle = event.target.closest("[data-toggle]");
       if (toggle) toggleSetting(toggle.dataset.toggle);
     });
-    el.cfgReset.addEventListener("click", () => {
+    el.cfgReset.addEventListener("click", async () => {
       state.settings.ambientIntervalSec = 60;
       state.settings.autoWalkIntervalSec = 45;
       state.settings.scale = 1;
       state.settings.safeMode = true;
       state.settings.sound = true;
+      state.settings.autoFeed = false;
+      await applyShortcuts({ ...G.CULTIVATION.DEFAULT_SHORTCUTS });
       applyVisualScale();
       renderConfig();
       setAction(currentAction, { force: true });
@@ -3041,6 +4108,8 @@
       if (command === "feed") doFeed();
       else if (command === "play") doPlay();
       else if (command === "upgrade") doUpgrade();
+      else if (command === "upgrade-all") doUpgradeAll();
+      else if (command === "upgrade-ten") doUpgradeTen();
       else if (command === "next-action") nextAction();
       else if (command === "before-quit") {
         saveNow();
@@ -3198,10 +4267,13 @@
     api.updateStatus().then((status) => {
       updateStatus = status;
       renderUpdateStatus();
+      updateMenu();
     });
 
     wireEvents();
-    setAction(baseAction, { force: true });
+    setAction(state.cultivation.meditation.active ? meditationActionName() : baseAction, {
+      force: true,
+    });
     updateHud(0);
     updateMenu();
 
@@ -3212,6 +4284,19 @@
       floatText(`+${G.formatCoins(offline.earned)} 离线`, { x: 160, y: 175 });
     } else if (state.settings.showBubble) {
       speak(G.dialogueFor("idle", state), 2600);
+    }
+    if (offline.meditation && offline.meditation.gained >= 1) {
+      toast(`离线打坐吐纳 +${G.formatCoins(offline.meditation.gained)} 修为`, 3600);
+    }
+    if (offline.stoneCultivation && offline.stoneCultivation.completed) {
+      announceStoneCultivation(offline.stoneCultivation);
+    }
+    const startupAction =
+      state.cultivation.stoneSession.active || state.cultivation.meditation.active
+        ? meditationActionName()
+        : baseAction;
+    if (startupAction !== currentAction) {
+      setAction(startupAction, { force: true });
     }
 
     startLoops();
@@ -3226,7 +4311,7 @@
       G.maybeVisitor(state, Date.now());
       collectWork(false);
       updateEventChips();
-      if (growthOpen) renderGrowth();
+      renderOpenProgressPanels();
     }, 30000);
     checkScheduleReminders();
     setInterval(checkScheduleReminders, 20000);
@@ -3270,6 +4355,42 @@
         play: doPlay,
         pet: handlePet,
         upgrade: doUpgrade,
+        upgradeAll: doUpgradeAll,
+        upgradeTen: doUpgradeTen,
+        finishCultivation: (roll) => {
+          const session = state.cultivation.stoneSession;
+          if (!session || !session.active) return { active: false, completed: false };
+          const rng = Number.isFinite(Number(roll)) ? () => Number(roll) : Math.random;
+          const result = G.settleStoneCultivation(state, Math.max(Date.now(), session.endsAt + 1), rng);
+          announceStoneCultivation(result);
+          return result;
+        },
+        cultivationStatus: () => G.cultivationStatus(state, Date.now()),
+        setSpiritStones: (count) => {
+          const tierId = state.cultivation.selectedStoneTier || "low";
+          state.cultivation.stones[tierId] = Math.max(0, Math.round(Number(count) || 0));
+          state.cultivation.spiritStones = state.cultivation.stones.low;
+          updateHud(0);
+          renderOpenProgressPanels();
+        },
+        fillCultivation: () => {
+          state.cultivation.exp = G.CULTIVATION.expRequired(state.level);
+          updateHud(0);
+          renderOpenProgressPanels();
+        },
+        setTalent: (key, value) => {
+          if (!G.CULTIVATION.ATTRIBUTE_KEYS.includes(key)) return false;
+          state.cultivation.attributes[key] = value;
+          updateHud(0);
+          renderOpenProgressPanels();
+          return true;
+        },
+        attemptBreakthrough: (route) => {
+          const result = G.attemptBreakthrough(state, route, Date.now());
+          updateHud(0);
+          renderOpenProgressPanels();
+          return result;
+        },
         saveNow,
         setBase: (name) => {
           baseAction = name;
@@ -3282,6 +4403,7 @@
         openShop: () => openSidePanel("shop"),
         openSchedule: () => openSidePanel("schedule"),
         openConfig: () => openSidePanel("config"),
+        openCultivation: () => openSidePanel("cultivation"),
         openGrowth: () => openSidePanel("growth"),
         openGacha: () => openSidePanel("gacha"),
         openMinigame: () => openSidePanel("minigame"),
@@ -3314,10 +4436,16 @@
           return collectWork(false);
         },
         setLevel: (level) => {
-          state.level = Math.max(1, Math.round(Number(level) || 1));
+          state.level = Math.max(1, Math.min(G.CULTIVATION.MAX_LEVEL, Math.round(Number(level) || 1)));
+          state.cultivation.exp = 0;
           updateHud(0);
           updateMenu();
-          if (growthOpen) renderGrowth();
+          renderOpenProgressPanels();
+        },
+        setCoins: (coins) => {
+          state.coins = Math.max(0, Number(coins) || 0);
+          updateHud(0);
+          updateMenu();
         },
         closePanels: () => {
           closeQuizPanel();

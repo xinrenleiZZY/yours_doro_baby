@@ -15,6 +15,16 @@
       <header>
         <span>商城</span>
         <em id="shop-balance">0 金币</em>
+        <input
+          id="shop-quantity"
+          class="shop-quantity"
+          type="number"
+          min="1"
+          max="9999"
+          value="1"
+          title="购买数量"
+          hidden
+        />
         <select id="shop-duration" class="shop-duration" title="购买时长">
           <option value="1">1 日</option>
           <option value="3">3 日</option>
@@ -28,25 +38,107 @@
       <div class="shop-list" id="shop-list"></div>
     </div>
 
+    <div id="inventory" class="interactive" role="dialog" aria-label="背包">
+      <header>
+        <span>背包</span>
+        <em id="inventory-summary">0 部功法 · 0 枚丹药</em>
+        <button id="inventory-close" title="关闭">✕</button>
+      </header>
+      <div class="inventory-tabs" id="inventory-tabs">
+        <button class="active" data-inventory-tab="techniques">功法</button>
+        <button data-inventory-tab="pills">丹药</button>
+        <button data-inventory-tab="materials">材料</button>
+      </div>
+      <div class="inventory-tech-filters" id="inventory-tech-filters"></div>
+      <div id="inventory-list" class="inventory-list inventory-window-list"></div>
+      <div class="inventory-window-hint">
+        心法、法术、战技、身法、体术可各修一部，共五部；每部功法独立参悟。
+      </div>
+    </div>
+
+    <div id="opportunity" class="interactive" role="dialog" aria-label="机缘录">
+      <header>
+        <span>机缘录</span>
+        <em id="opportunity-summary">尚未遇见机缘</em>
+        <button id="opportunity-close" title="关闭">✕</button>
+      </header>
+      <div class="inventory-tabs" id="opportunity-tabs">
+        <button class="active" data-opportunity-tab="current">当前机缘</button>
+        <button data-opportunity-tab="history">机缘记录</button>
+      </div>
+      <section id="opportunity-current" class="opportunity-page">
+        <span id="opportunity-kicker" class="opportunity-kicker">天机未启</span>
+        <h2 id="opportunity-title">静候一段际遇</h2>
+        <p id="opportunity-description">橘子大陆灵气流转，每一段路都可能藏着一段新的因果。</p>
+        <p id="opportunity-requirements" class="opportunity-requirements"></p>
+        <div id="opportunity-outcome" class="opportunity-outcome" hidden></div>
+        <div id="opportunity-choices" class="opportunity-choices"></div>
+        <button id="opportunity-draw" class="opportunity-draw">寻找机缘</button>
+      </section>
+      <section id="opportunity-history" class="opportunity-page" hidden>
+        <div id="opportunity-history-list" class="opportunity-history"></div>
+      </section>
+    </div>
+
     <div id="gacha" class="interactive" role="dialog" aria-label="扭蛋机">
       <header>
-        <span>扭蛋机</span>
+        <span>doro 扭蛋机</span>
         <em id="gacha-coins"></em>
         <button id="gacha-close" title="关闭">✕</button>
       </header>
-      <div class="gacha-body">
-        <div id="gacha-machine" class="gacha-machine"><span>🎰</span></div>
-        <p class="gacha-desc">500 / 次 · 十连 4500 · 家具 / 装扮限时 1–7 天</p>
-        <div class="gacha-stats">
-          <span>已抽 <b id="gacha-pulls">0</b></span>
-          <span>距保底 <b id="gacha-pity">80</b></span>
-        </div>
-        <div class="gacha-actions">
-          <button id="gacha-pull">抽一次</button>
-          <button id="gacha-ten">十连抽 <em>4500</em></button>
-          <button id="gacha-history-open" type="button">抽奖记录 <em id="gacha-history-count">0</em></button>
-        </div>
-        <div id="gacha-result" class="gacha-result" aria-live="polite"></div>
+      <div class="gacha-body gacha-layout">
+        <aside class="gacha-pools" aria-label="奖池切换">
+          <span class="gacha-pools-label">奖池</span>
+          <button class="gacha-pool-tab active" type="button" data-gacha-pool="standard">
+            <span>常驻</span>
+            <b>常驻奖池</b>
+            <small>永久开放 · 500/抽</small>
+          </button>
+          <button class="gacha-pool-tab up" type="button" data-gacha-pool="up">
+            <span>UP</span>
+            <b>月球摸鱼台</b>
+            <small>v0.0.0.1 · 5000/抽</small>
+          </button>
+        </aside>
+
+        <section class="gacha-stage">
+          <div class="gacha-stage-head">
+            <div>
+              <b id="gacha-pool-title">常驻奖池</b>
+              <small id="gacha-pool-status">永久开放</small>
+            </div>
+            <button id="gacha-history-open" type="button">
+              查看详情 <em id="gacha-history-count">0</em>
+            </button>
+          </div>
+
+          <div id="gacha-poster" class="gacha-poster" data-pool="standard">
+            <div class="gacha-poster-copy">
+              <small id="gacha-poster-kicker">DORO 常驻收藏</small>
+              <h2 id="gacha-poster-title">摸鱼补给站</h2>
+              <p id="gacha-poster-desc">金币、家具、装扮与限时增益，天天都能来一发。</p>
+              <div id="gacha-poster-tags" class="gacha-poster-tags"></div>
+            </div>
+            <div id="gacha-machine" class="gacha-machine"><span>🎰</span></div>
+            <div class="gacha-poster-orbit"></div>
+          </div>
+
+          <div class="gacha-stats">
+            <span>本池已抽 <b id="gacha-pulls">0</b></span>
+            <span id="gacha-pity-label">距保底 <b id="gacha-pity">80</b></span>
+          </div>
+          <div class="gacha-actions">
+            <button id="gacha-pull" type="button">单抽 <em id="gacha-pull-price">500</em></button>
+            <button id="gacha-ten" type="button">十连抽 <em id="gacha-ten-price">4500</em></button>
+          </div>
+          <div id="gacha-result-popover" class="gacha-result-popover" hidden>
+            <div class="gacha-result-head">
+              <b>抽奖结果</b>
+              <button id="gacha-result-close" type="button" title="关闭结果">✕</button>
+            </div>
+            <div id="gacha-result" class="gacha-result" aria-live="polite"></div>
+          </div>
+        </section>
       </div>
       <section id="gacha-history-page" class="gacha-history-page" aria-label="抽奖记录" hidden>
         <div class="gacha-history-head">
@@ -121,6 +213,8 @@
     </div>
 
     <div id="tool-toast"></div>
+    <script src="cultivation.js"></script>
+    <script src="opportunities.js"></script>
     <script src="game.js"></script>
     <script src="tool-window.js"></script>
   </body>

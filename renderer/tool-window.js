@@ -1,4 +1,4 @@
-/* 独立商城 / 扭蛋机 / 接金币 / 表情包窗口。 */
+/* 独立商城 / 背包 / 扭蛋机 / 接金币 / 表情包窗口。 */
 (function () {
   "use strict";
 
@@ -8,16 +8,20 @@
   const tool = params.get("tool") || "";
   const ELEMENTS = {
     shop: document.getElementById("shop"),
+    inventory: document.getElementById("inventory"),
+    opportunity: document.getElementById("opportunity"),
     gacha: document.getElementById("gacha"),
     minigame: document.getElementById("minigame"),
     sticker: document.getElementById("sticker"),
   };
   const $ = (id) => document.getElementById(id);
-  const SHOP_TABS = ["食物", "家具", "装扮", "典藏", "玩具", "增益", "主题"];
+  const SHOP_TABS = ["食物", "修炼", "功法", "家具", "装扮", "典藏", "玩具", "增益", "主题"];
   const STICKER_PAGE_SIZE = 8;
   const GACHA_HISTORY_PAGE_SIZE = 10;
   const TOOL_TITLES = {
     shop: "doro 商城",
+    inventory: "doro 背包",
+    opportunity: "doro 机缘录",
     gacha: "doro 扭蛋机",
     minigame: "doro 接金币",
     sticker: "doro 动作库管理",
@@ -27,8 +31,13 @@
   let actions = [];
   let revision = 0;
   let shopTab = SHOP_TABS.includes(params.get("tab")) ? params.get("tab") : "食物";
+  const INVENTORY_TABS = ["techniques", "pills", "materials"];
+  let inventoryTab = INVENTORY_TABS.includes(params.get("tab")) ? params.get("tab") : "techniques";
+  let inventoryTechniqueCategory = "all";
+  let opportunityTab = params.get("tab") === "history" ? "history" : "current";
   let shopDuration = "1";
   let gachaHistoryPageIndex = 0;
+  let gachaPool = params.get("pool") === "up" ? "up" : "standard";
   let stickerQuery = "";
   let stickerPage = 0;
   let stickerName = null;
@@ -86,6 +95,8 @@
   function render() {
     if (!state) return;
     if (tool === "shop") renderShop();
+    else if (tool === "inventory") renderInventory();
+    else if (tool === "opportunity") renderOpportunity();
     else if (tool === "gacha") renderGacha();
     else if (tool === "minigame") renderMinigame();
     else if (tool === "sticker") renderSticker();
@@ -95,7 +106,9 @@
     if (tool === "shop") {
       $("shop-balance").textContent = `${G.formatCoins(state.coins)} 金币`;
       if (Date.now() - lastShopRenderAt >= 15000) renderShop();
-    } else if (tool === "gacha") renderGacha();
+    } else if (tool === "inventory") renderInventory();
+    else if (tool === "opportunity") renderOpportunity();
+    else if (tool === "gacha") renderGacha();
     else if (tool === "minigame") renderMinigame();
   }
 
@@ -131,6 +144,13 @@
 
   // ------------------------------------------------------------- 商城
   function shopCatalog(tab) {
+    if (tab === "功法") {
+      return Object.values(G.CULTIVATION.TECHNIQUES).map((item) => ({
+        ...item,
+        kind: "technique",
+        key: item.id,
+      }));
+    }
     if (tab === "装扮") {
       const builtIn = actions
         .filter((action) => action.category === "dress" && G.dressListed(action.name))
@@ -172,6 +192,7 @@
     }
     const typeMap = {
       食物: ["food"],
+      修炼: ["cultivation"],
       玩具: ["toy"],
       增益: ["buff", "permanent"],
       主题: ["theme"],
@@ -183,6 +204,13 @@
   }
 
   function shopOwned(item) {
+    if (item.type === "cultivation") return G.cultivationItemCount(state, item);
+    if (item.type === "technique") {
+      return (
+        state.cultivation.techniqueScrolls[item.id] ||
+        (state.cultivation.techniquesKnown.includes(item.id) ? 1 : 0)
+      );
+    }
     if (item.type === "dress") {
       return state.unlocked.includes(item.action) || G.rentalActive(state, "dress", item.action);
     }
@@ -221,7 +249,7 @@
   }
 
   function currentShopPrice(item) {
-    return isRentalItem(item) ? G.rentalPrice(item.price, shopDuration) : item.price;
+    return isRentalItem(item) ? G.rentalPrice(item.price, shopDuration) : G.shopItemPrice(state, item);
   }
 
   function durationText() {
@@ -229,6 +257,7 @@
   }
 
   function shopRef(item) {
+    if (item.kind === "technique") return { kind: "technique", id: item.id };
     if (item.kind === "catalog") {
       return {
         kind: "catalog",
@@ -247,6 +276,9 @@
     const supportsRental = shopTab === "家具" || shopTab === "装扮";
     duration.hidden = !supportsRental;
     duration.value = shopDuration;
+    const quantity = $("shop-quantity");
+    quantity.hidden = shopTab !== "修炼";
+    if (!quantity.hidden) quantity.value = state.cultivation.buyQuantity || 1;
     const tabs = $("shop-tabs");
     tabs.innerHTML = "";
     SHOP_TABS.forEach((tab) => {
@@ -280,7 +312,13 @@
       const name = document.createElement("div");
       name.className = "shop-name";
       name.textContent = item.name;
-      if (owned && (item.type === "food" || item.type === "toy")) {
+      if (
+        owned &&
+        (item.type === "food" ||
+          item.type === "toy" ||
+          item.type === "cultivation" ||
+          item.type === "technique")
+      ) {
         const count = document.createElement("em");
         count.textContent = `×${owned}`;
         name.appendChild(count);
@@ -307,7 +345,9 @@
       price.textContent =
         item.type === "champion"
           ? "榜单限定"
-          : `${G.formatCoins(priceValue)} 币${isRentalItem(item) ? ` / ${durationText()}` : ""}`;
+          : `${G.formatCoins(priceValue)} 币${
+              isRentalItem(item) ? ` / ${durationText()}` : item.type === "cultivation" ? " / 个" : ""
+            }`;
 
       const buy = document.createElement("button");
       if (item.type === "champion") {
@@ -323,9 +363,23 @@
             : runCommand({ type: "buy", item: shopRef(item) }, "buy")
         );
       } else {
-        buy.textContent = permanentOwned ? "已永久" : timedOwned ? "续费" : "购买";
-        buy.disabled = permanentOwned || state.coins < priceValue;
-        buy.addEventListener("click", () => runCommand({ type: "buy", item: shopRef(item) }, "buy"));
+        const rootMismatch =
+          item.type === "technique" && !G.CULTIVATION.techniqueCompatible(state.cultivation, item.id);
+        buy.textContent = rootMismatch ? "异灵根" : permanentOwned ? "已永久" : timedOwned ? "续费" : "购买";
+        buy.disabled =
+          rootMismatch ||
+          permanentOwned ||
+          state.coins <
+            priceValue *
+              (item.type === "cultivation" ? Math.max(1, Math.min(9999, Number(quantity.value) || 1)) : 1);
+        buy.addEventListener("click", () => {
+          const buyQuantity =
+            item.type === "cultivation" ? Math.max(1, Math.min(9999, Number(quantity.value) || 1)) : 1;
+          if (item.type === "cultivation") {
+            state.cultivation.buyQuantity = buyQuantity;
+          }
+          runCommand({ type: "buy", item: shopRef(item), quantity: buyQuantity }, "buy");
+        });
       }
 
       row.append(icon, main, price, buy);
@@ -345,8 +399,360 @@
         use.addEventListener("click", () => runCommand({ type: "use", item: shopRef(item) }, "coin"));
         row.appendChild(use);
       }
+      if (item.type === "technique" && owned > 0) {
+        const study = document.createElement("button");
+        study.className = "use";
+        study.textContent = state.cultivation.techniquesKnown.includes(item.id) ? "重温" : "研习";
+        study.addEventListener("click", () => runCommand({ type: "study-technique", id: item.id }, "buy"));
+        row.appendChild(study);
+      }
       list.appendChild(row);
     });
+  }
+
+  // ------------------------------------------------------------- 背包
+  function renderInventory() {
+    if (!state) return;
+    const tech = G.techniqueStatus(state);
+    const cultivation = state.cultivation;
+    const pillCount = cultivation.pills.breakthrough + cultivation.pills.life;
+    $("inventory-summary").textContent = `${tech.known.length} 部功法 · ${
+      tech.equippedIds.length
+    }/5 多修 · ${pillCount} 枚丹药`;
+    document.querySelectorAll("#inventory-tabs [data-inventory-tab]").forEach((button) => {
+      button.classList.toggle("active", button.dataset.inventoryTab === inventoryTab);
+    });
+
+    const list = $("inventory-list");
+    list.innerHTML = "";
+    const appendRow = ({
+      icon,
+      title,
+      count,
+      desc,
+      progress,
+      actionText,
+      actionClass,
+      onAction,
+      disabled,
+      extraActions,
+    }) => {
+      const row = document.createElement("div");
+      row.className = "inventory-item";
+      const iconNode = document.createElement("span");
+      iconNode.textContent = icon;
+      const main = document.createElement("div");
+      main.className = "inventory-item-main";
+      const titleNode = document.createElement("div");
+      titleNode.className = "inventory-item-title";
+      titleNode.textContent = count === undefined ? title : `${title} ×${count}`;
+      const descNode = document.createElement("div");
+      descNode.className = "inventory-item-desc";
+      descNode.textContent = desc || "";
+      main.append(titleNode, descNode);
+      if (progress !== undefined) {
+        const progressBar = document.createElement("div");
+        progressBar.className = "inventory-progress";
+        const fill = document.createElement("i");
+        fill.style.width = `${Math.max(0, Math.min(100, Number(progress) || 0))}%`;
+        progressBar.appendChild(fill);
+        main.appendChild(progressBar);
+      }
+      row.append(iconNode, main);
+      const actionGroup = document.createElement("div");
+      actionGroup.className = "inventory-item-actions";
+      if (actionText) {
+        const action = document.createElement("button");
+        action.textContent = actionText;
+        action.className = actionClass || "";
+        action.disabled = Boolean(disabled);
+        action.addEventListener("click", onAction);
+        actionGroup.appendChild(action);
+      }
+      (extraActions || []).forEach((item) => {
+        const action = document.createElement("button");
+        action.textContent = item.text;
+        action.className = item.className || "";
+        action.disabled = Boolean(item.disabled);
+        action.addEventListener("click", item.onAction);
+        actionGroup.appendChild(action);
+      });
+      if (actionGroup.childElementCount) row.appendChild(actionGroup);
+      list.appendChild(row);
+    };
+    const appendEmpty = (text) => {
+      const empty = document.createElement("div");
+      empty.className = "inventory-empty";
+      empty.textContent = text;
+      list.appendChild(empty);
+    };
+
+    if (inventoryTab === "techniques") {
+      const categoryFilters = $("inventory-tech-filters");
+      categoryFilters.hidden = false;
+      categoryFilters.innerHTML = "";
+      [{ id: "all", name: "全部", icon: "▦" }, ...Object.values(G.CULTIVATION.TECHNIQUE_CATEGORIES)].forEach(
+        (category) => {
+          const button = document.createElement("button");
+          button.textContent = `${category.icon} ${category.name}`;
+          button.classList.toggle("active", category.id === inventoryTechniqueCategory);
+          button.addEventListener("click", () => {
+            inventoryTechniqueCategory = category.id;
+            renderInventory();
+          });
+          categoryFilters.appendChild(button);
+        }
+      );
+      const ids = [...new Set([...tech.known, ...Object.keys(tech.scrolls)])];
+      if (!ids.length) {
+        appendEmpty("背包里还没有功法。可在商城「功法」分类购买，或在秘境探险中寻找。");
+        return;
+      }
+      let visibleTechniques = 0;
+      ids.forEach((id) => {
+        const item = G.CULTIVATION.techniqueById(id);
+        if (!item) return;
+        if (inventoryTechniqueCategory !== "all" && item.category !== inventoryTechniqueCategory) {
+          return;
+        }
+        const known = tech.known.includes(id);
+        const equipped = tech.equippedIds.includes(id);
+        const count = Number(tech.scrolls[id]) || 0;
+        const progress = Number(tech.progress[id]) || 0;
+        const rootMatched = G.CULTIVATION.techniqueCompatible(cultivation, item.id);
+        const cooldown = Math.max(0, Number(cultivation.techniqueReadyAt) - Date.now());
+        const extraActions = [];
+        if (known && count > 0) {
+          extraActions.push({
+            text: "重温",
+            onAction: () => runCommand({ type: "study-technique", id }, "buy"),
+          });
+        }
+        if (known) {
+          extraActions.push({
+            text: cooldown > 0 ? `参悟 ${Math.ceil(cooldown / 1000)}s` : "参悟",
+            disabled: cooldown > 0 || progress >= 100,
+            onAction: () => runCommand({ type: "comprehend-technique", id }, "buy"),
+          });
+        }
+        appendRow({
+          icon: item.categoryIcon || "📜",
+          title: item.name,
+          count: count || undefined,
+          desc: `${item.categoryName} · ${
+            known ? `修炼进度 ${progress.toFixed(1)}/100` : "未研习"
+          }${equipped ? " · 修炼中" : ""}${rootMatched ? "" : " · 灵根不匹配"}`,
+          progress: known ? progress : undefined,
+          actionText: equipped
+            ? "暂停"
+            : count > 0
+              ? known
+                ? "开始修炼"
+                : "研习"
+              : rootMatched
+                ? known
+                  ? "开始修炼"
+                  : "未获得"
+                : "异灵根",
+          actionClass: equipped ? "active" : "",
+          disabled: !rootMatched || (count <= 0 && !known),
+          onAction: () =>
+            equipped
+              ? runCommand({ type: "unequip-technique", id }, "buy")
+              : count > 0 && !known
+                ? runCommand({ type: "study-technique", id }, "buy")
+                : runCommand({ type: "equip-technique", id }, "buy"),
+          extraActions,
+        });
+        visibleTechniques += 1;
+      });
+      if (!visibleTechniques) appendEmpty("这个分类下还没有已获得的功法。");
+      return;
+    }
+
+    $("inventory-tech-filters").hidden = true;
+    $("inventory-tech-filters").innerHTML = "";
+
+    if (inventoryTab === "pills") {
+      const pillUse =
+        cultivation.cultivationPillUse && cultivation.cultivationPillUse.level === state.level
+          ? Number(cultivation.cultivationPillUse.count) || 0
+          : 0;
+      [
+        {
+          icon: "🧪",
+          title: "破境丹",
+          count: cultivation.pills.breakthrough,
+          desc: "用于大境界突破，突破时自动消耗。",
+        },
+        {
+          icon: "🍥",
+          title: "延寿丹",
+          count: cultivation.pills.life,
+          desc: "服用后永久增加 100 年寿元上限。",
+          actionText: "服用",
+          disabled: cultivation.pills.life <= 0,
+          onAction: () => runCommand({ type: "use-life-pill" }, "buy"),
+        },
+        {
+          icon: "📖",
+          title: "悟道丹",
+          count: cultivation.pills.technique,
+          desc: "随机提升一部已学功法的修炼进度。",
+          actionText: "服用",
+          disabled: cultivation.pills.technique <= 0 || tech.known.length <= 0,
+          onAction: () => runCommand({ type: "use-cultivation-pill", pill: "technique" }, "buy"),
+        },
+        {
+          icon: "🌀",
+          title: "培元丹",
+          count: cultivation.pills.cultivation,
+          desc: `随机获得当前小境界 8%–16% 的修为；本阶段 ${pillUse}/2 颗。`,
+          actionText: "服用",
+          disabled: cultivation.pills.cultivation <= 0 || pillUse >= 2,
+          onAction: () => runCommand({ type: "use-cultivation-pill", pill: "cultivation" }, "buy"),
+        },
+        {
+          icon: "🪷",
+          title: "静心丹",
+          count: cultivation.pills.heart,
+          desc: "恢复 2–5 点道心，可用于补齐突破门槛。",
+          actionText: "服用",
+          disabled: cultivation.pills.heart <= 0,
+          onAction: () => runCommand({ type: "use-cultivation-pill", pill: "heart" }, "buy"),
+        },
+        {
+          icon: "⚡",
+          title: "避雷珠",
+          count: cultivation.thunderPearls,
+          desc: "渡劫突破时自动消耗，降低雷劫强度。",
+        },
+      ].forEach(appendRow);
+      return;
+    }
+
+    Object.values(G.CULTIVATION.STONE_TIERS).forEach((tier) => {
+      appendRow({
+        icon: tier.id === "supreme" ? "💎" : "💠",
+        title: tier.name,
+        count: cultivation.stones[tier.id] || 0,
+        desc: `固定能量上限 ${tier.energy}，修炼时最多全吸收。`,
+      });
+    });
+    appendRow({
+      icon: "🌿",
+      title: "灵药",
+      count: cultivation.herbs || 0,
+      desc: "炼制丹药需要 3 株灵药。",
+    });
+  }
+
+  // ------------------------------------------------------------- 机缘录
+  function renderOpportunity() {
+    if (!state) return;
+    const now = Date.now();
+    const status = G.opportunityStatus(state, now);
+    $("opportunity-summary").textContent = `${status.draws} 次寻缘 · ${status.history.length} 条记录`;
+    document
+      .querySelectorAll("#opportunity-tabs [data-opportunity-tab]")
+      .forEach((button) =>
+        button.classList.toggle("active", button.dataset.opportunityTab === opportunityTab)
+      );
+    $("opportunity-current").hidden = opportunityTab !== "current";
+    $("opportunity-history").hidden = opportunityTab !== "history";
+    if (opportunityTab === "history") {
+      const list = $("opportunity-history-list");
+      list.innerHTML = "";
+      if (!status.history.length) {
+        const empty = document.createElement("div");
+        empty.className = "inventory-empty";
+        empty.textContent = "还没有机缘记录。去橘子大陆走走吧。";
+        list.appendChild(empty);
+      }
+      status.history.forEach((entry) => {
+        const item = document.createElement("article");
+        item.className = "opportunity-history-item";
+        const head = document.createElement("header");
+        const title = document.createElement("b");
+        title.textContent = entry.eventTitle;
+        const outcome = document.createElement("em");
+        outcome.textContent =
+          entry.outcome === "success" ? "顺遂" : entry.outcome === "failure" ? "失手" : "已抉择";
+        head.append(title, outcome);
+        const text = document.createElement("p");
+        text.textContent = entry.text;
+        item.append(head, text);
+        if (entry.effectsText) {
+          const effects = document.createElement("p");
+          effects.textContent = entry.effectsText;
+          item.appendChild(effects);
+        }
+        list.appendChild(item);
+      });
+      return;
+    }
+
+    const event = status.active;
+    const kicker = $("opportunity-kicker");
+    const title = $("opportunity-title");
+    const description = $("opportunity-description");
+    const requirements = $("opportunity-requirements");
+    const choices = $("opportunity-choices");
+    const outcome = $("opportunity-outcome");
+    const draw = $("opportunity-draw");
+    choices.innerHTML = "";
+    outcome.hidden = true;
+    if (event) {
+      kicker.textContent = `${G.OPPORTUNITIES.RARITY_LABELS[event.rarity] || "寻常"} · ${event.category}`;
+      title.textContent = event.title;
+      description.textContent = event.description;
+      requirements.textContent = status.conditionsText.length
+        ? `触发条件：${status.conditionsText.join("、")}`
+        : "";
+      status.choices.forEach((choice) => {
+        const button = document.createElement("button");
+        button.className = "opportunity-choice";
+        button.disabled = !choice.available;
+        const text = document.createElement("b");
+        text.textContent = choice.text;
+        const hint = document.createElement("small");
+        hint.textContent = choice.available
+          ? choice.hint || choice.outcomes
+            ? choice.hint || "此事成败受福缘影响"
+            : "做出选择"
+          : `需要：${choice.missing.join("、")}`;
+        button.append(text, hint);
+        button.addEventListener("click", () => runCommand({ type: "choose", choiceId: choice.id }, "buy"));
+        choices.appendChild(button);
+      });
+      draw.hidden = true;
+      return;
+    }
+
+    kicker.textContent = "天机未启";
+    title.textContent = "静候一段际遇";
+    description.textContent = "橘子大陆灵气流转，每一段路都可能藏着新的因果。";
+    requirements.textContent = "";
+    if (status.lastOutcome) {
+      outcome.hidden = false;
+      outcome.innerHTML = "";
+      const label = document.createElement("b");
+      label.textContent =
+        status.lastOutcome.outcome === "success"
+          ? "机缘顺遂"
+          : status.lastOutcome.outcome === "failure"
+            ? "此事未成"
+            : "机缘已结";
+      const text = document.createElement("span");
+      text.textContent = `${status.lastOutcome.text}${
+        status.lastOutcome.effectsText ? `（${status.lastOutcome.effectsText}）` : ""
+      }`;
+      outcome.append(label, text);
+    }
+    const cooldownMinutes = Math.ceil(status.cooldownMs / 60000);
+    draw.hidden = false;
+    draw.disabled = status.cooldownMs > 0;
+    draw.textContent = status.cooldownMs > 0 ? `天机沉寂 · 还需 ${cooldownMinutes} 分钟` : "寻找机缘";
   }
 
   // ------------------------------------------------------------- 扭蛋
@@ -365,7 +771,9 @@
   function renderGachaHistory() {
     const output = $("gacha-history-list");
     output.innerHTML = "";
-    const history = (state.gacha && state.gacha.history) || [];
+    const history = ((state.gacha && state.gacha.history) || []).filter(
+      (entry) => (entry.pool === "up" ? "up" : "standard") === gachaPool
+    );
     const pageCount = Math.max(1, Math.ceil(history.length / GACHA_HISTORY_PAGE_SIZE));
     gachaHistoryPageIndex = Math.max(0, Math.min(pageCount - 1, gachaHistoryPageIndex));
     const start = gachaHistoryPageIndex * GACHA_HISTORY_PAGE_SIZE;
@@ -409,31 +817,84 @@
   }
 
   function showGachaHistoryPage(visible) {
+    if (visible) $("gacha-result-popover").hidden = true;
     $("gacha").querySelector(".gacha-body").hidden = visible;
     $("gacha-history-page").hidden = !visible;
   }
 
+  function closeGachaResults() {
+    $("gacha-result-popover").hidden = true;
+  }
+
   function renderGacha() {
+    const pool = G.GACHA_POOLS[gachaPool] || G.GACHA_POOLS.standard;
+    const upActive = gachaPool !== "up" || G.gachaUpActive(Date.now());
     $("gacha-coins").textContent = `${G.formatCoins(state.coins)} 金币`;
-    $("gacha-pull").disabled = state.coins < G.GACHA_PRICE;
-    $("gacha-ten").disabled = state.coins < G.GACHA_TEN_PRICE;
-    const pulls = state.gacha.pulls || 0;
+    document.querySelectorAll("[data-gacha-pool]").forEach((button) => {
+      button.classList.toggle("active", button.dataset.gachaPool === gachaPool);
+    });
+    const title = gachaPool === "up" ? "月球摸鱼台" : "摸鱼补给站";
+    const description =
+      gachaPool === "up"
+        ? "本次 UP 限时开放，300 抽必得典藏道具，重复获得自动折算金币。"
+        : "金币、家具、装扮与限时增益，常驻收藏随时开抽。";
+    const tags =
+      gachaPool === "up"
+        ? [G.GACHA_UP_VERSION, "10.25–12.20", "月球摸鱼台 0.0025%", "300 抽必出"]
+        : ["金币", "家具", "限时增益", "装扮"];
+    $("gacha-pool-title").textContent = pool.label;
+    $("gacha-pool-status").textContent =
+      gachaPool === "up"
+        ? `${G.GACHA_UP_VERSION} · 10.25–12.20 · ${upActive ? "进行中" : "已结束"}`
+        : pool.subtitle;
+    const poster = $("gacha-poster");
+    poster.dataset.pool = gachaPool;
+    $("gacha-poster-kicker").textContent =
+      gachaPool === "up" ? `DORO UP · ${G.GACHA_UP_VERSION}` : "DORO 常驻收藏";
+    $("gacha-poster-title").textContent = title;
+    $("gacha-poster-desc").textContent = description;
+    const tagOutput = $("gacha-poster-tags");
+    tagOutput.innerHTML = "";
+    tags.forEach((text) => {
+      const tag = document.createElement("span");
+      tag.textContent = text;
+      tagOutput.appendChild(tag);
+    });
+    $("gacha-machine").querySelector("span").textContent = gachaPool === "up" ? "🌕" : "🎰";
+    $("gacha-pull-price").textContent = Number(pool.price).toLocaleString("zh-CN");
+    $("gacha-ten-price").textContent = Number(pool.tenPrice).toLocaleString("zh-CN");
+    $("gacha-pull").disabled = !upActive || state.coins < pool.price;
+    $("gacha-ten").disabled = !upActive || state.coins < pool.tenPrice;
+    const pulls = gachaPool === "up" ? state.gacha.upPulls || 0 : state.gacha.pulls || 0;
+    const pity =
+      gachaPool === "up"
+        ? Math.max(0, G.GACHA_UP_PITY_PULLS - (state.gacha.upPity || 0))
+        : G.GACHA_PITY_PULLS - (pulls % G.GACHA_PITY_PULLS);
     $("gacha-pulls").textContent = String(pulls);
-    $("gacha-pity").textContent = String(G.GACHA_PITY_PULLS - (pulls % G.GACHA_PITY_PULLS));
+    $("gacha-pity-label").firstChild.textContent = gachaPool === "up" ? "距必出 " : "距保底 ";
+    $("gacha-pity").textContent = String(pity);
+    $("gacha-history-count").textContent = String(
+      ((state.gacha && state.gacha.history) || []).filter(
+        (entry) => (entry.pool === "up" ? "up" : "standard") === gachaPool
+      ).length
+    );
     renderGachaHistory();
   }
 
   function showGachaResults(results) {
     const output = $("gacha-result");
     const machine = $("gacha-machine");
+    const popover = $("gacha-result-popover");
     output.innerHTML = "";
+    output.dataset.count = String(results.length);
     results.forEach((result) => {
       const row = document.createElement("div");
       row.className = "gacha-reward";
       row.dataset.tier = result.tier || "common";
-      row.textContent = result.label;
+      row.textContent = result.type === "coins" ? `🪙 ${result.label}` : result.label;
       output.appendChild(row);
     });
+    popover.hidden = false;
     const order = { common: 0, rare: 1, jackpot: 2, super: 3, legendary: 4, mythic: 5 };
     const best = results.reduce(
       (top, result) => ((order[result.tier] || 0) > (order[top.tier] || 0) ? result : top),
@@ -610,13 +1071,42 @@
       return;
     }
 
+    if (tool === "inventory") {
+      $("inventory-tabs").addEventListener("click", (event) => {
+        const button = event.target.closest("[data-inventory-tab]");
+        if (!button) return;
+        inventoryTab = button.dataset.inventoryTab;
+        renderInventory();
+      });
+      return;
+    }
+
+    if (tool === "opportunity") {
+      $("opportunity-tabs").addEventListener("click", (event) => {
+        const button = event.target.closest("[data-opportunity-tab]");
+        if (!button) return;
+        opportunityTab = button.dataset.opportunityTab;
+        renderOpportunity();
+      });
+      $("opportunity-draw").addEventListener("click", () => runCommand({ type: "draw" }, "buy"));
+      return;
+    }
+
     if (tool === "gacha") {
+      document.querySelectorAll("[data-gacha-pool]").forEach((button) => {
+        button.addEventListener("click", () => {
+          gachaPool = button.dataset.gachaPool === "up" ? "up" : "standard";
+          gachaHistoryPageIndex = 0;
+          closeGachaResults();
+          renderGacha();
+        });
+      });
       $("gacha-pull").addEventListener("click", async () => {
-        const response = await runCommand({ type: "pull" }, "buy");
+        const response = await runCommand({ type: "pull", pool: gachaPool }, "buy");
         if (response && response.result) showGachaResults([response.result]);
       });
       $("gacha-ten").addEventListener("click", async () => {
-        const response = await runCommand({ type: "pull-ten" }, "buy");
+        const response = await runCommand({ type: "pull-ten", pool: gachaPool }, "buy");
         if (response && response.result && response.result.results) {
           showGachaResults(response.result.results);
         }
@@ -626,6 +1116,7 @@
         renderGachaHistory();
         showGachaHistoryPage(true);
       });
+      $("gacha-result-close").addEventListener("click", closeGachaResults);
       $("gacha-history-back").addEventListener("click", () => showGachaHistoryPage(false));
       $("gacha-history-prev").addEventListener("click", () => {
         gachaHistoryPageIndex -= 1;
@@ -636,7 +1127,7 @@
         renderGachaHistory();
       });
       $("gacha-history-clear").addEventListener("click", async () => {
-        await runCommand({ type: "clear-history" });
+        await runCommand({ type: "clear-history", pool: gachaPool });
         gachaHistoryPageIndex = 0;
         renderGachaHistory();
       });

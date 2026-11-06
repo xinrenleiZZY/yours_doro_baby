@@ -43,7 +43,7 @@
 
     <div id="panel" class="interactive">
       <header>
-        <span id="panel-title">doro 的小账本</span>
+        <span id="panel-title">doro 的修仙账本</span>
         <button id="panel-close" title="收起">✕</button>
       </header>
       <div class="row big">
@@ -75,7 +75,11 @@
       <div class="actions">
         <button id="btn-feed">喂饭 <em>20</em></button>
         <button id="btn-play">陪玩 <em>30</em></button>
-        <button id="btn-upgrade" class="primary">升级 <em id="upgrade-cost">120</em></button>
+        <button id="btn-upgrade" class="primary">灵石修炼 <em id="upgrade-cost">50</em></button>
+      </div>
+      <div class="actions upgrade-actions">
+        <button id="btn-upgrade-all" title="一次使用十颗灵石进行批量修炼">修炼十颗</button>
+        <button id="btn-upgrade-ten" title="查看属性、资源、突破条件与境界权限">境界面板</button>
       </div>
       <p class="hint" id="panel-hint">右键 doro 可以打开菜单</p>
     </div>
@@ -85,7 +89,9 @@
         <button data-cmd="pet">摸摸头</button>
         <button data-cmd="feed">喂饭 <em>20</em></button>
         <button data-cmd="play">陪玩 <em>30</em></button>
-        <button data-cmd="upgrade">搬砖升级 <em id="menu-upgrade-cost">120</em></button>
+        <button data-cmd="upgrade" data-upgrade-command>灵石修炼 <em id="menu-upgrade-cost">50</em></button>
+        <button data-cmd="upgrade-all">修炼十颗</button>
+        <button data-cmd="cultivation">查看境界与突破</button>
       </div>
       <div class="menu-title">陪伴</div>
       <div class="menu-group">
@@ -105,6 +111,8 @@
         <button data-cmd="shop"><span>商城</span><em>金币消费</em></button>
         <button data-cmd="schedule"><span>日程表</span><em id="menu-schedule-count"></em></button>
         <button data-cmd="growth"><span>任务与成就</span><em id="menu-task-count"></em></button>
+        <button data-cmd="inventory"><span>背包</span><em>独立窗口</em></button>
+        <button data-cmd="opportunity"><span>机缘录</span><em>奇遇与抉择</em></button>
         <button data-cmd="gacha"><span>扭蛋机</span><em>500 / 次</em></button>
         <button data-cmd="minigame"><span>接金币</span><em>小游戏</em></button>
       </div>
@@ -115,6 +123,9 @@
       </div>
       <div class="menu-title">设置</div>
       <div class="menu-group">
+        <button data-cmd="update-app" id="menu-update-app">
+          <span>更新新版本</span><em id="menu-update-status">检查更新</em>
+        </button>
         <button data-cmd="config"><span>配置中心</span><em>频率 / 大小</em></button>
         <button data-toggle="alwaysOnTop"><span>窗口置顶</span><i class="switch"></i></button>
         <button data-toggle="clickThrough"><span>点击穿透</span><i class="switch"></i></button>
@@ -183,6 +194,23 @@
           <button data-toggle="analytics"><span>本地统计</span><i class="switch"></i></button>
           <button data-toggle="followCursor"><span>跟随鼠标</span><i class="switch"></i></button>
           <button data-toggle="dnd"><span>勿扰模式</span><i class="switch"></i></button>
+          <button data-toggle="autoFeed"><span>自动购买并进食</span><i class="switch"></i></button>
+        </div>
+        <div class="cfg-section">
+          <div class="cfg-label"><span>全局快捷键</span><b id="cfg-shortcut-status">点击输入框后按键设置</b></div>
+          <label class="shortcut-row"
+            >显示 / 隐藏 <input id="cfg-shortcut-toggle" class="cfg-input" readonly />
+          </label>
+          <label class="shortcut-row"
+            >召唤到鼠标 <input id="cfg-shortcut-summon" class="cfg-input" readonly />
+          </label>
+          <label class="shortcut-row"
+            >打开聊天 <input id="cfg-shortcut-chat" class="cfg-input" readonly />
+          </label>
+          <div class="cfg-presets">
+            <button id="cfg-shortcuts-reset">恢复默认快捷键</button>
+          </div>
+          <p class="cfg-hint">点击输入框，再按下新的组合键。需包含 Ctrl/Alt/Shift 或使用 F1–F24。</p>
         </div>
         <div class="cfg-section">
           <div class="cfg-label"><span>题库服务地址</span><b id="cfg-quiz-status">未连接</b></div>
@@ -225,6 +253,113 @@
       <div id="quiz-body"></div>
     </div>
 
+    <div id="cultivation-panel" class="interactive" role="dialog" aria-label="境界与突破">
+      <header>
+        <span>境界与突破</span>
+        <em id="cult-panel-coins">0 金币</em>
+        <button id="cultivation-close" title="收起">✕</button>
+      </header>
+      <div class="growth-scroll">
+        <div class="cfg-label"><span>修仙境界与资质</span><b id="cult-realm-title">凡人初期</b></div>
+        <div class="cultivation-card">
+          <div class="cult-realm-line">
+            <strong id="cult-realm">Lv.1 凡人初期</strong>
+            <span id="cult-root">杂灵根</span>
+          </div>
+          <div class="growth-bar"><i id="cult-exp-bar"></i></div>
+          <div class="cult-meta" id="cult-exp">修为 0 / 80</div>
+          <div class="cult-attrs" id="cult-attrs"></div>
+          <div class="cult-meta" id="cult-life">寿元 20 / 90 年</div>
+          <div class="cult-meta" id="cult-resources">灵石 0 · 灵药 0 · 破境丹 0</div>
+          <div class="cult-meta" id="cult-region">橘子大陆 · 青橘原 · 灵气 ×1</div>
+          <div class="cult-meta" id="cult-region-trait"></div>
+          <div class="cult-meta" id="cult-meditation">打坐吐纳：未开始</div>
+          <div class="cult-meta" id="cult-spiritual-power">灵力：100 / 100</div>
+          <div class="growth-actions">
+            <button id="btn-end-cultivation">结束当前修炼</button>
+          </div>
+          <div class="cult-meta" id="cult-cave-status">洞天福地：每两小时轮换</div>
+          <div class="growth-actions">
+            <select id="cult-stone-tier" title="修炼使用的灵石">
+              <option value="low">下品 0</option>
+              <option value="mid">中品 0</option>
+              <option value="high">上品 0</option>
+              <option value="supreme">极品 0</option>
+            </select>
+            <select id="cult-region-select" title="橘子大陆区域"></select>
+            <button id="btn-travel-region">前往区域</button>
+          </div>
+          <div class="cult-quantities">
+            <label
+              >购买数量 <input id="cult-buy-quantity" type="number" min="1" max="9999" value="10"
+            /></label>
+            <label
+              >修炼数量 <input id="cult-consume-quantity" type="number" min="1" max="9999" value="1"
+            /></label>
+          </div>
+          <div class="cult-meta" id="cult-stone-session"></div>
+          <div class="growth-actions">
+            <select id="cult-formation-select" title="当前修炼阵法"></select>
+            <button id="btn-meditate">开始打坐</button>
+            <button id="btn-comprehend">参悟功法</button>
+          </div>
+          <div class="growth-actions">
+            <button id="btn-cultivate-one">开始批量修炼</button>
+            <button id="btn-cultivate-ten">一次修炼 10 颗</button>
+            <button id="btn-buy-stones">买 10 下品</button>
+          </div>
+          <div class="cult-breakthrough" id="cult-breakthrough"></div>
+          <div class="growth-actions">
+            <button id="btn-breakthrough-pill">丹药突破</button>
+            <button id="btn-breakthrough-heart">心魔试炼</button>
+            <button id="btn-buy-breakthrough">购买破境丹</button>
+          </div>
+          <div class="growth-actions">
+            <button id="btn-herbs">采集灵药</button>
+            <button id="btn-mine">开采灵石</button>
+            <button id="btn-alchemy">炼制丹药</button>
+            <button id="btn-secret">秘境探索</button>
+            <button id="btn-opportunity">机缘录</button>
+          </div>
+          <div class="growth-actions">
+            <button id="btn-buy-life">购买延寿丹</button>
+            <button id="btn-use-life">服用延寿丹</button>
+            <button id="btn-buy-thunder">购买避雷珠</button>
+          </div>
+          <div class="growth-actions">
+            <select id="cult-cave-select" title="选择洞天福地"></select>
+            <button id="btn-enter-cave">前往洞天福地</button>
+            <button id="btn-leave-cave">离开洞天</button>
+          </div>
+          <div id="cult-cave-challenge" class="cult-breakthrough" hidden></div>
+          <div id="cult-cave-battle-actions" class="growth-actions" hidden>
+            <button id="btn-cave-avoid">避战</button>
+            <button id="btn-cave-observe">观望</button>
+            <button id="btn-cave-fight">战斗</button>
+          </div>
+          <div class="cfg-label"><span>黑塔挑战</span><b id="cult-tower-record">最高 0 层</b></div>
+          <div class="cult-meta" id="cult-tower-status"></div>
+          <div class="growth-actions">
+            <select id="cult-tower-floor" title="选择黑塔层数"></select>
+            <button id="btn-challenge-tower">挑战黑塔</button>
+          </div>
+          <div class="cult-meta" id="cult-permissions"></div>
+          <div class="cult-meta" id="cult-soul"></div>
+          <div class="cult-meta" id="cult-life-event"></div>
+          <div class="growth-actions">
+            <select id="rebirth-attribute" title="转世时尝试携带的属性">
+              <option value="root">灵根</option>
+              <option value="insight">悟性</option>
+              <option value="fortune">福缘</option>
+              <option value="daoHeart">道心</option>
+              <option value="lifespan">寿元</option>
+            </select>
+            <button id="btn-rebirth">Lv.41 开启转世</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div id="growth" class="interactive" role="dialog" aria-label="任务与成就">
       <header>
         <span>任务与成就</span>
@@ -240,11 +375,6 @@
         <div id="growth-intimacy" class="growth-stats"></div>
         <div class="cfg-label"><span>桌面日记</span><b id="growth-diary-title"></b></div>
         <div id="growth-diary" class="diary-list"></div>
-        <div class="cfg-label"><span>转生 / 摸鱼传奇</span><b id="growth-prestige-title"></b></div>
-        <div id="growth-prestige" class="growth-stats"></div>
-        <div class="growth-actions">
-          <button id="btn-prestige">Lv.50 解锁转生</button>
-        </div>
         <div class="cfg-label"><span>动作图鉴</span><b id="growth-codex"></b></div>
         <div id="growth-codex-list" class="growth-stats"></div>
         <div class="cfg-label"><span>签到 / 存钱罐</span><b id="growth-checkin-info"></b></div>
@@ -372,6 +502,8 @@
 
     <div id="toast"></div>
 
+    <script src="cultivation.js"></script>
+    <script src="opportunities.js"></script>
     <script src="game.js"></script>
     <script src="quiz.js"></script>
     <script src="app.js"></script>

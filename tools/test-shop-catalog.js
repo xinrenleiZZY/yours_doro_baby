@@ -58,6 +58,29 @@ async function main() {
           desc: "云端服装",
           listed: true,
         },
+        cloud_buff: {
+          id: "cloud_buff",
+          name: "云端增益",
+          type: "buff",
+          price: 800,
+          buff: "income_cloud_test",
+          minutes: 12,
+          incomeMultiplier: 2.2,
+          icon: "✨",
+          desc: "云端测试增益",
+          listed: true,
+        },
+        cloud_stone: {
+          id: "cloud_stone",
+          name: "云端灵石",
+          type: "cultivation",
+          cultivationType: "stone",
+          stoneTier: "high",
+          price: 2000,
+          icon: "💠",
+          desc: "云端测试修炼道具",
+          listed: true,
+        },
         bad_champion: {
           id: "bad_champion",
           name: "不应由目录注入",
@@ -81,6 +104,8 @@ async function main() {
         clean.furniture.cloud_chair.score === 123 &&
         clean.items.cloud_luxury.price === 9999 &&
         clean.items.cloud_fashion.overlay === "fashion/starlight_hat.svg" &&
+        clean.items.cloud_buff.incomeMultiplier === 2.2 &&
+        clean.items.cloud_stone.stoneTier === "high" &&
         clean.dresses.overrides.dress_test.score === 88
     );
     check(
@@ -100,6 +125,9 @@ async function main() {
       "云端目录会应用到游戏商品表并写入本地缓存",
       G.FURNITURE.cloud_chair &&
         G.SHOP_ITEMS.cloud_luxury &&
+        G.SHOP_ITEMS.cloud_buff.minutes === 12 &&
+        G.SHOP_ITEMS.cloud_buff.incomeMultiplier === 2.2 &&
+        G.SHOP_ITEMS.cloud_stone.cultivationType === "stone" &&
         G.dressPrice(0, "dress_test") === 500 &&
         G.dressScore(0, "dress_test") === 88 &&
         Boolean(readCatalogFile(cacheFile))

@@ -17,6 +17,9 @@
   let toastTimer = null;
   let countdownTimer = null;
   let chatPollTimer = null;
+  let searchUsers = [];
+  let searchQuery = "";
+  let searchSequence = 0;
 
   function toast(text) {
     const node = $("toast");
@@ -77,9 +80,12 @@
     const controls = document.createElement("div");
     actions.forEach((action) => {
       const button = document.createElement("button");
+      button.type = "button";
       button.textContent = action.label;
       if (action.secondary) button.className = "secondary";
-      button.addEventListener("click", action.run);
+      if (action.disabled) button.disabled = true;
+      if (action.title) button.title = action.title;
+      button.addEventListener("click", () => action.run(button));
       controls.appendChild(button);
     });
     row.appendChild(controls);
@@ -95,7 +101,7 @@
 
   function scoreText(board, score) {
     return board === "level"
-      ? `累计 Lv.${Math.round(score || 0)}`
+      ? `境界 Lv.${Math.round(score || 0)}`
       : `${Number(score || 0).toLocaleString("zh-CN")} 分`;
   }
 
@@ -137,7 +143,7 @@
     const board = leaderboard.boards && leaderboard.boards[activeBoard];
     const definition = leaderboard.definitions && leaderboard.definitions[activeBoard];
     const titles = {
-      level: ["等级榜", "累计等级，转生前的等级不清零"],
+      level: ["等级榜", "当前境界等级，转世后从新一世重算"],
       furniture: ["家具榜", "仅有效租赁与永久家具计分"],
       fashion: ["时装榜", "仅有效租赁与永久时装计分"],
       collection: ["典藏榜", "永久典藏与榜一限定典藏计分"],
@@ -504,17 +510,36 @@
   }
 
   async function runGroupAction(promise, successText) {
-    const result = await promise;
+    let result;
+    try {
+      result = await promise;
+    } catch (err) {
+      toast("操作失败，请稍后重试");
+      api.log("warn", "群组操作失败", err && (err.stack || String(err)));
+      return null;
+    }
     if (!result || !result.ok) {
       toast(errorText(result && result.error));
       return null;
     }
     if (successText) toast(successText);
+    if (result.group) {
+      const index = groups.findIndex((group) => group.id === result.group.id);
+      if (index >= 0) groups[index] = result.group;
+      else groups.push(result.group);
+      renderGroups();
+    }
     await refreshConversations(false);
     return result;
   }
 
   function renderGroups() {
+    const inviteSelections = new Map(
+      Array.from(document.querySelectorAll("#group-list [data-group-invite]")).map((select) => [
+        select.dataset.groupInvite,
+        select.value,
+      ])
+    );
     renderGroupFriendPicker();
     $("group-count").textContent = groups.length ? `${groups.length} 个群组` : "暂无群组";
     const list = $("group-list");
@@ -526,6 +551,7 @@
     groups.forEach((group) => {
       const card = document.createElement("article");
       card.className = "group-card";
+      card.dataset.groupId = group.id;
       const header = document.createElement("header");
       const title = document.createElement("h4");
       title.textContent = `👥 ${group.name}`;
@@ -597,6 +623,8 @@
         );
         if (friends.length) {
           const select = document.createElement("select");
+          select.className = "group-invite-select";
+          select.dataset.groupInvite = group.id;
           select.setAttribute("aria-label", "选择要邀请的好友");
           const placeholder = document.createElement("option");
           placeholder.value = "";
@@ -608,19 +636,39 @@
             option.textContent = friend.nickname;
             select.appendChild(option);
           });
+          const previousSelection = inviteSelections.get(group.id);
+          if (previousSelection && friends.some((friend) => friend.gameId === previousSelection)) {
+            select.value = previousSelection;
+          }
           const invite = document.createElement("button");
           invite.type = "button";
-          invite.className = "secondary";
+          invite.className = "secondary group-invite-button";
           invite.textContent = "添加";
-          invite.addEventListener("click", () => {
+          invite.disabled = !select.value;
+          select.addEventListener("change", () => {
+            invite.disabled = !select.value;
+          });
+          invite.addEventListener("click", async () => {
             if (!select.value) {
               toast("请选择要邀请的好友");
               return;
             }
-            runGroupAction(
-              api.socialAddGroupMember({ groupId: group.id, memberId: select.value }),
-              "好友已加入群聊"
-            );
+            const memberId = select.value;
+            select.disabled = true;
+            invite.disabled = true;
+            invite.textContent = "添加中…";
+            try {
+              await runGroupAction(
+                api.socialAddGroupMember({ groupId: group.id, memberId }),
+                "好友已加入群聊"
+              );
+            } finally {
+              if (invite.isConnected) {
+                select.disabled = false;
+                invite.disabled = false;
+                invite.textContent = "添加";
+              }
+            }
           });
           actions.append(select, invite);
         }
@@ -686,7 +734,14 @@
   }
 
   async function mutate(promise, successText) {
-    const result = await promise;
+    let result;
+    try {
+      result = await promise;
+    } catch (err) {
+      toast("操作失败，请稍后重试");
+      api.log("warn", "社交操作失败", err && (err.stack || String(err)));
+      return null;
+    }
     if (!result || !result.ok) {
       toast(errorText(result && result.error));
       return null;
@@ -694,6 +749,57 @@
     if (successText) toast(successText);
     await refresh();
     return result;
+  }
+
+  function friendAction(person) {
+    const friends = (social && social.friends) || [];
+    if (friends.some((friend) => friend.gameId === person.gameId)) {
+      return { label: "已是好友", disabled: true };
+    }
+    const outgoing = (social && social.outgoing) || [];
+    if (outgoing.some((request) => request.to && request.to.gameId === person.gameId)) {
+      return { label: "已申请", disabled: true };
+    }
+    const incoming = (social && social.incoming) || [];
+    if (incoming.some((request) => request.from && request.from.gameId === person.gameId)) {
+      return { label: "待处理", disabled: true, title: "请先在好友申请中处理" };
+    }
+    return { label: "加好友" };
+  }
+
+  function renderSearchResults() {
+    const output = $("search-results");
+    output.innerHTML = "";
+    if (!searchQuery) return;
+    if (!searchUsers.length) {
+      output.appendChild(empty("没有找到匹配的玩家"));
+      return;
+    }
+    searchUsers.forEach((person) => {
+      if (person.gameId === social.profile.gameId) return;
+      const relationship = friendAction(person);
+      output.appendChild(
+        personRow(person, [
+          {
+            ...relationship,
+            run: async (button) => {
+              if (relationship.disabled) return;
+              const originalLabel = button.textContent;
+              button.disabled = true;
+              button.textContent = "申请中…";
+              try {
+                await mutate(api.socialRequest({ targetId: person.gameId }), "好友申请已发送");
+              } finally {
+                if (button.isConnected) {
+                  button.disabled = false;
+                  button.textContent = originalLabel;
+                }
+              }
+            },
+          },
+        ])
+      );
+    });
   }
 
   function render() {
@@ -759,33 +865,25 @@
         ])
       );
     });
+    renderSearchResults();
   }
 
   async function search() {
     const query = $("search-input").value.trim();
     const output = $("search-results");
+    const sequence = ++searchSequence;
+    searchQuery = query;
+    searchUsers = [];
     output.innerHTML = "";
     if (!query) return;
     const result = await api.socialSearch(query);
+    if (sequence !== searchSequence) return;
     if (!result || !result.ok) {
       output.appendChild(empty(errorText(result && result.error)));
       return;
     }
-    if (!result.users || !result.users.length) {
-      output.appendChild(empty("没有找到匹配的玩家"));
-      return;
-    }
-    result.users.forEach((person) => {
-      if (person.gameId === social.profile.gameId) return;
-      output.appendChild(
-        personRow(person, [
-          {
-            label: "加好友",
-            run: () => mutate(api.socialRequest({ targetId: person.gameId }), "好友申请已发送"),
-          },
-        ])
-      );
-    });
+    searchUsers = result.users || [];
+    renderSearchResults();
   }
 
   async function boot() {

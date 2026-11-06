@@ -27,6 +27,7 @@ contextBridge.exposeInMainWorld("petAPI", {
   setClickThrough: (enabled) => ipcRenderer.invoke("win:set-click-through", enabled),
   setAlwaysOnTop: (enabled) => ipcRenderer.invoke("win:set-always-on-top", enabled),
   setAutoLaunch: (enabled) => ipcRenderer.invoke("win:set-auto-launch", enabled),
+  updateShortcuts: (shortcuts) => ipcRenderer.invoke("shortcuts:update", shortcuts),
   openSaveFolder: () => ipcRenderer.invoke("app:open-save-folder"),
   openLog: () => ipcRenderer.invoke("app:open-log"),
   notify: (payload) => ipcRenderer.invoke("app:notify", payload),
@@ -121,6 +122,7 @@ contextBridge.exposeInMainWorld("petAPI", {
 
   // 应用更新
   updateCheck: (feedUrl) => ipcRenderer.invoke("app:update-check", feedUrl),
+  updateAction: (feedUrl) => ipcRenderer.invoke("app:update-action", feedUrl),
   updateDownload: () => ipcRenderer.invoke("app:update-download"),
   updateInstall: () => ipcRenderer.invoke("app:update-install"),
   updateStatus: () => ipcRenderer.invoke("app:update-status"),

@@ -337,7 +337,12 @@ async function main() {
         catalog.body.catalog.furniture.doro_throne &&
         catalog.body.catalog.items.luxury_aurora &&
         catalog.body.catalog.items.luxury_infinite_lounge &&
-        catalog.body.catalog.items.fashion_starlight_hat
+        catalog.body.catalog.items.fashion_starlight_hat &&
+        catalog.body.catalog.items.stone_low?.stoneTier === "low" &&
+        catalog.body.catalog.items.breakthrough_pill?.cultivationType === "breakthrough" &&
+        catalog.body.catalog.items.technique_pill?.cultivationType === "technique" &&
+        catalog.body.catalog.items.cultivation_pill?.cultivationType === "cultivation" &&
+        catalog.body.catalog.items.heart_pill?.cultivationType === "heart"
     );
     check(
       "Docker 目录已同步第二批各 10 款家具、服装和典藏",
@@ -345,8 +350,17 @@ async function main() {
         catalog.body.catalog.furniture.forest_wish_pool?.score === 230000 &&
         Object.values(catalog.body.catalog.items).filter((item) => item.type === "fashion").length === 20 &&
         catalog.body.catalog.items.fashion_lunar_veil?.overlay === "fashion/lunar_veil.svg" &&
+        Object.values(catalog.body.catalog.items).filter((item) => item.type === "cultivation").length ===
+          10 &&
         Object.values(catalog.body.catalog.items).filter((item) => item.type === "luxury").length === 24 &&
         catalog.body.catalog.items.luxury_doro_universe?.bonus === 11.5
+    );
+    check(
+      "Docker 目录包含 10 款新增益及倍率配置",
+      Object.values(catalog.body.catalog.items).filter((item) => item.type === "buff").length === 10 &&
+        catalog.body.catalog.items.lemon_soda?.incomeMultiplier === 1.25 &&
+        catalog.body.catalog.items.time_capsule?.minutes === 30 &&
+        catalog.body.catalog.items.time_capsule?.incomeMultiplier === 3
     );
     const entitlements = await request("/api/shop/entitlements", {
       method: "POST",
