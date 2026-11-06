@@ -1603,6 +1603,10 @@ async function runScenarios(win) {
       open: document.getElementById("config").classList.contains("show"),
       ambient: document.getElementById("cfg-ambient").value,
       toggles: document.querySelectorAll("#config [data-toggle]").length,
+      toggleHeight: document.querySelector("#config .cfg-toggles").getBoundingClientRect().height,
+      autoFeedHeight: document
+        .querySelector('#config [data-toggle="autoFeed"]')
+        .getBoundingClientRect().height,
       shortcuts: [...document.querySelectorAll("#config .shortcut-row input")].map((input) => input.value)
     })`
   );
@@ -1610,6 +1614,8 @@ async function runScenarios(win) {
     "配置中心能打开",
     config.open &&
       config.toggles === 11 &&
+      config.toggleHeight > 0 &&
+      config.autoFeedHeight > 0 &&
       config.ambient === "60" &&
       config.shortcuts.length === 3 &&
       config.shortcuts.every(Boolean),

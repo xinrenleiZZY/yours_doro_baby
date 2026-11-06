@@ -162,7 +162,7 @@ docker compose -f social-server/docker-compose.yml up -d --build
 
 ```powershell
 npm run pack   # 免安装目录：release/win-unpacked/
-npm run dist   # NSIS 安装包：release/doro_dz 桌面宠物 Setup 0.9.22.exe
+npm run dist   # NSIS 安装包：release/doro_dz 桌面宠物 Setup 0.9.23.exe
 ```
 
 安装包约 158MB（Electron 44 基线 + 49MB 动作资源），未做代码签名。

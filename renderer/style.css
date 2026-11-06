@@ -1499,11 +1499,10 @@ body.lib-open #library {
 }
 
 .cfg-toggles {
+  flex: none;
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 3px;
-  max-height: 96px;
-  overflow-y: auto;
 }
 
 .cfg-toggles button {
