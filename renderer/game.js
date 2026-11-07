@@ -12,7 +12,7 @@
 })(typeof self !== "undefined" ? self : this, function (C, O) {
   "use strict";
 
-  const SAVE_VERSION = 28;
+  const SAVE_VERSION = 29;
 
   // ---- 经济数值 -------------------------------------------------------------
   const BALANCE = {
@@ -388,6 +388,15 @@
       price: 700,
       icon: "🪷",
       desc: "服用后恢复 2–5 点道心",
+    },
+    bigu_pill: {
+      id: "bigu_pill",
+      name: "辟谷丹",
+      type: "cultivation",
+      cultivationType: "bigu",
+      price: 1200,
+      icon: "🌙",
+      desc: "服下一颗后辟谷一日（修仙界一年），期间不再消耗饱食度",
     },
     thunder_pearl: {
       id: "thunder_pearl",
@@ -2411,6 +2420,27 @@
           shortcuts: normalizeShortcuts(raw.settings && raw.settings.shortcuts),
         },
       }),
+    // 28 -> 29：辟谷丹与元婴期灵力维持
+    28: (raw) =>
+      Object.assign({}, raw, {
+        version: 29,
+        cultivation:
+          raw.cultivation && typeof raw.cultivation === "object"
+            ? {
+                ...raw.cultivation,
+                biguUntil: raw.cultivation.biguUntil || 0,
+                pills: {
+                  breakthrough: 0,
+                  life: 0,
+                  technique: 0,
+                  cultivation: 0,
+                  heart: 0,
+                  bigu: 0,
+                  ...(raw.cultivation.pills || {}),
+                },
+              }
+            : null,
+      }),
   };
 
   function migrate(raw) {
@@ -2744,15 +2774,39 @@
     }, 1);
   }
 
+  function fastingStatus(state, now) {
+    const ts = now || Date.now();
+    const biguUntil = Math.max(0, Number(state.cultivation && state.cultivation.biguUntil) || 0);
+    if (state.level >= 41) {
+      return {
+        active: true,
+        source: "nascent",
+        until: 0,
+        remainingMs: 0,
+        label: "元婴辟谷",
+      };
+    }
+    if (ts < biguUntil) {
+      return {
+        active: true,
+        source: "bigu",
+        until: biguUntil,
+        remainingMs: biguUntil - ts,
+        label: "辟谷丹",
+      };
+    }
+    return { active: false, source: "", until: biguUntil, remainingMs: 0, label: "" };
+  }
+
   /** 当前每秒实际产出的金币（含等级、心情、饱食度、性格与典藏影响）。 */
-  function incomePerSecond(state) {
+  function incomePerSecond(state, now) {
     const base = state.level * BALANCE.baseIncomePerLevel * C.realmPowerMultiplier(state.level);
     const moodFactor = 1 + BALANCE.moodBonus * (state.mood / 100);
     const personalityFactor = personalityOf(state).income;
     const prestigeFactor = 1;
     const buffFactor = activeIncomeBuffMultiplier(state);
     const feedFactor =
-      state.satiety < BALANCE.hungryThreshold
+      !fastingStatus(state, now).active && state.satiety < BALANCE.hungryThreshold
         ? state.satiety <= BALANCE.emptyThreshold
           ? BALANCE.starvingMultiplier
           : BALANCE.hungryMultiplier
@@ -2777,9 +2831,10 @@
     );
   }
 
-  function incomeBreakdown(state) {
+  function incomeBreakdown(state, now) {
+    const fasting = fastingStatus(state, now);
     return {
-      perSecond: incomePerSecond(state),
+      perSecond: incomePerSecond(state, now),
       base: state.level * BALANCE.baseIncomePerLevel * C.realmPowerMultiplier(state.level),
       moodFactor: 1 + BALANCE.moodBonus * (state.mood / 100),
       personalityFactor: personalityOf(state).income,
@@ -2789,8 +2844,9 @@
       championPermanentBonus: championPermanentIncomeBonus(state),
       championBonus: championIncomeBonus(state),
       championBoards: activeChampionBoards(state),
-      hungry: state.satiety < BALANCE.hungryThreshold,
-      starving: state.satiety <= BALANCE.emptyThreshold,
+      hungry: !fasting.active && state.satiety < BALANCE.hungryThreshold,
+      starving: !fasting.active && state.satiety <= BALANCE.emptyThreshold,
+      fasting,
     };
   }
 
@@ -2805,16 +2861,24 @@
 
     const offline = seconds > 300;
     const efficiency = offline ? BALANCE.offlineEfficiency : 1;
-    const earned = incomePerSecond(state) * seconds * efficiency;
+    const earned = incomePerSecond(state, tickNow) * seconds * efficiency;
 
     state.coins += earned;
     state.totalEarned += earned;
     ensureDaily(state, tickNow).progress.coinsEarned += earned;
-    state.satiety = clamp(state.satiety - (BALANCE.satietyDecayPerMinute * seconds) / 60, 0, 100);
+    const fasting = fastingStatus(state, tickNow);
+    if (!fasting.active) {
+      state.satiety = clamp(
+        state.satiety - (BALANCE.satietyDecayPerMinute * seconds) / 60,
+        0,
+        100
+      );
+    }
     state.mood = clamp(state.mood - (BALANCE.moodDecayPerMinute * seconds) / 60, 0, 100);
     const autoFed =
       state.settings &&
       state.settings.autoFeed &&
+      !fasting.active &&
       state.satiety < BALANCE.hungryThreshold &&
       state.coins >= BALANCE.feedCost
         ? feed(state, tickNow).ok
@@ -2856,13 +2920,21 @@
       return { seconds: 0, earned: 0, meditation, stoneCultivation, spiritualPower };
     }
     const capped = Math.min(elapsed, BALANCE.offlineCapHours * 3600);
-    const earned = incomePerSecond(state) * capped * BALANCE.offlineEfficiency;
+    const earned = incomePerSecond(state, now) * capped * BALANCE.offlineEfficiency;
     state.coins += earned;
     state.totalEarned += earned;
-    state.satiety = Math.max(
-      BALANCE.offlineSatietyFloor,
-      state.satiety - (BALANCE.satietyDecayPerMinute * capped) / 60
-    );
+    const offlineStart = now - capped * 1000;
+    const biguUntil = Math.max(0, Number(state.cultivation && state.cultivation.biguUntil) || 0);
+    const decaySeconds =
+      state.level >= 41
+        ? 0
+        : Math.max(0, (now - Math.max(offlineStart, biguUntil)) / 1000);
+    if (decaySeconds > 0) {
+      state.satiety = Math.max(
+        BALANCE.offlineSatietyFloor,
+        state.satiety - (BALANCE.satietyDecayPerMinute * decaySeconds) / 60
+      );
+    }
     state.mood = Math.max(BALANCE.offlineMoodFloor, state.mood - (BALANCE.moodDecayPerMinute * capped) / 60);
     state.lastTick = now;
     const lifespan = advanceLifespan(state, now, rng);
@@ -2944,16 +3016,25 @@
     const caveBonus = C.caveBonuses(cultivation);
     const max = spiritualPowerCapacity(cultivation, state.level);
     const meditationFactor = cultivation.meditation && cultivation.meditation.active ? 1.15 : 1;
+    const cultivationFactor =
+      (1 + Math.min(1.5, Math.max(0, state.level - 1) / 500)) * Math.sqrt(root.gain || 1);
+    const basePerSecond = Math.max(0.02, max * 0.00035 * cultivationFactor);
     const environmentFactor =
       region.qi *
       formation.multiplier *
       techniqueBonus.cultivationMultiplier *
       caveBonus.expMultiplier *
       meditationFactor;
-    const cultivationFactor = (1 + Math.min(1.5, Math.max(0, state.level - 1) / 500)) * Math.sqrt(root.gain || 1);
-    const perSecond = Math.max(0.02, max * 0.00035 * environmentFactor * cultivationFactor);
+    const perSecond = basePerSecond * environmentFactor;
+    const maintenancePerSecond =
+      state.level >= 41
+        ? basePerSecond * 1.2 * (cultivation.meditation && cultivation.meditation.active ? 0.1 : 1)
+        : 0;
     return {
       perSecond,
+      basePerSecond,
+      maintenancePerSecond,
+      netPerSecond: perSecond - maintenancePerSecond,
       max,
       environmentFactor,
       cultivationFactor,
@@ -2975,13 +3056,16 @@
     cultivation.spiritualPowerMax = max;
     cultivation.spiritualPower = Math.min(
       max,
-      Math.max(0, Number(cultivation.spiritualPower) || 0) + rate.perSecond * elapsedSeconds
+      Math.max(0, Number(cultivation.spiritualPower) || 0) + rate.netPerSecond * elapsedSeconds
     );
     cultivation.spiritualPowerUpdatedAt = ts;
     return {
       current: cultivation.spiritualPower,
       max,
       perSecond: rate.perSecond,
+      basePerSecond: rate.basePerSecond,
+      maintenancePerSecond: rate.maintenancePerSecond,
+      netPerSecond: rate.netPerSecond,
       environmentFactor: rate.environmentFactor,
       cultivationFactor: rate.cultivationFactor,
       region: rate.region,
@@ -3221,6 +3305,8 @@
       cultivationPills: Number(state.cultivation.pills && state.cultivation.pills.cultivation) || 0,
       cultivationPillUse: { ...pillUse, max: 2 },
       heartPills: Number(state.cultivation.pills && state.cultivation.pills.heart) || 0,
+      biguPills: Number(state.cultivation.pills && state.cultivation.pills.bigu) || 0,
+      fasting: fastingStatus(state, now || Date.now()),
       thunderPearls: Number(state.cultivation.thunderPearls) || 0,
       techniqueReadyAt: Number(state.cultivation.techniqueReadyAt) || 0,
       karma: Number(state.cultivation.karma) || 0,
@@ -3675,9 +3761,12 @@
     const startedAt = now || Date.now();
     const random = typeof rng === "function" ? rng : Math.random;
     state.cultivation = C.normalizeCultivation(state.cultivation, startedAt, random);
-    const id = ["technique", "cultivation", "heart"].includes(pillId) ? pillId : "";
+    const id = ["technique", "cultivation", "heart", "bigu"].includes(pillId) ? pillId : "";
     if (!id || (Number(state.cultivation.pills[id]) || 0) <= 0) {
       return { ok: false, reason: "item" };
+    }
+    if (id === "bigu" && state.level >= 41) {
+      return { ok: false, reason: "nascent", dialogue: "元婴期已无需辟谷丹" };
     }
     if (id === "technique") {
       const known = state.cultivation.techniquesKnown
@@ -3730,6 +3819,19 @@
         used: use.count,
         limit: 2,
         dialogue: `服下培元丹，修为 +${Math.round(gained)}`,
+      };
+    }
+    if (id === "bigu") {
+      const before = Math.max(startedAt, Number(state.cultivation.biguUntil) || 0);
+      state.cultivation.biguUntil = before + C.DAY_MS;
+      state.cultivation.pills.bigu -= 1;
+      return {
+        ok: true,
+        type: id,
+        pill: C.CULTIVATION_PILLS.bigu,
+        gainedMs: C.DAY_MS,
+        until: state.cultivation.biguUntil,
+        dialogue: "服下辟谷丹，一日之内无需进食",
       };
     }
     const gained = 2 + Math.floor(random() * 4);
@@ -4741,8 +4843,8 @@
   }
 
   function moodFace(state) {
-    if (state.satiety <= BALANCE.emptyThreshold) return "sad";
-    if (state.satiety < BALANCE.hungryThreshold) return "sad";
+    if (!fastingStatus(state).active && state.satiety <= BALANCE.emptyThreshold) return "sad";
+    if (!fastingStatus(state).active && state.satiety < BALANCE.hungryThreshold) return "sad";
     if (state.mood < 30) return "sad";
     if (state.mood > 80) return "happy";
     return "idle";
@@ -5102,6 +5204,7 @@
     if (item.cultivationType === "technique") return Math.max(600, 500 + state.level * 16);
     if (item.cultivationType === "cultivation") return Math.max(700, 600 + state.level * 12);
     if (item.cultivationType === "heart") return Math.max(400, 300 + state.level * 9);
+    if (item.cultivationType === "bigu") return Math.max(900, 800 + state.level * 10);
     if (item.cultivationType === "stone" && C.STONE_TIERS[item.stoneTier]) {
       return Number(item.price) || C.STONE_TIERS[item.stoneTier].price;
     }
@@ -5122,7 +5225,7 @@
     if (item.cultivationType === "thunder") {
       return Number(state.cultivation.thunderPearls) || 0;
     }
-    if (["technique", "cultivation", "heart"].includes(item.cultivationType)) {
+    if (["technique", "cultivation", "heart", "bigu"].includes(item.cultivationType)) {
       return Number(state.cultivation.pills && state.cultivation.pills[item.cultivationType]) || 0;
     }
     return 0;
@@ -5252,7 +5355,8 @@
       } else if (
         item.cultivationType === "technique" ||
         item.cultivationType === "cultivation" ||
-        item.cultivationType === "heart"
+        item.cultivationType === "heart" ||
+        item.cultivationType === "bigu"
       ) {
         state.cultivation.pills[item.cultivationType] += 1;
       } else if (item.cultivationType === "thunder") {
@@ -6631,6 +6735,7 @@
     freshState,
     incomePerSecond,
     incomeBreakdown,
+    fastingStatus,
     luxuryIncomeBonus,
     permanentIncomeBonus,
     tick,

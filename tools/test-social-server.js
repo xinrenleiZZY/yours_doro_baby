@@ -342,7 +342,8 @@ async function main() {
         catalog.body.catalog.items.breakthrough_pill?.cultivationType === "breakthrough" &&
         catalog.body.catalog.items.technique_pill?.cultivationType === "technique" &&
         catalog.body.catalog.items.cultivation_pill?.cultivationType === "cultivation" &&
-        catalog.body.catalog.items.heart_pill?.cultivationType === "heart"
+        catalog.body.catalog.items.heart_pill?.cultivationType === "heart" &&
+        catalog.body.catalog.items.bigu_pill?.cultivationType === "bigu"
     );
     check(
       "Docker 目录已同步第二批各 10 款家具、服装和典藏",
@@ -351,7 +352,7 @@ async function main() {
         Object.values(catalog.body.catalog.items).filter((item) => item.type === "fashion").length === 20 &&
         catalog.body.catalog.items.fashion_lunar_veil?.overlay === "fashion/lunar_veil.svg" &&
         Object.values(catalog.body.catalog.items).filter((item) => item.type === "cultivation").length ===
-          10 &&
+          11 &&
         Object.values(catalog.body.catalog.items).filter((item) => item.type === "luxury").length === 24 &&
         catalog.body.catalog.items.luxury_doro_universe?.bonus === 11.5
     );

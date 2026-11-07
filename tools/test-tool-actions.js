@@ -190,7 +190,19 @@ test("独立背包可研习、切换功法并服用延寿丹", () => {
   assert.ok(calmed.state.cultivation.attributes.daoHeart > 70);
   assert.strictEqual(calmed.state.cultivation.pills.heart, 0);
 
-  const consumed = applyToolCommand(calmed.state, actions, "inventory", { type: "use-life-pill" }, NOW);
+  calmed.state.cultivation.pills.bigu = 1;
+  const fasted = applyToolCommand(
+    calmed.state,
+    actions,
+    "inventory",
+    { type: "use-cultivation-pill", pill: "bigu" },
+    NOW
+  );
+  assert.strictEqual(fasted.ok, true);
+  assert.strictEqual(fasted.state.cultivation.biguUntil, NOW + G.CULTIVATION.DAY_MS);
+  assert.strictEqual(fasted.state.cultivation.pills.bigu, 0);
+
+  const consumed = applyToolCommand(fasted.state, actions, "inventory", { type: "use-life-pill" }, NOW);
   assert.strictEqual(consumed.ok, true);
   assert.strictEqual(consumed.state.cultivation.pills.life, 0);
   assert.strictEqual(consumed.state.cultivation.bonusLifespan, 100);

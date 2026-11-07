@@ -1,6 +1,6 @@
 {
-  "version": "2026.10.29.1",
-  "updatedAt": "2026-10-27T08:00:00.000Z",
+  "version": "2026.11.07.1",
+  "updatedAt": "2026-11-07T00:00:00.000Z",
   "dresses": {
     "basePrice": 80,
     "priceStep": 20,
@@ -361,6 +361,16 @@
       "price": 700,
       "icon": "🪷",
       "desc": "服用后恢复 2–5 点道心",
+      "listed": true
+    },
+    "bigu_pill": {
+      "id": "bigu_pill",
+      "name": "辟谷丹",
+      "type": "cultivation",
+      "cultivationType": "bigu",
+      "price": 1200,
+      "icon": "🌙",
+      "desc": "服下一颗后辟谷一日，期间不再消耗饱食度",
       "listed": true
     },
     "thunder_pearl": {

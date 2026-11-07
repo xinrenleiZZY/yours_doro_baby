@@ -144,6 +144,7 @@
     cultRealm: $("cult-realm"),
     cultRoot: $("cult-root"),
     cultExpBar: $("cult-exp-bar"),
+    cultSpiritualPowerBar: $("cult-spiritual-power-bar"),
     cultExp: $("cult-exp"),
     cultAttrs: $("cult-attrs"),
     cultLife: $("cult-life"),
@@ -192,6 +193,7 @@
     btnOpportunity: $("btn-opportunity"),
     btnBuyLife: $("btn-buy-life"),
     btnUseLife: $("btn-use-life"),
+    btnUseBigu: $("btn-use-bigu"),
     btnBuyThunder: $("btn-buy-thunder"),
     rebirthAttribute: $("rebirth-attribute"),
     btnRebirth: $("btn-rebirth"),
@@ -739,9 +741,20 @@
     el.coinRate.textContent = `+${rate >= 10 ? rate.toFixed(0) : rate.toFixed(1)}/s`;
     el.coinRate.classList.toggle("hungry", state.satiety < G.BALANCE.hungryThreshold);
 
-    el.chipSatiety.innerHTML = `🍚 <b>${Math.round(state.satiety)}</b>`;
+    const fastingState = G.fastingStatus(state);
+    const fasting = fastingState.active;
+    const fastingSource = fastingState.source;
+    el.chipSatiety.innerHTML =
+      fastingSource === "nascent"
+        ? "🌌 <b>辟谷</b>"
+        : fastingSource === "bigu"
+          ? `🌙 <b>${Math.ceil(fastingState.remainingMs / 3600000)}h</b>`
+          : `🍚 <b>${Math.round(state.satiety)}</b>`;
     el.chipMood.innerHTML = `💗 <b>${Math.round(state.mood)}</b>`;
-    el.chipSatiety.classList.toggle("low", state.satiety < G.BALANCE.hungryThreshold);
+    el.chipSatiety.classList.toggle(
+      "low",
+      !fasting && state.satiety < G.BALANCE.hungryThreshold
+    );
     el.chipMood.classList.toggle("low", state.mood < 30);
 
     el.panelCoins.textContent = G.formatCoins(state.coins);
@@ -771,7 +784,9 @@
     el.menu.querySelectorAll("[data-upgrade-command]").forEach((button) => {
       button.disabled = String(button.dataset.cmd).startsWith("upgrade") && !canCultivate;
     });
-    el.btnFeed.disabled = state.coins < G.BALANCE.feedCost;
+    el.btnFeed.disabled = state.level >= 41 || state.coins < G.BALANCE.feedCost;
+    el.btnFeed.title =
+      state.level >= 41 ? "元婴期后已辟谷，无需进食，以灵力维持" : "";
     el.btnPlay.disabled = state.coins < G.BALANCE.playCost;
 
     const hint = G.incomeBreakdown(state);
@@ -789,6 +804,10 @@
       el.panelHint.textContent = `修为圆满：准备冲击${cultivation.nextRealm ? cultivation.nextRealm.name : "下一境"}，打开境界面板完成突破`;
     } else if (cultivation.life.danger) {
       el.panelHint.textContent = `寿元仅余 ${cultivation.life.remaining.toFixed(1)} 年，必须尽快破境或服用延寿丹`;
+    } else if (cultivation.fasting.source === "nascent") {
+      el.panelHint.textContent = `元婴辟谷：无需进食 · 灵力 ${G.formatCoins(
+        cultivation.spiritualPower.current
+      )}/${G.formatCoins(cultivation.spiritualPower.max)} · 净${cultivation.spiritualPower.netPerSecond >= 0 ? "+" : ""}${cultivation.spiritualPower.netPerSecond.toFixed(2)}/秒`;
     } else if (hint.starving) {
       el.panelHint.textContent = `饿得不行了，产出只剩 ${Math.round(G.BALANCE.starvingMultiplier * 100)}%，快喂点饭！`;
     } else if (hint.hungry) {
@@ -1308,9 +1327,11 @@
       status.thunderPearls
     } · 悟道丹 ${status.techniquePills} · 培元丹 ${status.cultivationPills} · 静心丹 ${
       status.heartPills
-    } · 本阶段培元丹 ${status.cultivationPillUse.count}/2 · 业力 ${status.karma}${
+    } · 辟谷丹 ${status.biguPills} · 本阶段培元丹 ${
+      status.cultivationPillUse.count
+    }/2 · 业力 ${status.karma}${
       status.demonized ? " · 已入魔修分支" : ""
-    }`;
+    }${status.fasting.active ? ` · ${status.fasting.label}${status.fasting.remainingMs ? `，剩余 ${formatDuration(status.fasting.remainingMs)}` : ""}` : ""}`;
     el.cultRegion.textContent = `${status.continent.name} · ${status.region.name} · 灵气浓度 ×${
       status.region.qi
     }`;
@@ -1326,11 +1347,19 @@
     )}/小时 · 阵法 ${status.formation.name} · 多修 ${status.meditation.techniques.length}/5`;
     el.cultSpiritualPower.textContent = `灵力：${G.formatCoins(
       status.spiritualPower.current
-    )} / ${G.formatCoins(status.spiritualPower.max)} · 恢复 ${status.spiritualPower.perSecond.toFixed(
+    )} / ${G.formatCoins(status.spiritualPower.max)} · 恢复 +${status.spiritualPower.perSecond.toFixed(
       2
-    )}/秒 · 环境×${status.spiritualPower.environmentFactor.toFixed(2)} · 修为效率×${status.spiritualPower.cultivationFactor.toFixed(
+    )}/秒${
+      status.spiritualPower.maintenancePerSecond > 0
+        ? ` · 维持 -${status.spiritualPower.maintenancePerSecond.toFixed(2)}/秒 · 净 ${status.spiritualPower.netPerSecond >= 0 ? "+" : ""}${status.spiritualPower.netPerSecond.toFixed(2)}/秒`
+        : ""
+    } · 环境×${status.spiritualPower.environmentFactor.toFixed(2)} · 修为效率×${status.spiritualPower.cultivationFactor.toFixed(
       2
     )}`;
+    el.cultSpiritualPowerBar.style.width = `${Math.min(
+      100,
+      Math.max(0, (status.spiritualPower.current / Math.max(1, status.spiritualPower.max)) * 100)
+    )}%`;
     const stoneSession = status.stoneSession;
     if (stoneSession.active) {
       el.cultStoneSession.textContent = `灵石修炼中：${stoneSession.quantity} 颗${
@@ -1553,6 +1582,13 @@
     el.btnSecret.disabled =
       state.level < 31 || status.spiritStones < 1 || state.cultivation.secretReadyAt > now;
     el.btnUseLife.disabled = status.lifePills < 1;
+    el.btnUseBigu.disabled = status.biguPills < 1 || state.level >= 41;
+    el.btnUseBigu.textContent =
+      state.level >= 41
+        ? "元婴期无需辟谷丹"
+        : status.fasting.source === "bigu"
+          ? `辟谷中 · ${formatDuration(status.fasting.remainingMs)}`
+          : `服用辟谷丹（${status.biguPills}）`;
 
     const rebirth = rebirthState;
     el.btnRebirth.disabled = !rebirth.eligible;
@@ -3492,6 +3528,16 @@
       const result = G.takeLifePill(state);
       if (!result.ok) return;
       toast(`服下延寿丹，寿元上限 +${result.gained} 年`);
+      refreshCultivation();
+    });
+    el.btnUseBigu.addEventListener("click", () => {
+      const result = G.takeCultivationPill(state, "bigu", Date.now());
+      if (!result.ok) {
+        toast("背包里没有辟谷丹");
+        return;
+      }
+      toast(`服下辟谷丹，一日内不再消耗饱食度（${formatDuration(result.until - Date.now())}）`);
+      speak("辟谷一日，天地灵气自成食粮。", 2600);
       refreshCultivation();
     });
     el.btnHerbs.addEventListener("click", () => {

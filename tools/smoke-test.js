@@ -945,6 +945,10 @@ async function runScenarios(win) {
       tierOptions: document.querySelectorAll("#cult-stone-tier option").length,
       formationOptions: document.querySelectorAll("#cult-formation-select option").length,
       meditation: document.getElementById("cult-meditation").textContent,
+      spiritualPower: document.getElementById("cult-spiritual-power").textContent,
+      powerBelowExp:
+        document.getElementById("cult-spiritual-power").getBoundingClientRect().top >=
+        document.getElementById("cult-exp").getBoundingClientRect().bottom,
       buyQuantity: document.getElementById("cult-buy-quantity").value,
       consumeQuantity: document.getElementById("cult-consume-quantity").value,
       inventoryInGrowth: Boolean(document.getElementById("inventory-list")),
@@ -959,6 +963,8 @@ async function runScenarios(win) {
       cultivationMap.tierOptions === 4 &&
       cultivationMap.formationOptions === 5 &&
       cultivationMap.meditation.includes("修为/秒") &&
+      cultivationMap.spiritualPower.includes("灵力") &&
+      cultivationMap.powerBelowExp &&
       cultivationMap.buyQuantity === "10" &&
       cultivationMap.consumeQuantity === "1" &&
       cultivationMap.inventoryInGrowth === false &&
@@ -2342,13 +2348,14 @@ async function runToolWindowScenarios() {
   await wait(220);
   check(
     "修炼商品已同步到商城并支持批量购买",
-    cultivationShop.items === 10 &&
+    cultivationShop.items === 11 &&
       cultivationShop.quantityVisible &&
       cultivationShop.names.some((name) => name.includes("下品灵石")) &&
       cultivationShop.names.some((name) => name.includes("破境丹")) &&
       cultivationShop.names.some((name) => name.includes("悟道丹")) &&
       cultivationShop.names.some((name) => name.includes("培元丹")) &&
       cultivationShop.names.some((name) => name.includes("静心丹")) &&
+      cultivationShop.names.some((name) => name.includes("辟谷丹")) &&
       toolState.cultivation.stones.low === stonesBeforeShop + 2 &&
       toolState.coins < coinsBeforeStones,
     JSON.stringify({ cultivationShop, stones: toolState.cultivation.stones.low })
@@ -2466,7 +2473,8 @@ async function runToolWindowScenarios() {
       inventoryPills.names.some((name) => name.includes("避雷珠")) &&
       inventoryPills.names.some((name) => name.includes("悟道丹")) &&
       inventoryPills.names.some((name) => name.includes("培元丹")) &&
-      inventoryPills.names.some((name) => name.includes("静心丹")),
+      inventoryPills.names.some((name) => name.includes("静心丹")) &&
+      inventoryPills.names.some((name) => name.includes("辟谷丹")),
     JSON.stringify(inventoryPills)
   );
   inventory.close();

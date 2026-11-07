@@ -1010,7 +1010,7 @@ test("商城：金币不足时买不了", () => {
   assert.strictEqual(state.coins, 5);
 });
 
-test("商城：灵石、五种丹药和避雷珠可购买", () => {
+test("商城：灵石、六种丹药和避雷珠可购买", () => {
   const state = G.hydrate({ level: 41, coins: 1000000 }, NOW);
   const stone = G.purchaseMany(state, G.SHOP_ITEMS.stone_high, 3, NOW);
   assert.strictEqual(stone.ok, true);
@@ -1022,18 +1022,21 @@ test("商城：灵石、五种丹药和避雷珠可购买", () => {
   const technique = G.purchase(state, G.SHOP_ITEMS.technique_pill, NOW);
   const cultivation = G.purchase(state, G.SHOP_ITEMS.cultivation_pill, NOW);
   const heart = G.purchase(state, G.SHOP_ITEMS.heart_pill, NOW);
+  const bigu = G.purchase(state, G.SHOP_ITEMS.bigu_pill, NOW);
   const thunder = G.purchase(state, G.SHOP_ITEMS.thunder_pearl, NOW);
   assert.strictEqual(breakthrough.ok, true);
   assert.strictEqual(life.ok, true);
   assert.strictEqual(technique.ok, true);
   assert.strictEqual(cultivation.ok, true);
   assert.strictEqual(heart.ok, true);
+  assert.strictEqual(bigu.ok, true);
   assert.strictEqual(thunder.ok, true);
   assert.strictEqual(state.cultivation.pills.breakthrough, 1);
   assert.strictEqual(state.cultivation.pills.life, 1);
   assert.strictEqual(state.cultivation.pills.technique, 1);
   assert.strictEqual(state.cultivation.pills.cultivation, 1);
   assert.strictEqual(state.cultivation.pills.heart, 1);
+  assert.strictEqual(state.cultivation.pills.bigu, 1);
   assert.strictEqual(state.cultivation.thunderPearls, 1);
   assert.strictEqual(
     G.shopItemPrice(state, G.SHOP_ITEMS.breakthrough_pill),
@@ -2559,6 +2562,53 @@ test("自动购买并进食可在饱食度偏低时运行", () => {
   assert.ok(state.coins < 100);
 });
 
+test("辟谷丹持续一日并且期间不消耗饱食度", () => {
+  const state = G.hydrate(
+    {
+      level: 20,
+      satiety: 50,
+      cultivation: {
+        pills: { breakthrough: 0, life: 0, technique: 0, cultivation: 0, heart: 0, bigu: 1 },
+        lastAgedAt: NOW,
+      },
+    },
+    NOW
+  );
+  state.lastTick = NOW;
+  const used = G.takeCultivationPill(state, "bigu", NOW);
+  assert.strictEqual(used.ok, true);
+  assert.strictEqual(state.cultivation.biguUntil, NOW + G.CULTIVATION.DAY_MS);
+  G.tick(state, 60000);
+  assert.strictEqual(state.satiety, 50);
+  assert.strictEqual(G.fastingStatus(state, NOW + 60000).source, "bigu");
+});
+
+test("元婴期停止饱食消耗并以灵力维持，打坐降低九成维持消耗", () => {
+  const state = G.hydrate(
+    {
+      level: 41,
+      satiety: 0,
+      coins: 100,
+      cultivation: {
+        spiritualPower: 500,
+        spiritualPowerUpdatedAt: NOW,
+        lastAgedAt: NOW,
+      },
+    },
+    NOW
+  );
+  assert.strictEqual(G.fastingStatus(state, NOW).source, "nascent");
+  assert.strictEqual(G.incomeBreakdown(state, NOW).hungry, false);
+  const normal = G.recoverSpiritualPower(state, NOW + 60000);
+  assert.ok(normal.maintenancePerSecond > 0);
+  state.cultivation.meditation.active = true;
+  const meditating = G.recoverSpiritualPower(state, NOW + 120000);
+  assert.ok(Math.abs(meditating.maintenancePerSecond - normal.basePerSecond * 1.2 * 0.1) < 1e-9);
+  assert.strictEqual(state.satiety, 0);
+  G.tick(state, 60000);
+  assert.strictEqual(state.satiety, 0);
+});
+
 test("属性上限提升到 99999 并由存档白名单保留", () => {
   const state = G.hydrate(
     {
@@ -2687,6 +2737,37 @@ test("快捷键配置会保存到存档白名单", () => {
   assert.strictEqual(clean.settings.shortcuts.toggle, "Ctrl+Shift+1");
   assert.strictEqual(clean.settings.shortcuts.summon, "Alt+X");
   assert.strictEqual(clean.settings.shortcuts.chat, "F8");
+});
+
+test("v28 存档迁移后保留进度并补齐辟谷与元婴字段", () => {
+  const state = G.hydrate(
+    {
+      version: 28,
+      level: 75,
+      coins: 123456,
+      cultivation: {
+        attributes: {
+          root: "metal",
+          insight: 88,
+          fortune: 77,
+          daoHeart: 66,
+          lifespan: 120,
+        },
+        pills: { breakthrough: 1, life: 2, technique: 3, cultivation: 4, heart: 5 },
+        lastAgedAt: NOW,
+      },
+    },
+    NOW
+  );
+  assert.strictEqual(state.version, G.SAVE_VERSION);
+  assert.strictEqual(state.level, 75);
+  assert.strictEqual(state.coins, 123456);
+  assert.strictEqual(state.cultivation.attributes.root, "metal");
+  assert.strictEqual(state.cultivation.pills.bigu, 0);
+  const clean = sanitizeSave(state);
+  assert.strictEqual(clean.version, 29);
+  assert.strictEqual(clean.cultivation.pills.bigu, 0);
+  assert.strictEqual(clean.cultivation.biguUntil, 0);
 });
 
 console.log(`\n通过 ${passed} / ${passed + failures.length}`);

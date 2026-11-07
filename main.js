@@ -44,6 +44,7 @@ const CHAT_WINDOW_SIZE = { width: 540, height: 720 };
 const SOCIAL_WINDOW_SIZE = { width: 920, height: 760 };
 const USER_DATA = app.getPath("userData");
 const SAVE_FILE = path.join(USER_DATA, "save.json");
+const SAVE_BACKUP_DIR = path.join(USER_DATA, "save-backups");
 const SESSION_FILE = path.join(USER_DATA, "session.json");
 const LOG_DIR = path.join(USER_DATA, "logs");
 const LOG_FILE = path.join(LOG_DIR, "main.log");
@@ -155,6 +156,39 @@ function scheduleDailyUpdateCheck() {
 function settingsOfSave() {
   const save = readSave();
   return save && save.settings && typeof save.settings === "object" ? save.settings : {};
+}
+
+/**
+ * 首次读取旧版本存档时，在迁移发生前保留原始文件。
+ * 同一源版本只保留一份，避免每次启动重复复制。
+ */
+function backupSaveBeforeUpgrade(save) {
+  if (!save || typeof save !== "object") return null;
+  const parsedVersion = Number(save.version);
+  const sourceVersion = Number.isFinite(parsedVersion) ? parsedVersion : 0;
+  if (sourceVersion >= G.SAVE_VERSION) return null;
+  try {
+    fs.mkdirSync(SAVE_BACKUP_DIR, { recursive: true });
+    const prefix = `save-v${sourceVersion}-`;
+    const existing = fs
+      .readdirSync(SAVE_BACKUP_DIR)
+      .find((name) => name.startsWith(prefix) && name.endsWith(".json"));
+    if (existing) return path.join(SAVE_BACKUP_DIR, existing);
+    const target = path.join(
+      SAVE_BACKUP_DIR,
+      `${prefix}${new Date().toISOString().replace(/[:.]/g, "-")}.json`
+    );
+    fs.copyFileSync(SAVE_FILE, target);
+    log("info", "升级前已备份原始存档", {
+      fromVersion: sourceVersion,
+      toVersion: G.SAVE_VERSION,
+      backup: target,
+    });
+    return target;
+  } catch (err) {
+    log("error", "升级前备份存档失败", err.message);
+    return null;
+  }
 }
 
 function shortcutAction(action) {
@@ -1133,6 +1167,7 @@ function createTray() {
 function registerIpc() {
   ipcMain.handle("pet:load", () => {
     const save = readSave();
+    const migrationBackup = backupSaveBeforeUpgrade(save);
     const login = app.getLoginItemSettings();
     runtime.autoLaunch = Boolean(login.openAtLogin);
     const settings = save && save.settings && typeof save.settings === "object" ? save.settings : {};
@@ -1140,6 +1175,7 @@ function registerIpc() {
     if (updater && settings.updateFeedUrl) updater.setFeedUrl(settings.updateFeedUrl);
     return {
       save,
+      migrationBackup,
       now: Date.now(),
       autoLaunch: runtime.autoLaunch,
       savePath: SAVE_FILE,

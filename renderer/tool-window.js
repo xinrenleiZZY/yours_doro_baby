@@ -622,6 +622,15 @@
           onAction: () => runCommand({ type: "use-cultivation-pill", pill: "heart" }, "buy"),
         },
         {
+          icon: "🌙",
+          title: "辟谷丹",
+          count: cultivation.pills.bigu,
+          desc: "服下一颗后辟谷一日，期间不再消耗饱食度。",
+          actionText: "服用",
+          disabled: cultivation.pills.bigu <= 0 || state.level >= 41,
+          onAction: () => runCommand({ type: "use-cultivation-pill", pill: "bigu" }, "buy"),
+        },
+        {
           icon: "⚡",
           title: "避雷珠",
           count: cultivation.thunderPearls,

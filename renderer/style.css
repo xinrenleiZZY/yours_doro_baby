@@ -2069,6 +2069,19 @@ body.lib-open #library {
   color: #8d7480;
 }
 
+.growth-bar.spiritual-power-bar {
+  height: 5px;
+  margin: 1px 0;
+}
+
+.growth-bar.spiritual-power-bar i {
+  background: linear-gradient(90deg, #7bc8e8, #6989e8);
+}
+
+#cult-spiritual-power {
+  color: #587ca4;
+}
+
 .cult-attrs {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

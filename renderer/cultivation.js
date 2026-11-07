@@ -12,7 +12,7 @@
 })(typeof self !== "undefined" ? self : this, function () {
   "use strict";
 
-  const VERSION = 1;
+  const VERSION = 2;
   const MAX_LEVEL = 999;
   const MAX_ATTRIBUTE = 99999;
   const MAX_TECHNIQUE_MASTERY = 99999;
@@ -314,6 +314,7 @@
     technique: Object.freeze({ id: "technique", name: "悟道丹", icon: "📖" }),
     cultivation: Object.freeze({ id: "cultivation", name: "培元丹", icon: "🌀" }),
     heart: Object.freeze({ id: "heart", name: "静心丹", icon: "🪷" }),
+    bigu: Object.freeze({ id: "bigu", name: "辟谷丹", icon: "🌙" }),
   });
   const DEFAULT_SHORTCUTS = Object.freeze({
     toggle: "CommandOrControl+Alt+D",
@@ -1125,6 +1126,7 @@
       regionId: "qingju_plain",
       formationId: "gathering",
       meditation: { active: false, lastAt: 0, totalSeconds: 0 },
+      biguUntil: 0,
       spiritualPower: 100,
       spiritualPowerMax: 100,
       spiritualPowerUpdatedAt: Number(now) || 0,
@@ -1151,7 +1153,7 @@
       equippedTechniques: [],
       equippedTechnique: "",
       herbs: 0,
-      pills: { breakthrough: 0, life: 0, technique: 0, cultivation: 0, heart: 0 },
+      pills: { breakthrough: 0, life: 0, technique: 0, cultivation: 0, heart: 0, bigu: 0 },
       thunderPearls: 0,
       cooldownUntil: 0,
       herbReadyAt: 0,
@@ -1348,6 +1350,7 @@
         lastAt: Math.max(0, Number(rawMeditation.lastAt) || timestamp),
         totalSeconds: Math.max(0, Number(rawMeditation.totalSeconds) || 0),
       },
+      biguUntil: Math.max(0, Number(raw.biguUntil) || 0),
       spiritualPower:
         raw.spiritualPower === undefined
           ? fallback.spiritualPower
@@ -1401,6 +1404,7 @@
         technique: integer(pills.technique, 0, 0, 1e6),
         cultivation: integer(pills.cultivation, 0, 0, 1e6),
         heart: integer(pills.heart, 0, 0, 1e6),
+        bigu: integer(pills.bigu, 0, 0, 1e6),
       },
       thunderPearls: integer(raw.thunderPearls, 0, 0, 1e6),
       cooldownUntil: Math.max(0, Number(raw.cooldownUntil) || 0),
