@@ -60,6 +60,7 @@ const TOOL_WINDOW_SPECS = {
   shop: { width: 620, height: 700, title: "doro 商城" },
   inventory: { width: 560, height: 680, title: "doro 背包" },
   opportunity: { width: 640, height: 720, title: "doro 机缘录" },
+  blacktower: { width: 720, height: 760, title: "doro 黑塔挑战" },
   gacha: { width: 800, height: 600, aspectRatio: 4 / 3, title: "doro 扭蛋机" },
   minigame: { width: 620, height: 560, title: "doro 接金币" },
   sticker: { width: 640, height: 720, title: "doro 表情包管理" },

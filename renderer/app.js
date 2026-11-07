@@ -7,7 +7,15 @@
   const DoroQuiz = window.DoroQuiz;
   // 冒烟测试用 ?test=1 打开：关掉自动计时，并暴露少量只读/操作钩子
   const TEST_MODE = new URLSearchParams(location.search).has("test");
-  const EXTERNAL_TOOLS = new Set(["shop", "inventory", "opportunity", "gacha", "minigame", "sticker"]);
+  const EXTERNAL_TOOLS = new Set([
+    "shop",
+    "inventory",
+    "opportunity",
+    "blacktower",
+    "gacha",
+    "minigame",
+    "sticker",
+  ]);
 
   // 渲染进程的异常统一上报到主进程日志，避免"点了没反应但查不到原因"
   window.addEventListener("error", (event) => {
@@ -1300,6 +1308,13 @@
       ["🍀 福缘", attrs.fortune, false],
       ["🪷 道心", attrs.daoHeart, status.demonized],
       ["⌛ 基础寿元", attrs.lifespan, false],
+      [
+        "❤️ 生命",
+        `${G.formatCoins(status.combat.hp)}/${G.formatCoins(status.combat.maxHp)} · +${status.combat.recoveryPerSecond.toFixed(2)}/s`,
+        false,
+      ],
+      ["⚔ 攻击", G.formatCoins(status.combat.attack), false],
+      ["🛡 防御", G.formatCoins(status.combat.defense), false],
       ["📖 功法领悟", status.technique.toFixed(1), false],
       ["📚 多修功法", `${status.meditation.techniques.length}/5`, false],
       ["☯ 根骨加成", `+${(Number(state.cultivation.attributes.rootLineage) || 0) * 15}%`, false],
@@ -1403,14 +1418,23 @@
     el.cultCaveChallenge.textContent = caveStatus.challenge
       ? `${caveStatus.challenge.name}深处传来守灵的低吼。避战：爆率 -80%；观望：爆率 -50%；战斗：爆率 +20%，可能损失修为，也可能获得大量修为。`
       : "";
+    const previousCaveId = el.cultCaveSelect.value;
     el.cultCaveSelect.innerHTML = "";
     caveStatus.spots.forEach((spot) => {
+      const entryCost = G.caveEntryCost(spot);
       const option = document.createElement("option");
       option.value = spot.id;
-      option.textContent = `${spot.size === "large" ? "【大型】" : "【小型】"}${spot.name} · 灵气×${spot.qiMultiplier} · ${spot.effectName}+${Math.round(spot.effectValue * 100)}%`;
+      option.textContent = `${spot.size === "large" ? "【大型】" : "【小型】"}${spot.name} · 灵气×${spot.qiMultiplier} · ${spot.effectName}+${Math.round(spot.effectValue * 100)}% · ${entryCost.amount}${entryCost.stone.short}`;
       el.cultCaveSelect.appendChild(option);
     });
-    if (caveStatus.active) el.cultCaveSelect.value = caveStatus.active.id;
+    const selectedCaveId = caveStatus.active
+      ? caveStatus.active.id
+      : caveStatus.spots.some((spot) => spot.id === previousCaveId)
+        ? previousCaveId
+        : caveStatus.spots[0].id;
+    el.cultCaveSelect.value = selectedCaveId;
+    const selectedCave = caveStatus.spots.find((spot) => spot.id === selectedCaveId);
+    const selectedEntryCost = G.caveEntryCost(selectedCave);
     el.cultCaveSelect.disabled =
       Boolean(caveStatus.active || caveStatus.challenge || stoneSession.active) || state.level < 11;
     el.btnEnterCave.disabled =
@@ -1421,7 +1445,7 @@
         ? "福地修炼中"
         : state.level < 11
           ? "炼气后开放"
-          : "前往（1 下品灵石）";
+          : `前往（${selectedEntryCost.amount}${selectedEntryCost.stone.short}）`;
     el.btnLeaveCave.disabled = !caveStatus.active && !caveStatus.challenge;
     el.btnMeditate.textContent = stoneSession.active
       ? "灵石炼化中"
@@ -1481,10 +1505,16 @@
     const towerLast = towerStatus.lastResult;
     el.cultTowerStatus.textContent = `灵力 ${G.formatCoins(
       towerStatus.power.current
-    )}/${G.formatCoins(towerStatus.power.max)} · ${towerStatus.selected.name} · ${towerStatus.selected.enemy} · 消耗 ${G.formatCoins(
+    )}/${G.formatCoins(towerStatus.power.max)} · 生命 ${G.formatCoins(towerStatus.combat.hp)}/${G.formatCoins(
+      towerStatus.combat.maxHp
+    )} · 攻击 ${G.formatCoins(towerStatus.combat.attack)} · 防御 ${G.formatCoins(
+      towerStatus.combat.defense
+    )} · ${towerStatus.selected.name} · ${towerStatus.selected.enemy} · 消耗 ${G.formatCoins(
       towerStatus.selected.cost
     )} 灵力 · 预计修为 +${G.formatCoins(towerStatus.selected.reward)}${
-      towerLast
+      towerStatus.battle
+        ? ` · 当前 ${towerStatus.battle.kills}/100，${towerStatus.battle.active ? "战斗中" : towerStatus.battle.phase === "cleared" ? "已通关" : "已结束"}`
+        : towerLast
         ? ` · 上次${towerLast.outcome === "win" ? "胜" : "败"}，修为 +${G.formatCoins(towerLast.gained)}`
         : ""
     }`;
@@ -1498,15 +1528,8 @@
     });
     el.cultTowerFloor.value = String(towerStatus.selected.floor);
     el.cultTowerFloor.disabled = status.expFull && status.boundary;
-    el.btnChallengeTower.disabled =
-      (status.expFull && status.boundary) ||
-      towerStatus.power.current + 1e-9 < towerStatus.selected.cost;
-    el.btnChallengeTower.textContent =
-      status.expFull && status.boundary
-        ? "突破后可继续挑战"
-        : towerStatus.power.current + 1e-9 < towerStatus.selected.cost
-          ? `灵力不足（需 ${G.formatCoins(towerStatus.selected.cost)}）`
-          : `挑战 ${towerStatus.selected.name}`;
+    el.btnChallengeTower.disabled = false;
+    el.btnChallengeTower.textContent = `打开 ${towerStatus.selected.name}`;
 
     el.cultRegionSelect.innerHTML = "";
     G.CULTIVATION.ORANGE_REGIONS.forEach((region) => {
@@ -2013,7 +2036,12 @@
       openQuizWindow("home");
       return;
     }
-    if (name === "inventory" || name === "opportunity" || (!TEST_MODE && EXTERNAL_TOOLS.has(name))) {
+    if (
+      name === "inventory" ||
+      name === "opportunity" ||
+      name === "blacktower" ||
+      (!TEST_MODE && EXTERNAL_TOOLS.has(name))
+    ) {
       void openToolWindow(name, name === "shop" ? { tab: shopTab } : undefined);
       return;
     }
@@ -3296,6 +3324,7 @@
       else if (cmd === "growth") openSidePanel("growth");
       else if (cmd === "inventory") openSidePanel("inventory");
       else if (cmd === "opportunity") openSidePanel("opportunity");
+      else if (cmd === "blacktower") openSidePanel("blacktower");
       else if (cmd === "gacha") openSidePanel("gacha");
       else if (cmd === "minigame") openSidePanel("minigame");
       else if (cmd === "quiz") openQuizWindow("home");
@@ -3587,7 +3616,7 @@
           result.reason === "realm"
             ? "炼气期后才能进入洞天福地"
             : result.reason === "stones"
-              ? "需要 1 枚下品灵石引路"
+              ? `需要 ${result.required} 枚${result.stone ? result.stone.short : ""}灵石引路`
               : result.reason === "active"
                 ? "当前洞天尚未离开"
                 : "这处福地已经关闭"
@@ -3608,6 +3637,7 @@
       refreshCultivation();
       scheduleSave(700);
     });
+    el.cultCaveSelect.addEventListener("change", () => renderCultivation());
     el.btnLeaveCave.addEventListener("click", () => {
       const result = G.leaveCaveHeaven(state, Date.now());
       if (!result.ok) {
@@ -3649,30 +3679,15 @@
       refreshCultivation();
     });
     el.btnChallengeTower.addEventListener("click", () => {
-      const result = G.challengeBlackTower(
-        state,
-        Number(el.cultTowerFloor.value),
-        Date.now()
-      );
+      const result = G.setBlackTowerFloor(state, Number(el.cultTowerFloor.value), Date.now());
       if (!result.ok) {
-        const messages = {
-          power: `灵力不足，需要 ${G.formatCoins(result.required)} 点`,
-          locked: `该层需要 Lv.${result.requiredLevel}`,
-          breakthrough: "当前大境界修为已满，请先完成突破",
-        };
-        toast(messages[result.reason] || "当前无法挑战黑塔");
-        refreshCultivation();
+        toast(`该层需要 Lv.${result.requiredLevel}`);
         return;
       }
-      toast(`${result.dialogue} · 消耗 ${G.formatCoins(result.cost)} 灵力`, 4600);
-      if (result.outcome === "win") {
-        speak("黑塔这一层，拿下了！", 2200);
-        playSound("upgrade");
-      } else {
-        speak("差一点，下次恢复灵力再来。", 2200);
-      }
-      refreshCultivation();
-      scheduleSave(700);
+      scheduleSave(300);
+      api.syncToolState(state, toolStateRevision);
+      api.openToolWindow("blacktower");
+      toast("已打开黑塔挑战");
     });
 
     el.btnRebirth.addEventListener("click", () => {

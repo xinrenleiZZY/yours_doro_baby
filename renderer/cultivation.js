@@ -1100,6 +1100,7 @@
       lastAgedAt: Number(now) || 0,
       bonusLifespan: 0,
       technique: 0,
+      hp: 100,
       spiritStones: 3,
       stones: { low: 3, mid: 0, high: 0, supreme: 0 },
       selectedStoneTier: "low",
@@ -1214,6 +1215,17 @@
     const rawTower = raw.blackTower && typeof raw.blackTower === "object" ? raw.blackTower : {};
     const rawTowerResult =
       rawTower.lastResult && typeof rawTower.lastResult === "object" ? rawTower.lastResult : null;
+    const rawBattle = rawTower.battle && typeof rawTower.battle === "object" ? rawTower.battle : null;
+    const battleLog = rawBattle && Array.isArray(rawBattle.log)
+      ? rawBattle.log
+          .filter((entry) => entry && typeof entry === "object")
+          .slice(-20)
+          .map((entry) => ({
+            at: Math.max(0, Number(entry.at) || 0),
+            type: String(entry.type || "info").slice(0, 20),
+            text: String(entry.text || "").slice(0, 160),
+          }))
+      : [];
     const rawSoul = raw.soul && typeof raw.soul === "object" ? raw.soul : {};
     const rawTechniqueScrolls =
       raw.techniqueScrolls && typeof raw.techniqueScrolls === "object" ? raw.techniqueScrolls : {};
@@ -1313,6 +1325,7 @@
       lastAgedAt: clamp(Number(raw.lastAgedAt) || timestamp, 0, Number.MAX_SAFE_INTEGER),
       bonusLifespan: integer(raw.bonusLifespan, 0, 0, 1e7),
       technique: clamp(Number(raw.technique) || 0, 0, MAX_TECHNIQUE_MASTERY),
+      hp: Math.max(0, Number(raw.hp) || 0),
       spiritStones: stones.low,
       stones,
       selectedStoneTier,
@@ -1362,11 +1375,43 @@
         bestFloor: integer(rawTower.bestFloor, 0, 0, 10),
         attempts: integer(rawTower.attempts, 0, 0, 1e9),
         wins: integer(rawTower.wins, 0, 0, 1e9),
+        autoAdvance: rawTower.autoAdvance === true,
+        loop: rawTower.loop === true,
+        nextBattleAt: Math.max(0, Number(rawTower.nextBattleAt) || 0),
+        battle: rawBattle
+          ? {
+              active: rawBattle.active === true,
+              paused: rawBattle.paused === true,
+              phase: ["mobs", "guardian", "cleared", "failed", "retreated"].includes(rawBattle.phase)
+                ? rawBattle.phase
+                : "mobs",
+              floor: integer(rawBattle.floor, 1, 1, 10),
+              entryCost: Math.max(0, Number(rawBattle.entryCost) || 0),
+              kills: integer(rawBattle.kills, 0, 0, 100),
+              total: 100,
+              mobHp: Math.max(0, Number(rawBattle.mobHp) || 0),
+              mobMaxHp: Math.max(1, Number(rawBattle.mobMaxHp) || 1),
+              mobAttack: Math.max(0, Number(rawBattle.mobAttack) || 0),
+              guardianHp: Math.max(0, Number(rawBattle.guardianHp) || 0),
+              guardianMaxHp: Math.max(0, Number(rawBattle.guardianMaxHp) || 0),
+              guardianAttack: Math.max(0, Number(rawBattle.guardianAttack) || 0),
+              guardianSpawned: rawBattle.guardianSpawned === true,
+              guardianDefeated: rawBattle.guardianDefeated === true,
+              startedAt: Math.max(0, Number(rawBattle.startedAt) || 0),
+              lastAttackAt: Math.max(0, Number(rawBattle.lastAttackAt) || 0),
+              clearedAt: Math.max(0, Number(rawBattle.clearedAt) || 0),
+              failedAt: Math.max(0, Number(rawBattle.failedAt) || 0),
+              rewardGained: Math.max(0, Number(rawBattle.rewardGained) || 0),
+              log: battleLog,
+            }
+          : null,
         lastResult: rawTowerResult
           ? {
               floor: integer(rawTowerResult.floor, 0, 0, 10),
               enemy: String(rawTowerResult.enemy || "").slice(0, 40),
-              outcome: rawTowerResult.outcome === "win" ? "win" : "loss",
+              outcome: ["win", "loss", "retreat"].includes(rawTowerResult.outcome)
+                ? rawTowerResult.outcome
+                : "loss",
               gained: Math.max(0, Number(rawTowerResult.gained) || 0),
               spent: Math.max(0, Number(rawTowerResult.spent) || 0),
               at: Math.max(0, Number(rawTowerResult.at) || 0),

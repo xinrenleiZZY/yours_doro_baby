@@ -13,6 +13,7 @@ body.tool-window #shop,
 body.tool-window #inventory,
 body.tool-window #opportunity,
 body.tool-window #gacha,
+body.tool-window #blacktower,
 body.tool-window #minigame,
 body.tool-window #sticker {
   position: static;
@@ -93,6 +94,352 @@ body.tool-window #opportunity {
 
 body.tool-window #opportunity.show {
   display: flex;
+}
+
+body.tool-window #blacktower {
+  display: none;
+  flex-direction: column;
+  gap: 10px;
+  overflow: hidden;
+}
+
+body.tool-window #blacktower.show {
+  display: flex;
+}
+
+body.tool-window #blacktower header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--pink-deep);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+body.tool-window #blacktower header em {
+  margin-left: auto;
+  color: #a98598;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 500;
+}
+
+body.tool-window #blacktower header button {
+  border: none;
+  background: transparent;
+  color: #b18d9f;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+body.tool-window .tower-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 218px;
+  gap: 12px;
+  min-height: 0;
+  flex: 1;
+}
+
+body.tool-window .tower-main {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  padding: 3px 4px 6px 0;
+}
+
+body.tool-window .tower-title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background:
+    radial-gradient(circle at 90% 10%, rgba(255, 205, 117, 0.28), transparent 38%),
+    linear-gradient(135deg, #fff9f3, #ffe9f1);
+}
+
+body.tool-window .tower-title-row small {
+  color: #a46a84;
+  font-size: 8px;
+  letter-spacing: 0.14em;
+}
+
+body.tool-window .tower-title-row h1 {
+  margin: 3px 0;
+  color: #733d59;
+  font-size: 22px;
+}
+
+body.tool-window .tower-title-row p {
+  margin: 0;
+  color: #967986;
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+body.tool-window #tower-floor-select {
+  flex: none;
+  max-width: 160px;
+  padding: 6px 8px;
+  border: 1px solid rgba(220, 91, 148, 0.24);
+  border-radius: 9px;
+  background: #fff;
+  color: var(--pink-deep);
+  font: 10px var(--font);
+}
+
+body.tool-window .tower-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 7px;
+}
+
+body.tool-window .tower-stat {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 9px;
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(221, 105, 153, 0.14);
+}
+
+body.tool-window .tower-stat span {
+  color: #9a8390;
+  font-size: 8.5px;
+}
+
+body.tool-window .tower-stat b {
+  color: #81445f;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+body.tool-window .tower-stat.hp b {
+  color: #b84f66;
+}
+
+body.tool-window .tower-mini-bar {
+  height: 5px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: rgba(122, 81, 99, 0.13);
+}
+
+body.tool-window .tower-mini-bar i {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #ff92ad, #dd568c);
+  transition: width 0.2s linear;
+}
+
+body.tool-window .tower-mini-bar.enemy i {
+  background: linear-gradient(90deg, #c89be7, #8c67c8);
+}
+
+body.tool-window .tower-mini-bar.guardian i {
+  background: linear-gradient(90deg, #ffd067, #d5921d);
+}
+
+body.tool-window .tower-progress-card {
+  padding: 10px 12px;
+  border-radius: 13px;
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(221, 105, 153, 0.14);
+}
+
+body.tool-window .tower-progress-head,
+body.tool-window .tower-progress-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: #8d7480;
+  font-size: 9px;
+}
+
+body.tool-window .tower-progress-head b {
+  color: #743d58;
+  font-size: 11px;
+}
+
+body.tool-window .tower-progress-track {
+  height: 8px;
+  overflow: hidden;
+  margin: 7px 0 5px;
+  border-radius: 99px;
+  background: #f1dde6;
+}
+
+body.tool-window .tower-progress-track i {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #f7afc6, #d54f88);
+  transition: width 0.2s linear;
+}
+
+body.tool-window .tower-enemy-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+body.tool-window .tower-enemy-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 9px 11px;
+  border-radius: 13px;
+  background: linear-gradient(135deg, rgba(249, 241, 255, 0.92), rgba(255, 240, 247, 0.88));
+  border: 1px solid rgba(150, 111, 184, 0.16);
+}
+
+body.tool-window .tower-enemy-card.guardian {
+  background: linear-gradient(135deg, #fff8df, #ffeadf);
+  border-color: rgba(208, 154, 55, 0.25);
+}
+
+body.tool-window .tower-enemy-card.pending {
+  opacity: 0.55;
+}
+
+body.tool-window .tower-enemy-icon {
+  flex: none;
+  font-size: 26px;
+}
+
+body.tool-window .tower-enemy-main {
+  min-width: 0;
+  flex: 1;
+}
+
+body.tool-window .tower-enemy-main b,
+body.tool-window .tower-enemy-main span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+body.tool-window .tower-enemy-main b {
+  color: #754359;
+  font-size: 10px;
+}
+
+body.tool-window .tower-enemy-main span {
+  margin: 2px 0 5px;
+  color: #987e8a;
+  font-size: 8.5px;
+}
+
+body.tool-window .tower-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+body.tool-window .tower-actions button {
+  flex: 1;
+  min-width: 92px;
+  padding: 8px 10px;
+  border: 1px solid rgba(214, 82, 137, 0.18);
+  border-radius: 10px;
+  background: #fff3f8;
+  color: #a3496d;
+  font: 10px var(--font);
+  cursor: pointer;
+}
+
+body.tool-window .tower-actions button.primary,
+body.tool-window .tower-actions button.active {
+  border-color: transparent;
+  background: linear-gradient(180deg, #ffabc9, #d9558a);
+  color: #fff;
+}
+
+body.tool-window .tower-actions button:disabled {
+  opacity: 0.42;
+  cursor: default;
+}
+
+body.tool-window .tower-log-panel {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  gap: 7px;
+  padding: 10px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.68);
+  border: 1px solid rgba(221, 105, 153, 0.14);
+}
+
+body.tool-window .tower-log-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: #80475f;
+  font-size: 10px;
+}
+
+body.tool-window .tower-log-head span {
+  color: #a58d98;
+  font-size: 8px;
+}
+
+body.tool-window .tower-log {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+body.tool-window .tower-log li {
+  padding: 6px 7px;
+  border-radius: 8px;
+  background: rgba(255, 246, 250, 0.84);
+  color: #886f7b;
+  font-size: 8.5px;
+  line-height: 1.4;
+}
+
+body.tool-window .tower-log li[data-type="hit"] {
+  color: #a34c55;
+}
+
+body.tool-window .tower-log li[data-type="block"],
+body.tool-window .tower-log li[data-type="dodge"] {
+  color: #4d7c73;
+}
+
+body.tool-window .tower-log li[data-type="clear"] {
+  color: #95651b;
+  background: #fff5d6;
+}
+
+@media (max-width: 680px) {
+  body.tool-window .tower-layout {
+    grid-template-columns: 1fr;
+    overflow-y: auto;
+  }
+
+  body.tool-window .tower-log-panel {
+    min-height: 150px;
+  }
 }
 
 body.tool-window #inventory header,

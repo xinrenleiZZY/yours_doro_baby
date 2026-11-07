@@ -10,6 +10,7 @@
     shop: document.getElementById("shop"),
     inventory: document.getElementById("inventory"),
     opportunity: document.getElementById("opportunity"),
+    blacktower: document.getElementById("blacktower"),
     gacha: document.getElementById("gacha"),
     minigame: document.getElementById("minigame"),
     sticker: document.getElementById("sticker"),
@@ -22,6 +23,7 @@
     shop: "doro 商城",
     inventory: "doro 背包",
     opportunity: "doro 机缘录",
+    blacktower: "doro 黑塔挑战",
     gacha: "doro 扭蛋机",
     minigame: "doro 接金币",
     sticker: "doro 动作库管理",
@@ -97,6 +99,7 @@
     if (tool === "shop") renderShop();
     else if (tool === "inventory") renderInventory();
     else if (tool === "opportunity") renderOpportunity();
+    else if (tool === "blacktower") renderBlackTower();
     else if (tool === "gacha") renderGacha();
     else if (tool === "minigame") renderMinigame();
     else if (tool === "sticker") renderSticker();
@@ -108,6 +111,7 @@
       if (Date.now() - lastShopRenderAt >= 15000) renderShop();
     } else if (tool === "inventory") renderInventory();
     else if (tool === "opportunity") renderOpportunity();
+    else if (tool === "blacktower") renderBlackTower();
     else if (tool === "gacha") renderGacha();
     else if (tool === "minigame") renderMinigame();
   }
@@ -764,6 +768,145 @@
     draw.textContent = status.cooldownMs > 0 ? `天机沉寂 · 还需 ${cooldownMinutes} 分钟` : "寻找机缘";
   }
 
+  // ------------------------------------------------------------- 黑塔
+  function renderBlackTower() {
+    const now = Date.now();
+    const status = G.blackTowerStatus(state, now);
+    const battle = status.battle;
+    const floorNumber = battle ? battle.floor : status.selected.floor;
+    const floor = status.floors.find((item) => item.floor === floorNumber) || status.selected;
+    const nextFloor = status.floors.find((item) => item.floor === floorNumber + 1);
+    const phaseLabels = {
+      mobs: "清剿小怪",
+      guardian: "守护者战",
+      cleared: "本层通关",
+      failed: "挑战失败",
+      retreated: "生命过低，自动退出",
+    };
+    const hpPercent = (status.combat.hp / Math.max(1, status.combat.maxHp)) * 100;
+    const lowHp = hpPercent < 20;
+    const healthRecovery = G.combatRecoveryRate(state);
+    const kills = battle ? battle.kills : 0;
+    const remaining = Math.max(0, 100 - kills);
+
+    $("tower-header-status").textContent = `第 ${floorNumber} 层 · 生命 ${G.formatCoins(status.combat.hp)}`;
+    $("tower-kicker").textContent = "DORO BLACK TOWER · 100 小怪 + 1 守护者";
+    $("tower-title").textContent = floor.name;
+    $("tower-subtitle").textContent = `${floor.enemy}镇守此层；小怪每秒攻击一次，剩余 30 只时守护者现身。当前生命恢复 +${healthRecovery.perSecond.toFixed(
+      2
+    )}/秒（${
+      healthRecovery.mode === "meditation"
+        ? "打坐"
+        : healthRecovery.mode === "stone"
+          ? "灵石修炼"
+          : "静养"
+    }）`;
+    $("tower-hp-value").textContent = `${G.formatCoins(status.combat.hp)} / ${G.formatCoins(status.combat.maxHp)}`;
+    $("tower-hp-value").title = `恢复 ${healthRecovery.perSecond.toFixed(2)}/秒（${
+      healthRecovery.mode === "meditation"
+        ? "打坐"
+        : healthRecovery.mode === "stone"
+          ? "灵石修炼"
+          : "静养"
+    }）`;
+    $("tower-hp-bar").style.width = `${Math.max(0, Math.min(100, hpPercent))}%`;
+    $("tower-attack").textContent = G.formatCoins(status.combat.attack);
+    $("tower-defense").textContent = G.formatCoins(status.combat.defense);
+    $("tower-power").textContent = `${G.formatCoins(status.power.current)} / ${G.formatCoins(
+      status.power.max
+    )}`;
+    $("tower-floor-state").textContent = battle ? phaseLabels[battle.phase] : "尚未开始";
+    $("tower-kill-count").textContent = `${kills} / 100`;
+    $("tower-kill-bar").style.width = `${kills}%`;
+    $("tower-remaining").textContent = remaining ? `剩余小怪 ${remaining}` : "百只小怪已清空";
+    $("tower-floor-reward").textContent = `通关修为 +${G.formatCoins(floor.reward)} · 进入灵力 ${G.formatCoins(
+      floor.cost
+    )}${battle && battle.rewardGained ? ` · 本层已获 +${G.formatCoins(battle.rewardGained)}` : ""}`;
+
+    const mobCard = $("tower-mob-card");
+    const mobBar = $("tower-mob-bar");
+    const guardianCard = $("tower-guardian-card");
+    const guardianBar = $("tower-guardian-bar");
+    if (battle && battle.active && battle.phase === "mobs") {
+      $("tower-mob-status").textContent = `生命 ${G.formatCoins(battle.mobHp)} / ${G.formatCoins(
+        battle.mobMaxHp
+      )} · 每次攻击 ${G.formatCoins(battle.mobAttack)}`;
+      mobBar.style.width = `${Math.max(0, (battle.mobHp / Math.max(1, battle.mobMaxHp)) * 100)}%`;
+      mobCard.classList.remove("pending");
+    } else if (battle && battle.kills >= 100) {
+      $("tower-mob-status").textContent = "100 只小怪已全部清除";
+      mobBar.style.width = "0%";
+    } else {
+      $("tower-mob-status").textContent = "等待挑战开始";
+      mobBar.style.width = battle ? `${Math.max(0, (battle.mobHp / Math.max(1, battle.mobMaxHp)) * 100)}%` : "100%";
+      mobCard.classList.toggle("pending", !battle || !battle.active);
+    }
+    if (battle && battle.guardianSpawned) {
+      $("tower-guardian-name").textContent = floor.enemy;
+      $("tower-guardian-status").textContent = battle.guardianDefeated
+        ? "守护者已击败"
+        : `生命 ${G.formatCoins(battle.guardianHp)} / ${G.formatCoins(battle.guardianMaxHp)} · 每次攻击 ${G.formatCoins(battle.guardianAttack)}`;
+      guardianBar.style.width = `${Math.max(
+        0,
+        (battle.guardianHp / Math.max(1, battle.guardianMaxHp)) * 100
+      )}%`;
+      guardianCard.classList.remove("pending");
+    } else {
+      $("tower-guardian-name").textContent = floor.enemy;
+      $("tower-guardian-status").textContent = "剩余 30 只小怪时出现";
+      guardianBar.style.width = "100%";
+      guardianCard.classList.add("pending");
+    }
+
+    const select = $("tower-floor-select");
+    select.innerHTML = "";
+    status.floors.forEach((item) => {
+      const option = document.createElement("option");
+      option.value = String(item.floor);
+      option.disabled = !item.unlocked;
+      option.textContent = `${item.unlocked ? "" : "🔒 "}${item.name} · Lv.${item.minLevel}`;
+      select.appendChild(option);
+    });
+    select.value = String(floorNumber);
+    select.disabled = Boolean(battle && battle.active);
+
+    $("tower-start").disabled = Boolean(battle && battle.active) || lowHp;
+    $("tower-start").textContent =
+      battle && battle.active
+        ? "挑战进行中"
+        : lowHp
+          ? "生命低于 20%，请先恢复"
+          : battle && battle.phase === "cleared"
+            ? "重新挑战本层"
+            : "开始挑战";
+    $("tower-pause").disabled = !(battle && battle.active);
+    $("tower-pause").textContent = battle && battle.paused ? "继续战斗" : "暂停战斗";
+    $("tower-next").disabled =
+      !battle || battle.phase !== "cleared" || !nextFloor || !nextFloor.unlocked;
+    $("tower-auto").classList.toggle("active", status.autoAdvance);
+    $("tower-auto").textContent = `自动通关：${status.autoAdvance ? "开" : "关"}`;
+    $("tower-auto").disabled = lowHp && !status.autoAdvance;
+    $("tower-loop").classList.toggle("active", status.loop);
+    $("tower-loop").textContent = `循环刷：${status.loop ? "开" : "关"}`;
+    $("tower-loop").disabled = lowHp && !status.loop;
+
+    const log = $("tower-log");
+    log.innerHTML = "";
+    const entries = battle && battle.log ? battle.log.slice(-12).reverse() : [];
+    if (!entries.length) {
+      const empty = document.createElement("li");
+      empty.textContent = "等待挑战开始";
+      log.appendChild(empty);
+    } else {
+      entries.forEach((entry) => {
+        const item = document.createElement("li");
+        item.dataset.type = entry.type;
+        item.textContent = entry.text;
+        log.appendChild(item);
+      });
+    }
+  }
+
   // ------------------------------------------------------------- 扭蛋
   function formatGachaHistoryTime(value) {
     const date = new Date(Number(value) || 0);
@@ -1098,6 +1241,41 @@
         renderOpportunity();
       });
       $("opportunity-draw").addEventListener("click", () => runCommand({ type: "draw" }, "buy"));
+      return;
+    }
+
+    if (tool === "blacktower") {
+      $("tower-floor-select").addEventListener("change", () =>
+        runCommand({ type: "tower-select-floor", floor: Number($("tower-floor-select").value) })
+      );
+      $("tower-start").addEventListener("click", () =>
+        runCommand(
+          { type: "tower-start", floor: Number($("tower-floor-select").value) },
+          "buy"
+        )
+      );
+      $("tower-pause").addEventListener("click", () =>
+        runCommand({ type: "tower-pause" })
+      );
+      $("tower-next").addEventListener("click", () =>
+        runCommand({ type: "tower-next" }, "buy")
+      );
+      $("tower-auto").addEventListener("click", () => {
+        const enabled = !state.cultivation.blackTower.autoAdvance;
+        runCommand({
+          type: "tower-auto",
+          enabled,
+          floor: Number($("tower-floor-select").value),
+        });
+      });
+      $("tower-loop").addEventListener("click", () => {
+        const enabled = !state.cultivation.blackTower.loop;
+        runCommand({
+          type: "tower-loop",
+          enabled,
+          floor: Number($("tower-floor-select").value),
+        });
+      });
       return;
     }
 

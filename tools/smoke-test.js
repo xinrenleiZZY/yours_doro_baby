@@ -720,7 +720,12 @@ async function openWindow() {
 }
 
 async function openToolWindowPage(tool) {
-  const size = tool === "gacha" ? { width: 800, height: 600 } : { width: 620, height: 700 };
+  const size =
+    tool === "gacha"
+      ? { width: 800, height: 600 }
+      : tool === "blacktower"
+        ? { width: 720, height: 760 }
+        : { width: 620, height: 700 };
   const win = new BrowserWindow({
     width: size.width,
     height: size.height,
@@ -1015,6 +1020,7 @@ async function runScenarios(win) {
     `({
       options: document.querySelectorAll("#cult-cave-select option").length,
       large: [...document.querySelectorAll("#cult-cave-select option")].filter((option) => option.textContent.includes("大型")).length,
+      labels: [...document.querySelectorAll("#cult-cave-select option")].map((option) => option.textContent),
       status: document.getElementById("cult-cave-status").textContent,
       battleButtons: document.querySelectorAll("#cult-cave-battle-actions button").length,
       battleHidden: document.getElementById("cult-cave-battle-actions").hidden,
@@ -1030,6 +1036,9 @@ async function runScenarios(win) {
       caveMap.status.includes("大型") &&
       caveMap.battleButtons === 3 &&
       caveMap.battleHidden &&
+      caveMap.labels.some((label) => label.includes("10下品")) &&
+      caveMap.labels.some((label) => label.includes("3极品")) &&
+      caveMap.labels.every((label) => !label.includes("undefined")) &&
       caveMap.towerFloors === 10 &&
       caveMap.towerStatus.includes("灵力"),
     JSON.stringify(caveMap)
@@ -1050,7 +1059,7 @@ async function runScenarios(win) {
   check(
     "可以选择并进入洞天福地，获得随机功法或丹药",
     caveEntered.cultivation.cave.active &&
-      caveEntered.cultivation.stones.low === stonesBeforeCave - 1 &&
+      caveEntered.cultivation.stones.low === stonesBeforeCave - 10 &&
       (caveEntered.cultivation.cave.lastLoot.techniqueName || caveEntered.cultivation.cave.lastLoot.pillName),
     JSON.stringify(caveEntered.cultivation.cave)
   );
@@ -1066,15 +1075,11 @@ async function runScenarios(win) {
   await js(win, `document.getElementById("btn-meditate").click()`);
   await wait(100);
   check("停止打坐后恢复常驻动作", (await getState(win)).cultivation.meditation.active === false);
-  const towerBefore = await getState(win);
   await js(win, `document.getElementById("btn-challenge-tower").click()`);
   await wait(120);
-  const towerAfter = await getState(win);
   check(
-    "黑塔挑战扣除灵力并结算修为",
-    towerAfter.cultivation.blackTower.attempts === towerBefore.cultivation.blackTower.attempts + 1 &&
-      towerAfter.cultivation.spiritualPower < towerBefore.cultivation.spiritualPower,
-    `灵力 ${towerBefore.cultivation.spiritualPower.toFixed(1)}→${towerAfter.cultivation.spiritualPower.toFixed(1)}`
+    "黑塔挑战从独立窗口打开",
+    calls.toolOpened.at(-1) === "blacktower"
   );
   await js(win, `document.getElementById("btn-leave-cave").click()`);
   await wait(100);
@@ -1087,6 +1092,9 @@ async function runScenarios(win) {
   await js(win, `document.querySelector('[data-cmd="opportunity"]').click()`);
   await wait(120);
   check("从菜单打开机缘录会使用独立窗口", calls.toolOpened.at(-1) === "opportunity");
+  await js(win, `document.querySelector('[data-cmd="blacktower"]').click()`);
+  await wait(120);
+  check("从菜单打开黑塔会使用独立窗口", calls.toolOpened.at(-1) === "blacktower");
   win.setSize(320, 360);
   await wait(120);
   await js(win, `window.__doroTest.setLevel(2)`);
@@ -2544,6 +2552,86 @@ async function runToolWindowScenarios() {
     (await js(opportunity, `document.querySelectorAll(".opportunity-history-item").length`)) === 1
   );
   opportunity.close();
+  await wait(120);
+
+  toolState = G.hydrate(
+    {
+      level: 41,
+      coins: 20000,
+      cultivation: {
+        attributes: {
+          root: "metal",
+          insight: 90,
+          fortune: 80,
+          daoHeart: 90,
+          lifespan: 120,
+        },
+        lastAgedAt: Date.now(),
+      },
+    },
+    Date.now()
+  );
+  toolRevision += 1;
+  const blackTower = await openToolWindowPage("blacktower");
+  const towerPage = await js(
+    blackTower,
+    `({
+      tool: document.body.dataset.tool,
+      open: document.getElementById("blacktower").classList.contains("show"),
+      title: document.getElementById("tower-title").textContent,
+      floors: document.querySelectorAll("#tower-floor-select option").length,
+      kills: document.getElementById("tower-kill-count").textContent,
+      guardian: document.getElementById("tower-guardian-status").textContent,
+      hp: document.getElementById("tower-hp-value").textContent,
+      attack: document.getElementById("tower-attack").textContent,
+      defense: document.getElementById("tower-defense").textContent,
+      auto: document.getElementById("tower-auto").textContent,
+      loop: document.getElementById("tower-loop").textContent
+    })`
+  );
+  check(
+    "黑塔独立页面显示生命、攻击、防御、百怪进度与守护者",
+    towerPage.tool === "blacktower" &&
+      towerPage.open &&
+      towerPage.title.includes("黑塔") &&
+      towerPage.floors === 10 &&
+      towerPage.kills === "0 / 100" &&
+      towerPage.guardian.includes("剩余 30") &&
+      /\d/.test(towerPage.hp) &&
+      /\d/.test(towerPage.attack) &&
+      /\d/.test(towerPage.defense) &&
+      towerPage.auto.includes("关") &&
+      towerPage.loop.includes("关"),
+    JSON.stringify(towerPage)
+  );
+  const powerBeforeTower = toolState.cultivation.spiritualPower;
+  await js(blackTower, `document.getElementById("tower-start").click()`);
+  await wait(220);
+  const towerStarted = await js(blackTower, `window.__toolTest.getState()`);
+  check(
+    "黑塔开始后进入逐秒战斗并扣除灵力",
+    towerStarted.cultivation.blackTower.battle.active === true &&
+      towerStarted.cultivation.blackTower.battle.total === 100 &&
+      towerStarted.cultivation.spiritualPower < powerBeforeTower,
+    `灵力 ${powerBeforeTower.toFixed(1)}→${towerStarted.cultivation.spiritualPower.toFixed(1)}`
+  );
+  await js(blackTower, `document.getElementById("tower-auto").click()`);
+  await wait(180);
+  await js(blackTower, `document.getElementById("tower-loop").click()`);
+  await wait(180);
+  const towerAutomation = await js(blackTower, `window.__toolTest.getState()`);
+  check(
+    "黑塔支持自动通关与循环刷模式",
+    towerAutomation.cultivation.blackTower.loop === true &&
+      towerAutomation.cultivation.blackTower.autoAdvance === false
+  );
+  await js(blackTower, `document.getElementById("tower-pause").click()`);
+  await wait(150);
+  check(
+    "黑塔战斗可以暂停",
+    (await js(blackTower, `window.__toolTest.getState()`)).cultivation.blackTower.battle.paused === true
+  );
+  blackTower.close();
   await wait(120);
 
   toolState = G.hydrate({ coins: 20000, satiety: 80, mood: 80 }, Date.now());

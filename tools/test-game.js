@@ -635,7 +635,7 @@ test("洞天福地固定 10 处，每轮随机 1–3 个大型并可选择前往
           daoHeart: 80,
           lifespan: 100,
         },
-        stones: { low: 5, mid: 0, high: 0, supreme: 0 },
+        stones: { low: 10, mid: 0, high: 0, supreme: 3 },
         regionId: "qingju_plain",
         lastAgedAt: NOW,
       },
@@ -654,6 +654,12 @@ test("洞天福地固定 10 处，每轮随机 1–3 个大型并可选择前往
   const target = status.spots.find((spot) => spot.size === "small");
   const entered = G.enterCaveHeaven(state, target.id, NOW, () => 0);
   assert.strictEqual(entered.ok, true);
+  assert.deepStrictEqual(entered.entryCost, {
+    tier: "low",
+    amount: 10,
+    stone: G.CULTIVATION.STONE_TIERS.low,
+  });
+  assert.strictEqual(state.cultivation.stones.low, 0);
   assert.strictEqual(state.cultivation.cave.active.id, target.id);
   assert.strictEqual(entered.rewards.length, 1);
   assert.notStrictEqual(entered.rewards[0].type, "none");
@@ -675,7 +681,7 @@ test("大型福地守灵支持避战、观望和战斗，分别调整爆率与�
             daoHeart: 80,
             lifespan: 100,
           },
-          stones: { low: 5, mid: 0, high: 0, supreme: 0 },
+          stones: { low: 10, mid: 0, high: 0, supreme: 3 },
           regionId: "qingju_plain",
           lastAgedAt: NOW,
         },
@@ -688,6 +694,8 @@ test("大型福地守灵支持避战、观望和战斗，分别调整爆率与�
     const large = status.spots.find((spot) => spot.size === "large");
     const entered = G.enterCaveHeaven(state, large.id, NOW, () => 0);
     assert.strictEqual(entered.challenge, true);
+    assert.strictEqual(entered.entryCost.tier, "supreme");
+    assert.strictEqual(state.cultivation.stones.supreme, 0);
     assert.strictEqual(state.cultivation.cave.challenge.id, large.id);
     return state;
   };
@@ -719,6 +727,32 @@ test("大型福地守灵支持避战、观望和战斗，分别调整爆率与�
   assert.strictEqual(failure.combat.outcome, "loss");
   assert.ok(failure.combat.lost > 0);
   assert.ok(lost.cultivation.exp < beforeLoss);
+});
+
+test("小型福地收取 10 下品，大型福地收取 3 极品且不足时不扣费", () => {
+  const state = G.hydrate(
+    {
+      level: 41,
+      cultivation: {
+        stones: { low: 9, mid: 0, high: 0, supreme: 2 },
+        lastAgedAt: NOW,
+      },
+    },
+    NOW
+  );
+  const status = G.caveHeavenStatus(state, NOW, () => 0);
+  const small = status.spots.find((spot) => spot.size === "small");
+  const large = status.spots.find((spot) => spot.size === "large");
+  const smallResult = G.enterCaveHeaven(state, small.id, NOW, () => 0);
+  assert.strictEqual(smallResult.reason, "stones");
+  assert.strictEqual(smallResult.required, 10);
+  assert.strictEqual(smallResult.stone.id, "low");
+  assert.strictEqual(state.cultivation.stones.low, 9);
+  const largeResult = G.enterCaveHeaven(state, large.id, NOW, () => 0);
+  assert.strictEqual(largeResult.reason, "stones");
+  assert.strictEqual(largeResult.required, 3);
+  assert.strictEqual(largeResult.stone.id, "supreme");
+  assert.strictEqual(state.cultivation.stones.supreme, 2);
 });
 
 test("悟道丹、培元丹和静心丹会消耗并随机生效", () => {
@@ -2660,7 +2694,7 @@ test("灵力上限累计此前修为并随环境与修为效率恢复", () => {
   assert.ok(recovered.environmentFactor > 1);
 });
 
-test("黑塔按等级挑战、扣除灵力并奖励修为", () => {
+test("黑塔逐秒挑战百只小怪，剩余 30 只出现守护者并在清完后奖励修为", () => {
   const state = G.hydrate(
     {
       level: 21,
@@ -2685,13 +2719,222 @@ test("黑塔按等级挑战、扣除灵力并奖励修为", () => {
   const result = G.challengeBlackTower(state, 3, NOW, () => 0);
   assert.strictEqual(result.ok, true);
   assert.ok(result.cost > 0);
-  assert.ok(result.gained > 0);
   assert.ok(state.cultivation.spiritualPower < tower.power.max);
   assert.strictEqual(state.cultivation.blackTower.attempts, 1);
+  assert.strictEqual(state.cultivation.blackTower.battle.active, true);
+  const savedBattle = sanitizeSave(state);
+  assert.strictEqual(savedBattle.cultivation.blackTower.battle.total, 100);
+  assert.strictEqual(savedBattle.cultivation.blackTower.battle.active, true);
+  let sawGuardian = false;
+  for (let second = 1; second <= 2000 && state.cultivation.blackTower.battle.active; second += 1) {
+    G.advanceBlackTowerBattle(state, NOW + second * 1000, () => 0);
+    if (state.cultivation.blackTower.battle.guardianSpawned) sawGuardian = true;
+  }
+  assert.strictEqual(sawGuardian, true);
+  assert.strictEqual(state.cultivation.blackTower.battle.kills, 100);
+  assert.strictEqual(state.cultivation.blackTower.battle.guardianDefeated, true);
+  assert.strictEqual(state.cultivation.blackTower.battle.phase, "cleared");
+  assert.ok(state.cultivation.blackTower.battle.rewardGained > 0);
   state.cultivation.spiritualPower = 0;
   state.cultivation.spiritualPowerUpdatedAt = NOW;
   const blocked = G.challengeBlackTower(state, 3, NOW, () => 0);
   assert.strictEqual(blocked.reason, "power");
+});
+
+test("修为越高生命、攻击和防御越高", () => {
+  const cultivation = {
+    attributes: {
+      root: "metal",
+      insight: 80,
+      fortune: 70,
+      daoHeart: 80,
+      lifespan: 100,
+      rootLineage: 20,
+    },
+    lastAgedAt: NOW,
+  };
+  const low = G.hydrate({ level: 40, cultivation }, NOW);
+  const high = G.hydrate({ level: 41, cultivation }, NOW);
+  const lowStats = G.combatStats(low);
+  const highStats = G.combatStats(high);
+  assert.ok(highStats.maxHp > lowStats.maxHp);
+  assert.ok(highStats.attack > lowStats.attack);
+  assert.ok(highStats.defense > lowStats.defense);
+  assert.ok(Math.abs(highStats.maxHp / lowStats.maxHp - 1.08) < 0.002);
+  assert.ok(Math.abs(highStats.attack / lowStats.attack - 1.075) < 0.002);
+  assert.ok(Math.abs(highStats.defense / lowStats.defense - 1.07) < 0.002);
+  const maxLevel = G.hydrate({ level: 999, cultivation }, NOW);
+  const maxStats = G.combatStats(maxLevel);
+  assert.ok(Number.isFinite(maxStats.maxHp));
+  assert.ok(Number.isFinite(maxStats.attack));
+  assert.ok(Number.isFinite(maxStats.defense));
+});
+
+test("小怪每秒攻击会产生防御、闪避或受伤结果", () => {
+  const make = () => {
+    const state = G.hydrate(
+      {
+        level: 41,
+        cultivation: {
+          spiritualPower: 100000,
+          spiritualPowerUpdatedAt: NOW,
+          lastAgedAt: NOW,
+        },
+      },
+      NOW
+    );
+    state.cultivation.spiritualPower = G.spiritualPowerCapacity(state.cultivation, state.level);
+    G.startBlackTowerBattle(state, 1, NOW, () => 0);
+    return state;
+  };
+  const sequence = (values) => {
+    let index = 0;
+    return () => values[Math.min(index++, values.length - 1)];
+  };
+  const blocked = make();
+  const blockedHp = blocked.cultivation.hp;
+  G.advanceBlackTowerBattle(blocked, NOW + 1000, sequence([0, 0]));
+  assert.strictEqual(blocked.cultivation.hp, blockedHp);
+  assert.strictEqual(blocked.cultivation.blackTower.battle.log.at(-1).type, "block");
+  const dodged = make();
+  const dodgedHp = dodged.cultivation.hp;
+  G.advanceBlackTowerBattle(dodged, NOW + 1000, sequence([0, 0.99, 0]));
+  assert.strictEqual(dodged.cultivation.hp, dodgedHp);
+  assert.strictEqual(dodged.cultivation.blackTower.battle.log.at(-1).type, "dodge");
+  const damaged = make();
+  const damagedHp = damaged.cultivation.hp;
+  G.advanceBlackTowerBattle(damaged, NOW + 1000, () => 0.99);
+  assert.ok(damaged.cultivation.hp < damagedHp);
+  assert.strictEqual(damaged.cultivation.blackTower.battle.log.at(-1).type, "hit");
+});
+
+test("生命低于 20% 自动退出黑塔，打坐和修炼可缓慢恢复", () => {
+  const make = () => {
+    const state = G.hydrate(
+      {
+        level: 41,
+        cultivation: {
+          spiritualPower: 100000,
+          spiritualPowerUpdatedAt: NOW,
+          lastAgedAt: NOW,
+        },
+      },
+      NOW
+    );
+    state.cultivation.spiritualPower = G.spiritualPowerCapacity(state.cultivation, state.level);
+    return state;
+  };
+  const state = make();
+  state.cultivation.blackTower.autoAdvance = true;
+  G.startBlackTowerBattle(state, 1, NOW, () => 0);
+  const maxHp = G.combatStats(state).maxHp;
+  for (let second = 1; second <= 20; second += 1) {
+    G.advanceBlackTowerBattle(state, NOW + second * 1000, () => 0);
+  }
+  assert.ok(state.cultivation.blackTower.battle.rewardGained > 0);
+  assert.ok(state.cultivation.blackTower.battle.kills > 0);
+  state.cultivation.hp = Math.floor(maxHp * 0.2001);
+  G.advanceBlackTowerBattle(state, NOW + 21000, () => 0.99);
+  const battle = state.cultivation.blackTower.battle;
+  assert.strictEqual(battle.active, false);
+  assert.strictEqual(battle.phase, "retreated");
+  assert.ok(state.cultivation.hp / maxHp < 0.2);
+  assert.strictEqual(state.cultivation.blackTower.autoAdvance, false);
+  assert.strictEqual(state.cultivation.blackTower.loop, false);
+  const blockedStart = G.startBlackTowerBattle(state, 1, NOW + 2000, () => 0);
+  assert.strictEqual(blockedStart.reason, "low-hp");
+
+  const beforeMeditation = state.cultivation.hp;
+  state.lastTick = NOW + 2000;
+  state.cultivation.meditation.active = true;
+  state.cultivation.meditation.lastAt = NOW + 2000;
+  G.tick(state, 60000);
+  assert.ok(state.cultivation.hp > beforeMeditation);
+
+  const beforeStone = state.cultivation.hp;
+  state.lastTick = NOW + 62000;
+  state.cultivation.meditation.active = false;
+  state.cultivation.stoneSession = {
+    active: true,
+    startedAt: NOW + 62000,
+    endsAt: NOW + 600000,
+    completedAt: 0,
+    quantity: 1,
+    tier: "low",
+    totalEnergy: 10,
+    energyPerSecond: 1,
+    durationMs: 538000,
+    gained: 0,
+    levelsGained: 0,
+    noProgress: false,
+    epiphany: false,
+    damaged: 0,
+    techniqueGain: 0,
+  };
+  G.tick(state, 60000);
+  assert.ok(state.cultivation.hp > beforeStone);
+});
+
+test("自动通关前往下一层，循环刷重新挑战本层", () => {
+  const make = () => {
+    const state = G.hydrate(
+      {
+        level: 30,
+        cultivation: {
+          spiritualPower: 100000,
+          spiritualPowerUpdatedAt: NOW,
+          lastAgedAt: NOW,
+        },
+      },
+      NOW
+    );
+    state.cultivation.spiritualPower = G.spiritualPowerCapacity(state.cultivation, state.level);
+    return state;
+  };
+  const runUntilClear = (state) => {
+    let second = 1;
+    while (state.cultivation.blackTower.battle.active && second < 3000) {
+      G.advanceBlackTowerBattle(state, NOW + second * 1000, () => 0);
+      second += 1;
+    }
+    return second;
+  };
+
+  const looping = make();
+  const loopStart = G.setBlackTowerAutomation(looping, { loop: true }, NOW, () => 0);
+  assert.strictEqual(loopStart.ok, true);
+  const loopSeconds = runUntilClear(looping);
+  const loopTower = looping.cultivation.blackTower;
+  assert.strictEqual(loopTower.loop, true);
+  assert.ok(loopTower.nextBattleAt > 0);
+  G.advanceBlackTowerBattle(looping, loopTower.nextBattleAt, () => 0);
+  assert.strictEqual(looping.cultivation.blackTower.battle.active, true);
+  assert.strictEqual(looping.cultivation.blackTower.battle.floor, 1);
+  assert.strictEqual(looping.cultivation.blackTower.attempts, 2);
+
+  const advancing = make();
+  const autoStart = G.setBlackTowerAutomation(advancing, { autoAdvance: true }, NOW, () => 0);
+  assert.strictEqual(autoStart.ok, true);
+  runUntilClear(advancing);
+  const advanceTower = advancing.cultivation.blackTower;
+  assert.strictEqual(advanceTower.autoAdvance, true);
+  assert.ok(advanceTower.nextBattleAt > 0);
+  G.advanceBlackTowerBattle(advancing, advanceTower.nextBattleAt, () => 0);
+  assert.strictEqual(advancing.cultivation.blackTower.battle.active, true);
+  assert.strictEqual(advancing.cultivation.blackTower.battle.floor, 2);
+  assert.ok(loopSeconds > 0);
+
+  const disabled = make();
+  const disabledPower = disabled.cultivation.spiritualPower;
+  const disabledResult = G.setBlackTowerAutomation(
+    disabled,
+    { autoAdvance: false, loop: false },
+    NOW,
+    () => 0
+  );
+  assert.strictEqual(disabledResult.ok, true);
+  assert.strictEqual(disabled.cultivation.blackTower.battle, null);
+  assert.strictEqual(disabled.cultivation.spiritualPower, disabledPower);
 });
 
 test("主动离开洞天会同时清除福地与守灵挑战", () => {
@@ -2765,7 +3008,7 @@ test("v28 存档迁移后保留进度并补齐辟谷与元婴字段", () => {
   assert.strictEqual(state.cultivation.attributes.root, "metal");
   assert.strictEqual(state.cultivation.pills.bigu, 0);
   const clean = sanitizeSave(state);
-  assert.strictEqual(clean.version, 29);
+  assert.strictEqual(clean.version, 30);
   assert.strictEqual(clean.cultivation.pills.bigu, 0);
   assert.strictEqual(clean.cultivation.biguUntil, 0);
 });

@@ -241,6 +241,50 @@ test("独立机缘窗口可抽取并结算选项", () => {
   assert.strictEqual(resolved.state.opportunities.history.length, 1);
 });
 
+test("黑塔独立窗口可开始战斗并切换自动模式", () => {
+  const state = G.hydrate(
+    {
+      level: 20,
+      cultivation: {
+        spiritualPower: 100000,
+        spiritualPowerUpdatedAt: NOW,
+        lastAgedAt: NOW,
+      },
+    },
+    NOW
+  );
+  state.cultivation.spiritualPower = G.spiritualPowerCapacity(state.cultivation, state.level);
+  const started = applyToolCommand(
+    state,
+    actions,
+    "blacktower",
+    { type: "tower-start", floor: 1 },
+    NOW
+  );
+  assert.strictEqual(started.ok, true);
+  assert.strictEqual(started.state.cultivation.blackTower.battle.active, true);
+  const automated = applyToolCommand(
+    started.state,
+    actions,
+    "blacktower",
+    { type: "tower-auto", enabled: true, floor: 2 },
+    NOW
+  );
+  assert.strictEqual(automated.ok, true);
+  assert.strictEqual(automated.state.cultivation.blackTower.autoAdvance, true);
+  assert.strictEqual(automated.state.cultivation.blackTower.loop, false);
+  const looping = applyToolCommand(
+    automated.state,
+    actions,
+    "blacktower",
+    { type: "tower-loop", enabled: true, floor: 2 },
+    NOW
+  );
+  assert.strictEqual(looping.ok, true);
+  assert.strictEqual(looping.state.cultivation.blackTower.loop, true);
+  assert.strictEqual(looping.state.cultivation.blackTower.autoAdvance, false);
+});
+
 test("装扮按动作清单价格解锁", () => {
   const state = G.hydrate({ coins: 100000 }, NOW);
   const result = applyToolCommand(

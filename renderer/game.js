@@ -12,7 +12,7 @@
 })(typeof self !== "undefined" ? self : this, function (C, O) {
   "use strict";
 
-  const SAVE_VERSION = 29;
+  const SAVE_VERSION = 30;
 
   // ---- 经济数值 -------------------------------------------------------------
   const BALANCE = {
@@ -157,6 +157,11 @@
     { floor: 9, name: "黑塔九层", minLevel: 81, enemy: "吞光魔龙", costRatio: 0.38, rewardRatio: 0.94, difficulty: 0.55 },
     { floor: 10, name: "黑塔之巅", minLevel: 91, enemy: "黑塔魔君", costRatio: 0.42, rewardRatio: 1.08, difficulty: 0.58 },
   ]);
+  const COMBAT_GROWTH = Object.freeze({
+    hp: 1.08,
+    attack: 1.075,
+    defense: 1.07,
+  });
 
   function normalizeShortcuts(raw) {
     const source = raw && typeof raw === "object" ? raw : {};
@@ -2441,6 +2446,30 @@
               }
             : null,
       }),
+    // 29 -> 30：生命/攻击/防御与黑塔逐层实时战斗
+    29: (raw) =>
+      Object.assign({}, raw, {
+        version: 30,
+        cultivation:
+          raw.cultivation && typeof raw.cultivation === "object"
+            ? {
+                ...raw.cultivation,
+                hp: raw.cultivation.hp || 0,
+                blackTower: {
+                  selectedFloor: 1,
+                  bestFloor: 0,
+                  attempts: 0,
+                  wins: 0,
+                  autoAdvance: false,
+                  loop: false,
+                  nextBattleAt: 0,
+                  battle: null,
+                  lastResult: null,
+                  ...(raw.cultivation.blackTower || {}),
+                },
+              }
+            : null,
+      }),
   };
 
   function migrate(raw) {
@@ -2464,6 +2493,16 @@
     state.totalEarned = num(raw.totalEarned, state.coins, 0);
     state.level = Math.round(num(raw.level, 1, 1, 999));
     state.cultivation = C.normalizeCultivation(raw.cultivation, now, rng);
+    if (!(Number(raw.cultivation && raw.cultivation.hp) > 0)) {
+      state.cultivation.hp = combatStats(state).maxHp;
+    }
+    if (
+      state.cultivation.blackTower &&
+      state.cultivation.blackTower.battle &&
+      state.cultivation.blackTower.battle.active
+    ) {
+      state.cultivation.blackTower.battle.lastAttackAt = now;
+    }
     if (!Number.isFinite(Number(raw.cultivation && raw.cultivation.spiritualPower))) {
       state.cultivation.spiritualPowerMax = spiritualPowerCapacity(state.cultivation, state.level);
       state.cultivation.spiritualPower = state.cultivation.spiritualPowerMax;
@@ -2893,6 +2932,8 @@
     }
     state.lastTick = tickNow;
     const spiritualPower = recoverSpiritualPower(state, tickNow);
+    const towerBattle = advanceBlackTowerBattle(state, tickNow, rng);
+    regenerateCombatHealth(state, seconds);
     const meditation = settleMeditation(state, tickNow);
     const stoneCultivation = settleStoneCultivation(state, tickNow, rng);
     const lifespan = advanceLifespan(state, tickNow, rng);
@@ -2902,6 +2943,7 @@
       efficiency,
       autoFed,
       spiritualPower,
+      towerBattle,
       meditation,
       stoneCultivation,
       lifespan,
@@ -2936,6 +2978,7 @@
       );
     }
     state.mood = Math.max(BALANCE.offlineMoodFloor, state.mood - (BALANCE.moodDecayPerMinute * capped) / 60);
+    regenerateCombatHealth(state, capped);
     state.lastTick = now;
     const lifespan = advanceLifespan(state, now, rng);
     return {
@@ -3074,9 +3117,99 @@
     };
   }
 
+  function combatStats(state) {
+    const cultivation = state.cultivation;
+    const attrs = C.talentSummary(cultivation && cultivation.attributes);
+    const lineage = Math.max(0, Number(attrs.rootLineage) || 0);
+    const total = totalCultivationAmount(cultivation, state.level);
+    const level = Math.max(1, Math.min(C.MAX_LEVEL, Math.round(Number(state.level) || 1)));
+    const hpGrowth = Math.pow(COMBAT_GROWTH.hp, level - 1);
+    const attackGrowth = Math.pow(COMBAT_GROWTH.attack, level - 1);
+    const defenseGrowth = Math.pow(COMBAT_GROWTH.defense, level - 1);
+    const maxHp = Math.max(
+      100,
+      Math.round(
+        (220 + attrs.daoHeart * 2 + attrs.lifespan * 0.35) *
+          hpGrowth *
+          (1 + lineage * 0.01)
+      )
+    );
+    const attack = Math.max(
+      8,
+      Math.round(
+        (10 + attrs.insight * 0.035 + Number(cultivation && cultivation.technique) * 0.003) *
+          attackGrowth *
+          (1 + lineage * 0.008)
+      )
+    );
+    const defense = Math.max(
+      3,
+      Math.round(
+        (5 + attrs.daoHeart * 0.025 + lineage * 1.5) *
+          defenseGrowth *
+          (1 + lineage * 0.006)
+      )
+    );
+    const blockChance = clamp(
+      0.08 + (defense / Math.max(1, defense + 160 + state.level * 2)) * 0.5 + attrs.daoHeart * 0.0005,
+      0.08,
+      0.6
+    );
+    const dodgeChance = clamp(
+      0.02 + attrs.fortune * 0.0009 + attrs.insight * 0.00035,
+      0.02,
+      0.35
+    );
+    return {
+      maxHp,
+      attack,
+      defense,
+      blockChance,
+      dodgeChance,
+      cultivationTotal: total,
+    };
+  }
+
+  function towerLog(battle, at, type, text) {
+    if (!battle) return;
+    battle.log.push({
+      at,
+      type: String(type || "info").slice(0, 20),
+      text: String(text || "").slice(0, 160),
+    });
+    if (battle.log.length > 20) battle.log.splice(0, battle.log.length - 20);
+  }
+
+  function towerFoeStats(state, entry, guardian) {
+    const stats = combatStats(state);
+    const floor = entry.floor;
+    const maxHp = guardian
+      ? Math.max(40, Math.round(stats.attack * (8 + floor * 0.9)))
+      : Math.max(12, Math.round(stats.attack * (1.15 + floor * 0.08)));
+    const attack = Math.max(
+      3,
+      Math.round(stats.defense * (0.62 + floor * 0.035) * (guardian ? 1.9 : 1))
+    );
+    return { maxHp, attack };
+  }
+
+  function awardTowerFightExperience(state, battle, entry, guardian) {
+    const ratio = guardian
+      ? 0.03 * (1 + entry.floor * 0.08)
+      : 0.0012 * (1 + entry.floor * 0.08);
+    const gained = Math.max(1, Math.round(C.expRequired(state.level) * ratio));
+    const advanced = C.addExperience(state.cultivation, state.level, gained);
+    state.level = advanced.level;
+    battle.rewardGained += gained;
+    return gained;
+  }
+
   function blackTowerStatus(state, now) {
     state.cultivation = C.normalizeCultivation(state.cultivation, now || Date.now());
     const power = recoverSpiritualPower(state, now || Date.now());
+    const stats = combatStats(state);
+    if (!Number.isFinite(Number(state.cultivation.hp))) state.cultivation.hp = stats.maxHp;
+    state.cultivation.hp = clamp(Number(state.cultivation.hp) || 0, 0, stats.maxHp);
     const tower = state.cultivation.blackTower;
     const unlocked = BLACK_TOWER_FLOORS.filter((entry) => state.level >= entry.minLevel);
     if (!unlocked.some((entry) => entry.floor === tower.selectedFloor)) {
@@ -3097,10 +3230,24 @@
         reward: Math.max(1, Math.round(C.expRequired(state.level) * selected.rewardRatio)),
       },
       power,
+      combat: {
+        ...stats,
+        hp: state.cultivation.hp,
+      },
       attempts: tower.attempts,
       wins: tower.wins,
       bestFloor: tower.bestFloor,
       lastResult: tower.lastResult,
+      autoAdvance: tower.autoAdvance,
+      loop: tower.loop,
+      nextBattleAt: tower.nextBattleAt,
+      battle: tower.battle
+        ? {
+            ...tower.battle,
+            log: tower.battle.log.map((entry) => ({ ...entry })),
+            mobsRemaining: Math.max(0, tower.battle.total - tower.battle.kills),
+          }
+        : null,
     };
   }
 
@@ -3115,7 +3262,7 @@
     return { ok: true, floor: entry };
   }
 
-  function challengeBlackTower(state, floor, now, rng) {
+  function startBlackTowerBattle(state, floor, now, rng) {
     const ts = now || Date.now();
     const random = typeof rng === "function" ? rng : Math.random;
     state.cultivation = C.normalizeCultivation(state.cultivation, ts, random);
@@ -3125,6 +3272,15 @@
     if (!entry) return { ok: false, reason: "floor" };
     if (state.level < entry.minLevel) {
       return { ok: false, reason: "locked", requiredLevel: entry.minLevel, floor: entry };
+    }
+    if (status.combat.hp / Math.max(1, status.combat.maxHp) < 0.2) {
+      return {
+        ok: false,
+        reason: "low-hp",
+        hp: status.combat.hp,
+        maxHp: status.combat.maxHp,
+        floor: entry,
+      };
     }
     if (
       state.level < C.MAX_LEVEL &&
@@ -3143,68 +3299,318 @@
         floor: entry,
       };
     }
+    if (status.battle && status.battle.active) {
+      return { ok: false, reason: "active", battle: status.battle, floor: entry };
+    }
 
-    state.cultivation.blackTower.selectedFloor = entry.floor;
+    const tower = state.cultivation.blackTower;
+    const stats = combatStats(state);
+    state.cultivation.hp = clamp(Number(state.cultivation.hp) || 0, 0, stats.maxHp);
     state.cultivation.spiritualPower = Math.max(0, status.power.current - cost);
     state.cultivation.spiritualPowerUpdatedAt = ts;
-    const combatTechniques = C.activeTechniques(state.cultivation).filter(
-      (technique) => technique.category === "combat"
-    );
-    const combatProgress = combatTechniques.reduce(
-      (sum, technique) => sum + C.techniqueProgress(state.cultivation, technique.id),
-      0
-    );
-    const attrs = C.talentSummary(state.cultivation.attributes);
-    const chance = clamp(
-      0.84 -
-        entry.difficulty +
-        Math.min(0.08, attrs.insight / C.MAX_ATTRIBUTE) +
-        Math.min(0.05, attrs.fortune / C.MAX_ATTRIBUTE) +
-        Math.min(0.12, combatProgress * 0.0015) +
-        Math.min(0.06, state.cultivation.blackTower.bestFloor * 0.006),
-      0.25,
-      0.95
-    );
-    const won = random() < chance;
-    const rewardRatio = won ? entry.rewardRatio : entry.rewardRatio * 0.25;
-    const gained = Math.max(1, Math.round(C.expRequired(state.level) * rewardRatio));
-    const advanced = C.addExperience(state.cultivation, state.level, gained);
-    state.level = advanced.level;
-    state.cultivation.blackTower.attempts += 1;
-    if (won) {
-      state.cultivation.blackTower.wins += 1;
-      state.cultivation.blackTower.bestFloor = Math.max(
-        state.cultivation.blackTower.bestFloor,
-        entry.floor
-      );
-    }
-    state.cultivation.blackTower.lastResult = {
+    tower.selectedFloor = entry.floor;
+    tower.nextBattleAt = 0;
+    const foe = towerFoeStats(state, entry, false);
+    const guardian = towerFoeStats(state, entry, true);
+    tower.attempts += 1;
+    tower.battle = {
+      active: true,
+      paused: false,
+      phase: "mobs",
       floor: entry.floor,
-      enemy: entry.enemy,
-      outcome: won ? "win" : "loss",
-      gained,
-      spent: cost,
-      at: ts,
+      entryCost: cost,
+      kills: 0,
+      total: 100,
+      mobHp: foe.maxHp,
+      mobMaxHp: foe.maxHp,
+      mobAttack: foe.attack,
+      guardianHp: guardian.maxHp,
+      guardianMaxHp: guardian.maxHp,
+      guardianAttack: guardian.attack,
+      guardianSpawned: false,
+      guardianDefeated: false,
+      startedAt: ts,
+      lastAttackAt: ts,
+      clearedAt: 0,
+      failedAt: 0,
+      rewardGained: 0,
+      log: [],
     };
+    towerLog(tower.battle, ts, "start", `进入${entry.name}，开始挑战百只妖物`);
     return {
       ok: true,
       floor: entry,
-      enemy: entry.enemy,
-      outcome: won ? "win" : "loss",
-      chance,
       cost,
-      gained,
-      levelsGained: advanced.levelsGained,
-      spiritualPower: state.cultivation.spiritualPower,
-      dialogue: won
-        ? `斩落${entry.enemy}，获得 ${Math.round(gained)} 修为`
-        : `${entry.enemy}守住了塔层，你仍从战斗中悟得 ${Math.round(gained)} 修为`,
+      battle: { ...tower.battle, log: tower.battle.log.map((item) => ({ ...item })) },
+      dialogue: `进入${entry.name}，消耗 ${cost} 灵力`,
     };
+  }
+
+  function finishBlackTowerFloor(state, ts, entry) {
+    const tower = state.cultivation.blackTower;
+    const battle = tower.battle;
+    const gained = Math.max(1, Math.round(C.expRequired(state.level) * entry.rewardRatio));
+    const advanced = C.addExperience(state.cultivation, state.level, gained);
+    state.level = advanced.level;
+    battle.rewardGained += gained;
+    tower.wins += 1;
+    tower.bestFloor = Math.max(tower.bestFloor, entry.floor);
+    tower.lastResult = {
+      floor: entry.floor,
+      enemy: entry.enemy,
+      outcome: "win",
+      gained: battle.rewardGained,
+      spent: battle.entryCost,
+      at: ts,
+    };
+    Object.assign(battle, {
+      active: false,
+      paused: false,
+      phase: "cleared",
+      clearedAt: ts,
+      guardianDefeated: true,
+    });
+    towerLog(battle, ts, "clear", `清除百只妖物与${entry.enemy}，本层通关，修为 +${gained}`);
+    const nextEntry = BLACK_TOWER_FLOORS.find((item) => item.floor === entry.floor + 1);
+    if (tower.loop) {
+      tower.nextBattleAt = ts + 2000;
+    } else if (tower.autoAdvance && nextEntry && state.level >= nextEntry.minLevel) {
+      tower.nextBattleAt = ts + 2000;
+    } else {
+      tower.nextBattleAt = 0;
+      if (tower.autoAdvance) tower.autoAdvance = false;
+    }
+    return { gained, advanced };
+  }
+
+  function combatRecoveryRate(state) {
+    const maxHp = combatStats(state).maxHp;
+    const meditating = Boolean(state.cultivation.meditation && state.cultivation.meditation.active);
+    const cultivating = Boolean(state.cultivation.stoneSession && state.cultivation.stoneSession.active);
+    const mode = meditating ? "meditation" : cultivating ? "stone" : "idle";
+    const ratio = meditating ? 0.003 : cultivating ? 0.002 : 0.0003;
+    return {
+      mode,
+      ratio,
+      perSecond: maxHp * ratio,
+      maxHp,
+    };
+  }
+
+  function regenerateCombatHealth(state, seconds) {
+    if (!(seconds > 0)) return;
+    const battle = state.cultivation && state.cultivation.blackTower && state.cultivation.blackTower.battle;
+    if (battle && battle.active) return;
+    const recovery = combatRecoveryRate(state);
+    const current = Math.max(0, Number(state.cultivation.hp) || 0);
+    state.cultivation.hp = Math.min(recovery.maxHp, current + recovery.perSecond * seconds);
+  }
+
+  function advanceBlackTowerBattle(state, now, rng) {
+    const ts = now || Date.now();
+    const random = typeof rng === "function" ? rng : Math.random;
+    state.cultivation = C.normalizeCultivation(state.cultivation, ts, random);
+    const tower = state.cultivation.blackTower;
+    if (!tower.battle) return { advanced: false };
+    if (
+      !tower.battle.active &&
+      tower.nextBattleAt &&
+      ts >= tower.nextBattleAt &&
+      (tower.autoAdvance || tower.loop)
+    ) {
+      const nextFloor = tower.loop
+        ? tower.battle.floor
+        : Math.min(10, tower.battle.floor + 1);
+      const started = startBlackTowerBattle(state, nextFloor, ts, random);
+      if (!started.ok) {
+        tower.nextBattleAt = 0;
+        tower.autoAdvance = false;
+        towerLog(tower.battle, ts, "stop", `自动挑战停止：${started.reason}`);
+        return { advanced: false, started: false, reason: started.reason };
+      }
+      return { advanced: true, started: true, floor: nextFloor };
+    }
+    const battle = tower.battle;
+    if (!battle.active || battle.paused) return { advanced: false };
+    const steps = Math.min(600, Math.floor(Math.max(0, ts - battle.lastAttackAt) / 1000));
+    if (!steps) return { advanced: false };
+    const entry = BLACK_TOWER_FLOORS.find((item) => item.floor === battle.floor);
+    const player = combatStats(state);
+    state.cultivation.hp = clamp(Number(state.cultivation.hp) || 0, 0, player.maxHp);
+    battle.lastAttackAt += steps * 1000;
+
+    for (let step = 0; step < steps; step += 1) {
+      if (battle.kills < 100 && battle.mobHp <= 0) {
+        const foe = towerFoeStats(state, entry, false);
+        battle.mobHp = foe.maxHp;
+        battle.mobMaxHp = foe.maxHp;
+        battle.mobAttack = foe.attack;
+      }
+      const guardianActive = battle.kills >= 100 && !battle.guardianDefeated;
+      if (guardianActive) battle.phase = "guardian";
+      const targetHp = guardianActive ? battle.guardianHp : battle.mobHp;
+      const targetMax = guardianActive ? battle.guardianMaxHp : battle.mobMaxHp;
+      const damage = Math.max(
+        1,
+        Math.round(player.attack * (0.9 + random() * 0.2) - battle.floor * 1.5)
+      );
+      const remainingHp = Math.max(0, targetHp - damage);
+      if (guardianActive) battle.guardianHp = remainingHp;
+      else battle.mobHp = remainingHp;
+
+      if (remainingHp <= 0) {
+        if (guardianActive) {
+          awardTowerFightExperience(state, battle, entry, true);
+          battle.guardianDefeated = true;
+          finishBlackTowerFloor(state, ts, entry);
+          break;
+        }
+        awardTowerFightExperience(state, battle, entry, false);
+        battle.kills += 1;
+        if (
+          battle.kills === 1 ||
+          battle.kills % 10 === 0 ||
+          battle.kills === 70 ||
+          battle.kills === 100
+        ) {
+          towerLog(
+            battle,
+            ts,
+            "kill",
+            `击杀进度 ${battle.kills}/100，剩余 ${100 - battle.kills} 只`
+          );
+        }
+        if (battle.kills === 70) {
+          battle.guardianSpawned = true;
+          towerLog(battle, ts, "guardian", `${entry.enemy}出现在塔层深处`);
+        }
+        if (battle.kills === 100) {
+          battle.phase = "guardian";
+          towerLog(battle, ts, "guardian", `${entry.enemy}开始迎战`);
+        }
+        if (battle.kills < 100) {
+          const foe = towerFoeStats(state, entry, false);
+          battle.mobHp = foe.maxHp;
+          battle.mobMaxHp = foe.maxHp;
+          battle.mobAttack = foe.attack;
+        }
+        continue;
+      }
+
+      const enemyAttack = guardianActive ? battle.guardianAttack : battle.mobAttack;
+      if (random() < player.blockChance) {
+        towerLog(battle, ts, "block", `防御成功，抵挡${guardianActive ? entry.enemy : "小怪"}的攻击`);
+      } else if (random() < player.dodgeChance) {
+        towerLog(battle, ts, "dodge", `闪避成功，躲开${guardianActive ? entry.enemy : "小怪"}的攻击`);
+      } else {
+        const hurt = Math.max(1, Math.round(enemyAttack - player.defense * 0.35));
+        state.cultivation.hp = Math.max(0, state.cultivation.hp - hurt);
+        towerLog(
+          battle,
+          ts,
+          "hit",
+          `${guardianActive ? entry.enemy : "小怪"}造成 ${hurt} 点伤害`
+        );
+        if (state.cultivation.hp / Math.max(1, player.maxHp) < 0.2) {
+          state.cultivation.hp = Math.max(1, state.cultivation.hp);
+          Object.assign(battle, {
+            active: false,
+            paused: false,
+            phase: "retreated",
+          });
+          tower.lastResult = {
+            floor: battle.floor,
+            enemy: entry.enemy,
+            outcome: "retreat",
+            gained: battle.rewardGained,
+            spent: battle.entryCost,
+            at: ts,
+          };
+          tower.autoAdvance = false;
+          tower.loop = false;
+          tower.nextBattleAt = 0;
+          towerLog(battle, ts, "retreat", "生命低于 20%，已自动退出黑塔");
+          break;
+        }
+      }
+      if (targetHp / Math.max(1, targetMax) < 0.5 && step === 0) {
+        towerLog(battle, ts, "info", `当前目标生命 ${remainingHp}/${targetMax}`);
+      }
+    }
+    return {
+      advanced: true,
+      phase: battle.phase,
+      kills: battle.kills,
+      hp: state.cultivation.hp,
+    };
+  }
+
+  function challengeBlackTower(state, floor, now, rng) {
+    return startBlackTowerBattle(state, floor, now, rng);
+  }
+
+  function setBlackTowerAutomation(state, patch, now, rng) {
+    const ts = now || Date.now();
+    state.cultivation = C.normalizeCultivation(state.cultivation, ts, rng);
+    const tower = state.cultivation.blackTower;
+    if (patch && patch.autoAdvance === true) {
+      tower.autoAdvance = true;
+      tower.loop = false;
+    }
+    if (patch && patch.loop === true) {
+      tower.loop = true;
+      tower.autoAdvance = false;
+    }
+    if (patch && patch.autoAdvance === false) tower.autoAdvance = false;
+    if (patch && patch.loop === false) tower.loop = false;
+    if (!tower.autoAdvance && !tower.loop) {
+      return { ok: true, autoAdvance: false, loop: false };
+    }
+    if (tower.battle && tower.battle.active) {
+      return { ok: true, autoAdvance: tower.autoAdvance, loop: tower.loop };
+    }
+    if (tower.battle && tower.battle.phase === "cleared") {
+      const nextFloor = tower.loop ? tower.battle.floor : tower.battle.floor + 1;
+      const started = startBlackTowerBattle(state, nextFloor, ts, rng);
+      return {
+        ok: started.ok,
+        ...started,
+        autoAdvance: tower.autoAdvance,
+        loop: tower.loop,
+      };
+    }
+    const started = startBlackTowerBattle(state, tower.selectedFloor, ts, rng);
+    return {
+      ok: started.ok,
+      ...started,
+      autoAdvance: tower.autoAdvance,
+      loop: tower.loop,
+    };
+  }
+
+  function toggleBlackTowerPause(state, now) {
+    const ts = now || Date.now();
+    state.cultivation = C.normalizeCultivation(state.cultivation, ts);
+    const battle = state.cultivation.blackTower.battle;
+    if (!battle || !battle.active) return { ok: false, reason: "inactive" };
+    battle.paused = !battle.paused;
+    battle.lastAttackAt = ts;
+    towerLog(battle, ts, "info", battle.paused ? "战斗已暂停" : "战斗继续");
+    return { ok: true, paused: battle.paused };
+  }
+
+  function nextBlackTowerFloor(state, now, rng) {
+    const battle = state.cultivation.blackTower.battle;
+    if (!battle || battle.phase !== "cleared") return { ok: false, reason: "not-cleared" };
+    return startBlackTowerBattle(state, battle.floor + 1, now || Date.now(), rng);
   }
 
   function cultivationStatus(state, now) {
     state.cultivation = C.normalizeCultivation(state.cultivation, now || Date.now());
     const spiritualPower = recoverSpiritualPower(state, now || Date.now());
+    const combat = combatStats(state);
+    const healthRecovery = combatRecoveryRate(state);
+    state.cultivation.hp = clamp(Number(state.cultivation.hp) || 0, 0, combat.maxHp);
     const realm = C.realmStatus(state.level);
     const required = C.expRequired(state.level);
     const life = C.lifesStatus(state.cultivation, state.level);
@@ -3298,6 +3704,15 @@
         ),
       },
       spiritualPower,
+      combat: {
+        ...combat,
+        hp: state.cultivation.hp,
+        recoveryPerSecond:
+          state.cultivation.blackTower.battle && state.cultivation.blackTower.battle.active
+            ? 0
+            : healthRecovery.perSecond,
+        recoveryMode: healthRecovery.mode,
+      },
       herbs: Number(state.cultivation.herbs) || 0,
       breakthroughPills: Number(state.cultivation.pills && state.cultivation.pills.breakthrough) || 0,
       lifePills: Number(state.cultivation.pills && state.cultivation.pills.life) || 0,
@@ -4214,12 +4629,17 @@
     return {
       spots: cave.spots.map((spot) => {
         const base = C.CAVE_HEAVENS.find((item) => item.id === spot.id);
-        return { ...spot, ...base };
+        return {
+          ...spot,
+          ...base,
+          effectName: C.CAVE_EFFECTS[spot.effectType].name,
+        };
       }),
       active: cave.active
         ? {
             ...cave.active,
             ...C.CAVE_HEAVENS.find((item) => item.id === cave.active.id),
+            effectName: C.CAVE_EFFECTS[cave.active.effectType].name,
             remainingMs: Math.max(0, cave.active.expiresAt - ts),
           }
         : null,
@@ -4227,6 +4647,7 @@
         ? {
             ...cave.challenge,
             ...C.CAVE_HEAVENS.find((item) => item.id === cave.challenge.id),
+            effectName: C.CAVE_EFFECTS[cave.challenge.effectType].name,
           }
         : null,
       refreshAt: cave.refreshAt,
@@ -4248,6 +4669,15 @@
     };
     cave.visits += 1;
     return cave.active;
+  }
+
+  function caveEntryCost(spot) {
+    const tier = spot && spot.size === "large" ? "supreme" : "low";
+    return {
+      tier,
+      amount: tier === "supreme" ? 3 : 10,
+      stone: C.STONE_TIERS[tier],
+    };
   }
 
   function grantCaveLoot(state, spot, random, lootMultiplier) {
@@ -4306,9 +4736,22 @@
     if (cave.challenge) return { ok: false, reason: "challenge", challenge: cave.challenge };
     const spot = cave.spots.find((item) => item.id === spotId);
     if (!spot) return { ok: false, reason: "spot" };
-    if ((Number(state.cultivation.stones.low) || 0) < 1) return { ok: false, reason: "stones" };
-    state.cultivation.stones.low -= 1;
-    state.cultivation.spiritStones = state.cultivation.stones.low;
+    const entryCost = caveEntryCost(spot);
+    const available = Number(state.cultivation.stones[entryCost.tier]) || 0;
+    if (available < entryCost.amount) {
+      return {
+        ok: false,
+        reason: "stones",
+        tier: entryCost.tier,
+        required: entryCost.amount,
+        available,
+        stone: entryCost.stone,
+      };
+    }
+    state.cultivation.stones[entryCost.tier] -= entryCost.amount;
+    if (entryCost.tier === "low") {
+      state.cultivation.spiritStones = state.cultivation.stones.low;
+    }
     const base = C.CAVE_HEAVENS.find((item) => item.id === spot.id);
     // 大型福地有 75% 概率遭遇守灵，必须先做选择。
     if (spot.size === "large" && random() < 0.75) {
@@ -4326,6 +4769,7 @@
       return {
         ok: true,
         challenge: true,
+        entryCost,
         spot: { ...spot, ...base },
         event: {
           title: `${base.name}的守灵`,
@@ -4344,6 +4788,7 @@
     return {
       ok: true,
       challenge: false,
+      entryCost,
       spot: { ...spot, ...base },
       active,
       rewards,
@@ -4508,7 +4953,7 @@
         rate.formation.multiplier *
         Math.sqrt(rate.region.qi);
       state.cultivation.technique = Math.min(
-        1000,
+        C.MAX_TECHNIQUE_MASTERY,
         (Number(state.cultivation.technique) || 0) + techniqueGained
       );
       C.advanceEquippedTechniques(state.cultivation, techniqueGained * 0.6);
@@ -6746,9 +7191,16 @@
     totalCultivationAmount,
     spiritualPowerCapacity,
     recoverSpiritualPower,
+    combatStats,
+    combatRecoveryRate,
     blackTowerStatus,
     setBlackTowerFloor,
     challengeBlackTower,
+    startBlackTowerBattle,
+    advanceBlackTowerBattle,
+    setBlackTowerAutomation,
+    toggleBlackTowerPause,
+    nextBlackTowerFloor,
     buySpiritStones,
     setSpiritStoneTier,
     setStoneQuantities,
@@ -6775,6 +7227,7 @@
     craftPill,
     exploreSecretRealm,
     caveHeavenStatus,
+    caveEntryCost,
     enterCaveHeaven,
     resolveCaveChallenge,
     leaveCaveHeaven,

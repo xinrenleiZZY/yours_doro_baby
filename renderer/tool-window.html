@@ -166,6 +166,84 @@
       </section>
     </div>
 
+    <div id="blacktower" class="interactive" role="dialog" aria-label="黑塔挑战">
+      <header>
+        <span>黑塔挑战</span>
+        <em id="tower-header-status">第 1 层</em>
+        <button id="tower-close" title="关闭">✕</button>
+      </header>
+      <div class="tower-layout">
+        <section class="tower-main">
+          <div class="tower-title-row">
+            <div>
+              <small id="tower-kicker">DORO BLACK TOWER</small>
+              <h1 id="tower-title">黑塔一层</h1>
+              <p id="tower-subtitle">每层 100 只小怪，剩余 30 只时守护者出现。</p>
+            </div>
+            <select id="tower-floor-select" title="选择黑塔层数"></select>
+          </div>
+
+          <div class="tower-stat-grid">
+            <div class="tower-stat hp">
+              <span>生命</span>
+              <b id="tower-hp-value">100 / 100</b>
+              <div class="tower-mini-bar"><i id="tower-hp-bar"></i></div>
+            </div>
+            <div class="tower-stat"><span>攻击</span><b id="tower-attack">10</b></div>
+            <div class="tower-stat"><span>防御</span><b id="tower-defense">5</b></div>
+            <div class="tower-stat"><span>灵力</span><b id="tower-power">100 / 100</b></div>
+          </div>
+
+          <div class="tower-progress-card">
+            <div class="tower-progress-head">
+              <b id="tower-floor-state">尚未开始</b>
+              <span id="tower-kill-count">0 / 100</span>
+            </div>
+            <div class="tower-progress-track"><i id="tower-kill-bar"></i></div>
+            <div class="tower-progress-meta">
+              <span id="tower-remaining">剩余小怪 100</span>
+              <span id="tower-floor-reward">通关修为 +0</span>
+            </div>
+          </div>
+
+          <div class="tower-enemy-grid">
+            <article class="tower-enemy-card" id="tower-mob-card">
+              <div class="tower-enemy-icon">👹</div>
+              <div class="tower-enemy-main">
+                <b>黑塔妖物</b>
+                <span id="tower-mob-status">等待挑战</span>
+                <div class="tower-mini-bar enemy"><i id="tower-mob-bar"></i></div>
+              </div>
+            </article>
+            <article class="tower-enemy-card guardian" id="tower-guardian-card">
+              <div class="tower-enemy-icon">👑</div>
+              <div class="tower-enemy-main">
+                <b id="tower-guardian-name">守护者</b>
+                <span id="tower-guardian-status">剩余 30 只小怪时出现</span>
+                <div class="tower-mini-bar guardian"><i id="tower-guardian-bar"></i></div>
+              </div>
+            </article>
+          </div>
+
+          <div class="tower-actions">
+            <button id="tower-start" class="primary">开始挑战</button>
+            <button id="tower-pause">暂停</button>
+            <button id="tower-next">前往下一层</button>
+            <button id="tower-auto">自动通关：关</button>
+            <button id="tower-loop">循环刷：关</button>
+          </div>
+        </section>
+
+        <aside class="tower-log-panel">
+          <div class="tower-log-head">
+            <b>战斗记录</b>
+            <span>每秒结算</span>
+          </div>
+          <ol id="tower-log" class="tower-log"></ol>
+        </aside>
+      </div>
+    </div>
+
     <div id="minigame" class="interactive" role="dialog" aria-label="接金币小游戏">
       <header>
         <span>接金币</span>
