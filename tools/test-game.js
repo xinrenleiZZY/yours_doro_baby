@@ -550,11 +550,11 @@ test("灵根体系覆盖单、双、三、四、五灵根、变异灵根与先�
   assert.strictEqual(G.CULTIVATION.rollRoot(sequence([0.5])), "mixed");
 });
 
-test("功法目录为每种灵根提供天地玄黄与上中下品", () => {
+test("功法目录为每种灵根提供五阶三品，并在百级后开放仙阶", () => {
   const techniques = Object.values(G.CULTIVATION.TECHNIQUES);
-  assert.strictEqual(techniques.length, 444);
+  assert.strictEqual(techniques.length, 555);
   assert.strictEqual(new Set(techniques.map((item) => item.root)).size, 37);
-  assert.strictEqual(new Set(techniques.map((item) => item.tier)).size, 4);
+  assert.strictEqual(new Set(techniques.map((item) => item.tier)).size, 5);
   assert.strictEqual(new Set(techniques.map((item) => item.grade)).size, 3);
   assert.ok(
     G.CULTIVATION.TECHNIQUES.tech_metal_heaven_upper.cultivationMultiplier >
@@ -562,6 +562,8 @@ test("功法目录为每种灵根提供天地玄黄与上中下品", () => {
   );
   assert.ok(G.CULTIVATION.TECHNIQUES.tech_thunder_heaven_upper.name.includes("九天雷霆诀"));
   assert.ok(G.CULTIVATION.TECHNIQUES.tech_dual_metal_water_heaven_upper.name.includes("双炼诀"));
+  assert.strictEqual(G.CULTIVATION.TECHNIQUES.tech_metal_immortal_upper.minLevel, 101);
+  assert.strictEqual(G.CULTIVATION.TECHNIQUES.tech_metal_immortal_upper.immortal, true);
   assert.deepStrictEqual(Object.keys(G.CULTIVATION.TECHNIQUE_CATEGORIES), [
     "heart",
     "spell",
@@ -576,6 +578,87 @@ test("功法目录为每种灵根提供天地玄黄与上中下品", () => {
       5
     );
   });
+});
+
+test("灵根越多复合功法越强，并同时强化修炼、突破、攻击和防御", () => {
+  const makeCultivation = (root) => {
+    const techniqueId = `tech_${root}_immortal_upper`;
+    return {
+      attributes: {
+        root,
+        rootGrade: "lower",
+        insight: 100,
+        fortune: 100,
+        daoHeart: 100,
+        lifespan: 100,
+        rootLineage: 0,
+      },
+      equippedTechniques: [techniqueId],
+      equippedTechnique: techniqueId,
+      techniqueProgress: { [techniqueId]: 100 },
+    };
+  };
+  const single = G.CULTIVATION.techniqueBonuses(makeCultivation("metal"));
+  const five = G.CULTIVATION.techniqueBonuses(makeCultivation("mixed"));
+  assert.strictEqual(G.CULTIVATION.rootTechniquePower("mixed"), 1.95);
+  assert.ok(five.rootPower > single.rootPower);
+  assert.ok(five.cultivationMultiplier > single.cultivationMultiplier);
+  assert.ok(five.breakthroughBonus > single.breakthroughBonus);
+  assert.ok(five.attackMultiplier > single.attackMultiplier);
+  assert.ok(five.defenseMultiplier > single.defenseMultiplier);
+});
+
+test("同一部功法会随灵根品阶提高修炼与战斗收获", () => {
+  const bonuses = {};
+  ["lower", "middle", "upper", "supreme"].forEach((rootGrade) => {
+    const techniqueId = "tech_metal_heaven_upper";
+    bonuses[rootGrade] = G.CULTIVATION.techniqueBonuses({
+      attributes: {
+        root: "metal",
+        rootGrade,
+        insight: 80,
+        fortune: 60,
+        daoHeart: 70,
+        lifespan: 100,
+        rootLineage: 0,
+      },
+      equippedTechniques: [techniqueId],
+      equippedTechnique: techniqueId,
+      techniqueProgress: { [techniqueId]: 100 },
+    });
+  });
+  assert.ok(bonuses.middle.cultivationMultiplier > bonuses.lower.cultivationMultiplier);
+  assert.ok(bonuses.upper.cultivationMultiplier > bonuses.middle.cultivationMultiplier);
+  assert.ok(bonuses.supreme.cultivationMultiplier > bonuses.upper.cultivationMultiplier);
+  assert.ok(bonuses.supreme.attackMultiplier > bonuses.upper.attackMultiplier);
+  assert.ok(bonuses.supreme.defenseMultiplier > bonuses.upper.defenseMultiplier);
+  assert.ok(bonuses.supreme.breakthroughBonus > bonuses.upper.breakthroughBonus);
+});
+
+test("仙阶功法 Lv.100 不可购买，Lv.101 可以购买", () => {
+  const item = G.CULTIVATION.TECHNIQUES.tech_metal_immortal_upper;
+  const makeState = (level) =>
+    G.hydrate(
+      {
+        level,
+        coins: 10000000,
+        cultivation: {
+          attributes: { root: "metal", insight: 300, fortune: 100, daoHeart: 100, lifespan: 100 },
+          lastAgedAt: NOW,
+        },
+      },
+      NOW
+    );
+  const locked = makeState(100);
+  const denied = G.purchase(locked, item, NOW);
+  assert.strictEqual(denied.ok, false);
+  assert.strictEqual(denied.reason, "level");
+  assert.strictEqual(denied.requiredLevel, 101);
+
+  const unlocked = makeState(101);
+  const bought = G.purchase(unlocked, item, NOW);
+  assert.strictEqual(bought.ok, true);
+  assert.strictEqual(unlocked.cultivation.techniqueScrolls[item.id], 1);
 });
 
 test("五类功法可同时修炼，每部功法独立累计并参悟进度", () => {
@@ -1358,7 +1441,7 @@ test("增益道具新增 10 款并按最高倍率生效、持续时间和到期�
     "time_capsule",
   ];
   const buffs = Object.values(G.SHOP_ITEMS).filter((item) => item.type === "buff");
-  assert.strictEqual(buffs.length, 11);
+  assert.strictEqual(buffs.length, 12);
   assert.strictEqual(new Set(ids.map((id) => G.SHOP_ITEMS[id].buff)).size, 10);
 
   const state = G.hydrate({ coins: 100000, mood: 50, satiety: 80 }, Date.now());
@@ -1383,6 +1466,63 @@ test("增益道具新增 10 款并按最高倍率生效、持续时间和到期�
 
   const cleaned = sanitizeSave(state);
   ids.forEach((id) => assert.ok(cleaned.buffs[G.SHOP_ITEMS[id].buff] > 0, id));
+});
+
+test("悟道茶临时强化悟性与修行，失效后永久悟性 +1 并可存档", () => {
+  const state = G.hydrate(
+    {
+      coins: 10000,
+      level: 41,
+      cultivation: {
+        attributes: { root: "water", insight: 100, fortune: 80, daoHeart: 80, lifespan: 100 },
+        lastAgedAt: NOW,
+      },
+    },
+    NOW
+  );
+  const beforeRate = G.CULTIVATION.meditationRate(state.cultivation, state.level).perHour;
+  const bought = G.purchase(state, G.SHOP_ITEMS.enlightenment_tea, NOW);
+  assert.strictEqual(bought.ok, true);
+  assert.strictEqual(state.cultivation.attributes.insight, 400);
+  assert.strictEqual(state.cultivation.enlightenment.active, true);
+  assert.strictEqual(state.cultivation.enlightenment.cultivationMultiplier, 2.5);
+  assert.strictEqual(G.activeBuff(state, "enlightenment_tea", NOW + 1000), NOW + 10 * 60000);
+  const duringRate = G.CULTIVATION.meditationRate(state.cultivation, state.level).perHour;
+  assert.ok(duringRate > beforeRate * 4);
+  assert.strictEqual(
+    G.purchase(state, G.SHOP_ITEMS.enlightenment_tea, NOW + 1000).reason,
+    "active"
+  );
+
+  const expired = G.CULTIVATION.settleEnlightenment(
+    state.cultivation,
+    NOW + 10 * 60000 + 1,
+    () => 0
+  );
+  assert.strictEqual(expired.expired, true);
+  assert.strictEqual(expired.insightGained, 1);
+  assert.strictEqual(state.cultivation.attributes.insight, 101);
+  assert.strictEqual(state.cultivation.enlightenment.active, false);
+  assert.strictEqual(G.activeBuff(state, "enlightenment_tea", NOW + 10 * 60000 + 1), 0);
+
+  state.cultivation.attributes.insight = 321;
+  state.cultivation.enlightenment = {
+    active: true,
+    source: "悟道茶",
+    until: NOW + 60000,
+    insightAdded: 300,
+    cultivationMultiplier: 2.5,
+    techniqueMultiplier: 2.5,
+    breakthroughBonus: 0.12,
+    attackMultiplier: 1.5,
+    defenseMultiplier: 1.5,
+    expireInsightGain: 1,
+  };
+  const active = sanitizeSave(state).cultivation.enlightenment;
+  assert.strictEqual(active.active, true);
+  assert.strictEqual(active.until, NOW + 60000);
+  assert.strictEqual(active.insightAdded, 300);
+  assert.strictEqual(active.cultivationMultiplier, 2.5);
 });
 
 test("日程：添加、到期、提醒、完成、删除", () => {
@@ -2321,6 +2461,54 @@ test("主动转世按当前大境界命名，元婴只是解锁条件", () => {
   assert.strictEqual(result.previousRealmName, "渡劫");
 });
 
+test("转世可选择保留旧灵根、采用新灵根或同源融合升品", () => {
+  const makeState = () =>
+    G.hydrate(
+      {
+        level: 41,
+        cultivation: {
+          attributes: {
+            root: "mixed",
+            rootGrade: "lower",
+            insight: 100,
+            fortune: 80,
+            daoHeart: 80,
+            lifespan: 100,
+          },
+          lastAgedAt: NOW,
+        },
+      },
+      NOW
+    );
+  const options = {
+    generatedRoot: "water",
+    generatedRootGrade: "lower",
+  };
+  const kept = makeState();
+  const oldChoice = G.rebirth(kept, "root", NOW, () => 0.5, { ...options, rootChoice: "old" });
+  assert.strictEqual(oldChoice.ok, true);
+  assert.strictEqual(kept.cultivation.attributes.root, "mixed");
+  assert.strictEqual(kept.cultivation.attributes.rootGrade, "lower");
+
+  const replaced = makeState();
+  const newChoice = G.rebirth(replaced, "root", NOW, () => 0.5, { ...options, rootChoice: "new" });
+  assert.strictEqual(newChoice.ok, true);
+  assert.strictEqual(replaced.cultivation.attributes.root, "water");
+  assert.strictEqual(replaced.cultivation.attributes.rootGrade, "lower");
+
+  const merged = makeState();
+  const mergeChoice = G.rebirth(merged, "root", NOW, () => 0.5, {
+    ...options,
+    rootChoice: "merge",
+  });
+  assert.strictEqual(mergeChoice.ok, true);
+  assert.strictEqual(merged.cultivation.attributes.root, "water");
+  assert.strictEqual(merged.cultivation.attributes.rootGrade, "middle");
+  assert.strictEqual(merged.cultivation.attributes.rootLineage, 1);
+  assert.strictEqual(G.CULTIVATION.rootsAreSymbiotic("mixed", "water"), true);
+  assert.strictEqual(G.CULTIVATION.combineRootGrades("lower", "lower"), "middle");
+});
+
 test("仙人神魂转世保留前世灵根、神魂等级和全属性加成", () => {
   const state = G.hydrate(
     {
@@ -2741,6 +2929,43 @@ test("黑塔逐秒挑战百只小怪，剩余 30 只出现守护者并在清完�
   assert.strictEqual(blocked.reason, "power");
 });
 
+test("同一修为下黑塔后续层数会持续增加小怪与守护者难度", () => {
+  const state = G.hydrate(
+    {
+      level: 100,
+      cultivation: {
+        attributes: {
+          root: "metal",
+          rootGrade: "middle",
+          insight: 400,
+          fortune: 300,
+          daoHeart: 300,
+          lifespan: 200,
+        },
+        lastAgedAt: NOW,
+      },
+    },
+    NOW
+  );
+  const maxPower = G.spiritualPowerCapacity(state.cultivation, state.level);
+  state.cultivation.spiritualPower = maxPower;
+  state.cultivation.spiritualPowerUpdatedAt = NOW;
+  const first = G.startBlackTowerBattle(state, 1, NOW, () => 0.5);
+  assert.strictEqual(first.ok, true);
+  const firstMobHp = state.cultivation.blackTower.battle.mobMaxHp;
+  const firstMobAttack = state.cultivation.blackTower.battle.mobAttack;
+  const firstGuardianHp = state.cultivation.blackTower.battle.guardianMaxHp;
+  state.cultivation.blackTower.battle.active = false;
+  state.cultivation.spiritualPower = maxPower;
+  state.cultivation.spiritualPowerUpdatedAt = NOW;
+  const tenth = G.startBlackTowerBattle(state, 10, NOW, () => 0.5);
+  assert.strictEqual(tenth.ok, true);
+  const battle = state.cultivation.blackTower.battle;
+  assert.ok(battle.mobMaxHp > firstMobHp * 3);
+  assert.ok(battle.mobAttack > firstMobAttack * 3);
+  assert.ok(battle.guardianMaxHp > firstGuardianHp * 3);
+});
+
 test("修为越高生命、攻击和防御越高", () => {
   const cultivation = {
     attributes: {
@@ -3008,7 +3233,9 @@ test("v28 存档迁移后保留进度并补齐辟谷与元婴字段", () => {
   assert.strictEqual(state.cultivation.attributes.root, "metal");
   assert.strictEqual(state.cultivation.pills.bigu, 0);
   const clean = sanitizeSave(state);
-  assert.strictEqual(clean.version, 30);
+  assert.strictEqual(clean.version, 31);
+  assert.strictEqual(clean.cultivation.attributes.rootGrade, "middle");
+  assert.strictEqual(clean.cultivation.enlightenment.active, false);
   assert.strictEqual(clean.cultivation.pills.bigu, 0);
   assert.strictEqual(clean.cultivation.biguUntil, 0);
 });

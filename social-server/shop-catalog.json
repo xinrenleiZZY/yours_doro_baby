@@ -1,6 +1,6 @@
 {
-  "version": "2026.11.07.1",
-  "updatedAt": "2026-11-07T00:00:00.000Z",
+  "version": "2026.11.17.1",
+  "updatedAt": "2026-11-17T00:00:00.000Z",
   "dresses": {
     "basePrice": 80,
     "priceStep": 20,
@@ -381,6 +381,69 @@
       "price": 1200,
       "icon": "⚡",
       "desc": "渡劫时降低雷劫强度，价格随当前境界变化",
+      "listed": true
+    },
+    "spirit_fruit": {
+      "id": "spirit_fruit",
+      "name": "五行灵果",
+      "type": "food",
+      "price": 260,
+      "satiety": 30,
+      "mood": 12,
+      "icon": "🍎",
+      "desc": "五行灵气凝成的灵果，饱食 +30、心情 +12",
+      "listed": true
+    },
+    "jade_dew_soup": {
+      "id": "jade_dew_soup",
+      "name": "玉露灵羹",
+      "type": "food",
+      "price": 680,
+      "satiety": 65,
+      "mood": 28,
+      "icon": "🥣",
+      "desc": "温养经脉的灵膳，饱食 +65、心情 +28",
+      "listed": true
+    },
+    "starlight_horse": {
+      "id": "starlight_horse",
+      "name": "星辉木马",
+      "type": "toy",
+      "price": 520,
+      "mood": 55,
+      "satiety": -8,
+      "icon": "🎠",
+      "desc": "心情 +55，玩得忘了时间",
+      "listed": true
+    },
+    "cloud_bell": {
+      "id": "cloud_bell",
+      "name": "云音铃",
+      "type": "toy",
+      "price": 330,
+      "mood": 36,
+      "satiety": -4,
+      "icon": "🔔",
+      "desc": "心情 +36，铃声能让灵台安静下来",
+      "listed": true
+    },
+    "enlightenment_tea": {
+      "id": "enlightenment_tea",
+      "name": "悟道茶",
+      "type": "buff",
+      "price": 5000,
+      "buff": "enlightenment_tea",
+      "minutes": 10,
+      "incomeMultiplier": 1,
+      "insightBonus": 300,
+      "cultivationMultiplier": 2.5,
+      "techniqueMultiplier": 2.5,
+      "breakthroughBonus": 0.12,
+      "attackMultiplier": 1.5,
+      "defenseMultiplier": 1.5,
+      "expireInsightGain": 1,
+      "icon": "🍵",
+      "desc": "10 分钟内大幅提升悟性与功法，失效后永久悟性 +1",
       "listed": true
     },
     "lemon_soda": {

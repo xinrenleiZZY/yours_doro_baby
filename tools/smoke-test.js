@@ -1420,9 +1420,9 @@ async function runScenarios(win) {
     })`
   );
   check(
-    "商城增益分类显示 10 款新品与原有增益",
-    buffCatalog.count === 12 &&
-      ["柠檬气泡水", "抹茶拿铁", "幸运四叶草", "时光胶囊"].every((name) =>
+    "商城增益分类显示新增益、悟道茶与原有增益",
+    buffCatalog.count === 13 &&
+      ["柠檬气泡水", "抹茶拿铁", "幸运四叶草", "时光胶囊", "悟道茶"].every((name) =>
         buffCatalog.names.some((text) => text.includes(name))
       ) &&
       buffCatalog.lemonPrice.includes("180"),
@@ -2390,7 +2390,7 @@ async function runToolWindowScenarios() {
   await wait(220);
   check(
     "商城功法可购买并在背包中研习装备",
-    techniqueShop.items === 444 &&
+    techniqueShop.items === 555 &&
       techniqueShop.first.includes("金灵根") &&
       toolState.cultivation.techniquesKnown.length === 1 &&
       toolState.cultivation.equippedTechniques.includes(toolState.cultivation.techniquesKnown[0]),

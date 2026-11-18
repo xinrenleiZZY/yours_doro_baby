@@ -70,6 +70,25 @@ async function main() {
           desc: "云端测试增益",
           listed: true,
         },
+        cloud_enlightenment_tea: {
+          id: "cloud_enlightenment_tea",
+          name: "云端悟道茶",
+          type: "buff",
+          price: 5000,
+          buff: "enlightenment_tea",
+          minutes: 10,
+          incomeMultiplier: 1,
+          insightBonus: 288,
+          cultivationMultiplier: 2.4,
+          techniqueMultiplier: 2.3,
+          breakthroughBonus: 0.1,
+          attackMultiplier: 1.4,
+          defenseMultiplier: 1.45,
+          expireInsightGain: 1,
+          icon: "🍵",
+          desc: "云端修行增益",
+          listed: true,
+        },
         cloud_stone: {
           id: "cloud_stone",
           name: "云端灵石",
@@ -105,6 +124,8 @@ async function main() {
         clean.items.cloud_luxury.price === 9999 &&
         clean.items.cloud_fashion.overlay === "fashion/starlight_hat.svg" &&
         clean.items.cloud_buff.incomeMultiplier === 2.2 &&
+        clean.items.cloud_enlightenment_tea.insightBonus === 288 &&
+        clean.items.cloud_enlightenment_tea.cultivationMultiplier === 2.4 &&
         clean.items.cloud_stone.stoneTier === "high" &&
         clean.dresses.overrides.dress_test.score === 88
     );
@@ -127,6 +148,8 @@ async function main() {
         G.SHOP_ITEMS.cloud_luxury &&
         G.SHOP_ITEMS.cloud_buff.minutes === 12 &&
         G.SHOP_ITEMS.cloud_buff.incomeMultiplier === 2.2 &&
+        G.SHOP_ITEMS.cloud_enlightenment_tea.techniqueMultiplier === 2.3 &&
+        G.SHOP_ITEMS.cloud_enlightenment_tea.defenseMultiplier === 1.45 &&
         G.SHOP_ITEMS.cloud_stone.cultivationType === "stone" &&
         G.dressPrice(0, "dress_test") === 500 &&
         G.dressScore(0, "dress_test") === 88 &&

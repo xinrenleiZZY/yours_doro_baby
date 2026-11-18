@@ -160,6 +160,7 @@
     cultRegion: $("cult-region"),
     cultRegionTrait: $("cult-region-trait"),
     cultMeditation: $("cult-meditation"),
+    cultEnlightenment: $("cult-enlightenment"),
     cultSpiritualPower: $("cult-spiritual-power"),
     btnEndCultivation: $("btn-end-cultivation"),
     cultCaveStatus: $("cult-cave-status"),
@@ -204,6 +205,7 @@
     btnUseBigu: $("btn-use-bigu"),
     btnBuyThunder: $("btn-buy-thunder"),
     rebirthAttribute: $("rebirth-attribute"),
+    rebirthRootChoice: $("rebirth-root-choice"),
     btnRebirth: $("btn-rebirth"),
     growthAchievements: $("growth-achievements"),
     growthAchCount: $("growth-ach-count"),
@@ -1287,10 +1289,10 @@
     const attrs = status.attributes;
     el.cultRealmTitle.textContent = `${root.icon} ${status.fullName}`;
     el.cultRealm.textContent = `Lv.${state.level} ${status.fullName}`;
-    el.cultRoot.textContent = `${root.icon} ${root.name}${
-      root.name.includes(root.tierLabel) ? "" : ` · ${root.tierLabel}`
-    } · 修炼 ${root.speedLabel}`;
-    el.cultRoot.title = `${root.desc} 功法适配：${root.techniqueScope}；天才上限：${root.talentCap}`;
+    el.cultRoot.textContent = `${root.icon} ${status.rootGrade.name}${root.name} · ${
+      root.tierLabel
+    } · 修炼 ${root.speedLabel} ×${status.rootGrade.cultivationMultiplier}`;
+    el.cultRoot.title = `${root.desc} 功法适配：${root.techniqueScope}；灵根品阶：${status.rootGrade.name}；多灵根功法强度：×${status.rootTechniquePower}`;
     el.cultExpBar.style.width = `${Math.round(status.progress * 100)}%`;
     el.cultExp.textContent =
       state.level >= G.CULTIVATION.MAX_LEVEL
@@ -1360,6 +1362,15 @@
     } · ${G.formatCoins(status.meditation.perSecond)} 修为/秒 · ${G.formatCoins(
       status.meditation.perHour
     )}/小时 · 阵法 ${status.formation.name} · 多修 ${status.meditation.techniques.length}/5`;
+    const enlightenment = status.enlightenment;
+    el.cultEnlightenment.hidden = !enlightenment.active;
+    el.cultEnlightenment.textContent = enlightenment.active
+      ? `悟道茶：剩余 ${formatDuration(enlightenment.remainingMs)} · 临时悟性 +${
+          enlightenment.insightAdded
+        } · 修炼 ×${enlightenment.cultivationMultiplier} · 功法 ×${enlightenment.techniqueMultiplier} · 突破 +${Math.round(
+          enlightenment.breakthroughBonus * 100
+        )}% · 失效后永久悟性 +${enlightenment.expireInsightGain}`
+      : "";
     el.cultSpiritualPower.textContent = `灵力：${G.formatCoins(
       status.spiritualPower.current
     )} / ${G.formatCoins(status.spiritualPower.max)} · 恢复 +${status.spiritualPower.perSecond.toFixed(
@@ -1575,11 +1586,18 @@
       status.nextRealm ? `；突破后开放：${status.nextRealm.permissions.join("、")}` : ""
     }`;
     const rebirthState = G.rebirthStatus(state);
-    el.cultSoul.textContent = rebirthState.immortal
-      ? `神魂：本轮将化为 Lv.${rebirthState.soul.nextLevel} ${rebirthState.soul.nextRootName}神魂，全属性 +${rebirthState.soul.nextAttributeBonus}；若今生随机为相同灵根或包含前世属性的共生多灵根，根骨等阶 +1`
-      : rebirthState.soul.level
-        ? `神魂：Lv.${rebirthState.soul.level} ${rebirthState.soul.rootName} · 全属性 +${rebirthState.soul.attributeBonus}`
-        : "神魂：渡劫飞升后，主动转世可凝结前世神魂";
+    const rebirthPreview = rebirthPending && rebirthPending.preview;
+    el.cultSoul.textContent = rebirthPreview
+      ? `新命格预览：${rebirthPreview.generatedRootGradeName}${rebirthPreview.generatedRootName}。旧：${rebirthPreview.currentRootGradeName}${rebirthPreview.currentRootName}${
+          rebirthPreview.canMerge
+            ? `；同源融合可获得${rebirthPreview.mergedRootGradeName}${rebirthPreview.mergedRootName}`
+            : "；灵根不同，只能保留旧灵根或采用新灵根"
+        }`
+      : rebirthState.immortal
+        ? `神魂：本轮将化为 Lv.${rebirthState.soul.nextLevel} ${rebirthState.soul.nextRootName}神魂，全属性 +${rebirthState.soul.nextAttributeBonus}；若今生随机为相同灵根或包含前世属性的共生多灵根，根骨等阶 +1`
+        : rebirthState.soul.level
+          ? `神魂：Lv.${rebirthState.soul.level} ${rebirthState.soul.rootName} · 全属性 +${rebirthState.soul.attributeBonus}`
+          : "神魂：渡劫飞升后，主动转世可凝结前世神魂";
     const lifeEvent = state.cultivation.lastLifeEvent;
     el.cultLifeEvent.textContent = lifeEvent
       ? `${lifeEvent.type === "lifespan" ? "上一世寿元耗尽" : "上一世主动转世"}：Lv.${lifeEvent.level}，享年 ${Math.floor(
@@ -1616,10 +1634,28 @@
     const rebirth = rebirthState;
     el.btnRebirth.disabled = !rebirth.eligible;
     el.rebirthAttribute.disabled = rebirth.immortal;
+    const rootSelected = el.rebirthAttribute.value === "root";
+    el.rebirthRootChoice.disabled = !rebirth.eligible || !rootSelected || rebirth.immortal;
+    Array.from(el.rebirthRootChoice.options).forEach((option) => {
+      const choice =
+        rebirthPreview && rebirthPreview.choices.find((item) => item.id === option.value);
+      option.disabled = Boolean(choice && !choice.available);
+      option.textContent = choice
+        ? choice.label
+        : {
+            old: "保留旧灵根",
+            new: "采用新灵根",
+            merge: "同源融合升品",
+          }[option.value];
+    });
     el.btnRebirth.textContent = !rebirth.eligible
       ? `Lv.${rebirth.requiredLevel} 开启转世`
       : rebirthPending
-        ? "再次点击确认转世"
+        ? `确认转世：${
+            el.rebirthRootChoice.options[el.rebirthRootChoice.selectedIndex]?.textContent ||
+            rebirth.choices.find((choice) => choice.key === el.rebirthAttribute.value)?.label ||
+            "当前命格"
+          }`
         : rebirth.immortal
           ? `仙人神魂转世（Lv.${rebirth.soul.nextLevel}）`
           : `${rebirth.realmName}转世（第 ${rebirth.cycle + 1} 世）`;
@@ -2424,8 +2460,12 @@
         const quantity = item.type === "cultivation" ? Math.max(1, state.cultivation.buyQuantity || 1) : 1;
         const rootMismatch =
           item.type === "technique" && !G.CULTIVATION.techniqueCompatible(state.cultivation, item.id);
+        const levelMismatch =
+          item.type === "technique" && state.level < (Number(item.minLevel) || 1);
         buy.textContent = rootMismatch
           ? "异灵根"
+          : levelMismatch
+            ? `Lv.${item.minLevel}`
           : item.type === "cultivation"
             ? `购买 ×${quantity}`
             : permanentOwned
@@ -2433,7 +2473,8 @@
               : timedOwned
                 ? "续费"
                 : "购买";
-        buy.disabled = rootMismatch || permanentOwned || state.coins < priceValue * quantity;
+        buy.disabled =
+          rootMismatch || levelMismatch || permanentOwned || state.coins < priceValue * quantity;
         buy.addEventListener("click", () => buyShopItem(item));
       }
 
@@ -2488,6 +2529,8 @@
           ? "金币不够，再搬会儿砖吧"
           : result.reason === "root"
             ? "灵根不匹配，无法购买"
+            : result.reason === "active"
+              ? "悟道茶仍在生效，等茶效结束再喝"
             : "已经拥有啦"
       );
       return;
@@ -2711,6 +2754,11 @@
       }
       if (tickResult.stoneCultivation && tickResult.stoneCultivation.completed) {
         announceStoneCultivation(tickResult.stoneCultivation);
+      }
+      if (tickResult.enlightenment && tickResult.enlightenment.expired) {
+        toast(
+          `悟道茶失效：顿悟余韵化作永久悟性 +${tickResult.enlightenment.insightGained}`
+        );
       }
       api.syncToolState(state, toolStateRevision);
       syncCompanion();
@@ -3694,8 +3742,21 @@
       const status = G.rebirthStatus(state);
       if (!status.eligible) return;
       if (!rebirthPending) {
-        rebirthPending = "confirm";
-        el.btnRebirth.textContent = "再次点击确认转世";
+        const preview =
+          el.rebirthAttribute.value === "root"
+            ? G.rebirthPreview(state, Date.now())
+            : null;
+        rebirthPending = { preview };
+        if (preview) {
+          el.rebirthRootChoice.value = preview.canMerge ? "merge" : "new";
+        }
+        renderCultivation();
+        toast(
+          preview
+            ? `新命格：${preview.generatedRootGradeName}${preview.generatedRootName}，可选择保留旧灵根、采用新灵根或同源升品`
+            : "再次点击确认转世",
+          4200
+        );
         setTimeout(() => {
           if (!rebirthPending) return;
           rebirthPending = null;
@@ -3703,8 +3764,21 @@
         }, 4000);
         return;
       }
+      const pending = rebirthPending;
       rebirthPending = null;
-      const result = G.rebirth(state, el.rebirthAttribute.value, Date.now());
+      const result = G.rebirth(
+        state,
+        el.rebirthAttribute.value,
+        Date.now(),
+        Math.random,
+        pending.preview
+          ? {
+              rootChoice: el.rebirthRootChoice.value,
+              generatedRoot: pending.preview.generatedRoot,
+              generatedRootGrade: pending.preview.generatedRootGrade,
+            }
+          : undefined
+      );
       if (!result.ok) return;
       toast(
         result.immortal
@@ -3714,7 +3788,11 @@
                 : ` · 今生${result.generatedRootName}未能共生，根骨不变`
             }`
           : `转世成功：第 ${result.cycle + 1} 世 · 携带属性${
-              result.mergeMode === "merge" ? "叠加" : "被覆盖"
+              result.carried === "root"
+                ? `灵根（${result.rootGrade ? result.rootGrade.name : ""}${result.root ? result.root.name : ""}）`
+                : result.mergeMode === "merge"
+                  ? "叠加"
+                  : "被覆盖"
             }`,
         4600
       );
@@ -3728,6 +3806,11 @@
       updateEventChips();
       refreshCultivation();
     });
+    el.rebirthAttribute.addEventListener("change", () => {
+      rebirthPending = null;
+      renderCultivation();
+    });
+    el.rebirthRootChoice.addEventListener("change", () => renderCultivation());
 
     const deposit = (amount) => {
       const result = G.bankDeposit(state, amount, Date.now());
@@ -4351,6 +4434,9 @@
     }
     if (offline.stoneCultivation && offline.stoneCultivation.completed) {
       announceStoneCultivation(offline.stoneCultivation);
+    }
+    if (offline.enlightenment && offline.enlightenment.expired) {
+      toast(`离线期间悟道茶失效，永久悟性 +${offline.enlightenment.insightGained}`, 3600);
     }
     const startupAction =
       state.cultivation.stoneSession.active || state.cultivation.meditation.active

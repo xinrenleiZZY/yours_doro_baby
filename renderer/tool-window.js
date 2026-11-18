@@ -369,9 +369,20 @@
       } else {
         const rootMismatch =
           item.type === "technique" && !G.CULTIVATION.techniqueCompatible(state.cultivation, item.id);
-        buy.textContent = rootMismatch ? "异灵根" : permanentOwned ? "已永久" : timedOwned ? "续费" : "购买";
+        const levelMismatch =
+          item.type === "technique" && state.level < (Number(item.minLevel) || 1);
+        buy.textContent = rootMismatch
+          ? "异灵根"
+          : levelMismatch
+            ? `Lv.${item.minLevel}`
+            : permanentOwned
+              ? "已永久"
+              : timedOwned
+                ? "续费"
+                : "购买";
         buy.disabled =
           rootMismatch ||
+          levelMismatch ||
           permanentOwned ||
           state.coins <
             priceValue *

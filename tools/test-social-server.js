@@ -357,11 +357,14 @@ async function main() {
         catalog.body.catalog.items.luxury_doro_universe?.bonus === 11.5
     );
     check(
-      "Docker 目录包含 10 款新增益及倍率配置",
-      Object.values(catalog.body.catalog.items).filter((item) => item.type === "buff").length === 10 &&
+      "Docker 目录包含新增益、悟道茶及倍率配置",
+      Object.values(catalog.body.catalog.items).filter((item) => item.type === "buff").length === 11 &&
         catalog.body.catalog.items.lemon_soda?.incomeMultiplier === 1.25 &&
         catalog.body.catalog.items.time_capsule?.minutes === 30 &&
-        catalog.body.catalog.items.time_capsule?.incomeMultiplier === 3
+        catalog.body.catalog.items.time_capsule?.incomeMultiplier === 3 &&
+        catalog.body.catalog.items.enlightenment_tea?.insightBonus === 300 &&
+        catalog.body.catalog.items.enlightenment_tea?.cultivationMultiplier === 2.5 &&
+        catalog.body.catalog.items.enlightenment_tea?.defenseMultiplier === 1.5
     );
     const entitlements = await request("/api/shop/entitlements", {
       method: "POST",

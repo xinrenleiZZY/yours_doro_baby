@@ -12,7 +12,7 @@
 })(typeof self !== "undefined" ? self : this, function (C, O) {
   "use strict";
 
-  const SAVE_VERSION = 30;
+  const SAVE_VERSION = 31;
 
   // ---- 经济数值 -------------------------------------------------------------
   const BALANCE = {
@@ -532,6 +532,64 @@
       incomeMultiplier: 3,
       icon: "⏳",
       desc: "接下来 30 分钟产出 ×3",
+    },
+    spirit_fruit: {
+      id: "spirit_fruit",
+      name: "五行灵果",
+      type: "food",
+      price: 260,
+      satiety: 30,
+      mood: 12,
+      icon: "🍎",
+      desc: "五行灵气凝成的灵果，饱食 +30、心情 +12",
+    },
+    jade_dew_soup: {
+      id: "jade_dew_soup",
+      name: "玉露灵羹",
+      type: "food",
+      price: 680,
+      satiety: 65,
+      mood: 28,
+      icon: "🥣",
+      desc: "温养经脉的灵膳，饱食 +65、心情 +28",
+    },
+    starlight_horse: {
+      id: "starlight_horse",
+      name: "星辉木马",
+      type: "toy",
+      price: 520,
+      mood: 55,
+      satiety: -8,
+      icon: "🎠",
+      desc: "心情 +55，玩得忘了时间",
+    },
+    cloud_bell: {
+      id: "cloud_bell",
+      name: "云音铃",
+      type: "toy",
+      price: 330,
+      mood: 36,
+      satiety: -4,
+      icon: "🔔",
+      desc: "心情 +36，铃声能让灵台安静下来",
+    },
+    enlightenment_tea: {
+      id: "enlightenment_tea",
+      name: "悟道茶",
+      type: "buff",
+      price: 5000,
+      buff: "enlightenment_tea",
+      minutes: 10,
+      incomeMultiplier: 1,
+      insightBonus: 300,
+      cultivationMultiplier: 2.5,
+      techniqueMultiplier: 2.5,
+      breakthroughBonus: 0.12,
+      attackMultiplier: 1.5,
+      defenseMultiplier: 1.5,
+      expireInsightGain: 1,
+      icon: "🍵",
+      desc: "10 分钟内大幅提升悟性与功法，失效后永久悟性 +1",
     },
     lucky_cat: {
       id: "lucky_cat",
@@ -1921,6 +1979,22 @@
         if (item.type === "buff") {
           item.minutes = Math.max(1, Math.min(1440, Math.round(Number(item.minutes) || 1)));
           item.incomeMultiplier = Math.max(1, Math.min(10, Number(item.incomeMultiplier) || 1));
+          item.insightBonus = Math.max(0, Math.min(99999, Math.round(Number(item.insightBonus) || 0)));
+          item.cultivationMultiplier = Math.max(
+            1,
+            Math.min(20, Number(item.cultivationMultiplier) || 1)
+          );
+          item.techniqueMultiplier = Math.max(
+            1,
+            Math.min(20, Number(item.techniqueMultiplier) || 1)
+          );
+          item.breakthroughBonus = Math.max(0, Math.min(1, Number(item.breakthroughBonus) || 0));
+          item.attackMultiplier = Math.max(1, Math.min(20, Number(item.attackMultiplier) || 1));
+          item.defenseMultiplier = Math.max(1, Math.min(20, Number(item.defenseMultiplier) || 1));
+          item.expireInsightGain = Math.max(
+            1,
+            Math.min(100, Math.round(Number(item.expireInsightGain) || 1))
+          );
           if (!validCatalogId(item.buff)) return;
         }
         if (item.type === "fashion") {
@@ -2470,6 +2544,27 @@
               }
             : null,
       }),
+    // 30 -> 31：灵根品阶、仙阶功法与悟道增益
+    30: (raw) =>
+      Object.assign({}, raw, {
+        version: 31,
+        cultivation:
+          raw.cultivation && typeof raw.cultivation === "object"
+            ? {
+                ...raw.cultivation,
+                attributes: {
+                  ...(raw.cultivation.attributes || {}),
+                  rootGrade:
+                    raw.cultivation.attributes &&
+                    C.ROOT_GRADES[raw.cultivation.attributes.rootGrade]
+                      ? raw.cultivation.attributes.rootGrade
+                      : C.defaultRootGrade(
+                          (raw.cultivation.attributes && raw.cultivation.attributes.root) || "mixed"
+                        ),
+                },
+              }
+            : null,
+      }),
   };
 
   function migrate(raw) {
@@ -2493,6 +2588,7 @@
     state.totalEarned = num(raw.totalEarned, state.coins, 0);
     state.level = Math.round(num(raw.level, 1, 1, 999));
     state.cultivation = C.normalizeCultivation(raw.cultivation, now, rng);
+    settleCultivationEnlightenment(state, now, rng);
     if (!(Number(raw.cultivation && raw.cultivation.hp) > 0)) {
       state.cultivation.hp = combatStats(state).maxHp;
     }
@@ -2897,6 +2993,7 @@
     const seconds = Math.max(0, elapsedMs) / 1000;
     if (seconds <= 0) return { earned: 0, offline: false };
     const tickNow = Math.max(0, Number(state.lastTick) || Date.now()) + seconds * 1000;
+    const enlightenment = settleCultivationEnlightenment(state, tickNow, rng);
 
     const offline = seconds > 300;
     const efficiency = offline ? BALANCE.offlineEfficiency : 1;
@@ -2947,19 +3044,28 @@
       meditation,
       stoneCultivation,
       lifespan,
+      enlightenment,
       died: lifespan.died,
     };
   }
 
   /** 从存档的 lastTick 结算到现在的收益。 */
   function settleOffline(state, now, rng) {
+    const enlightenment = settleCultivationEnlightenment(state, now, rng);
     const spiritualPower = recoverSpiritualPower(state, now);
     const meditation = settleMeditation(state, now);
     const stoneCultivation = settleStoneCultivation(state, now, rng);
     const elapsed = Math.max(0, (now - state.lastTick) / 1000);
     if (elapsed < 60) {
       state.lastTick = now;
-      return { seconds: 0, earned: 0, meditation, stoneCultivation, spiritualPower };
+      return {
+        seconds: 0,
+        earned: 0,
+        meditation,
+        stoneCultivation,
+        spiritualPower,
+        enlightenment,
+      };
     }
     const capped = Math.min(elapsed, BALANCE.offlineCapHours * 3600);
     const earned = incomePerSecond(state, now) * capped * BALANCE.offlineEfficiency;
@@ -2988,6 +3094,7 @@
       stoneCultivation,
       spiritualPower,
       lifespan,
+      enlightenment,
       died: lifespan.died,
     };
   }
@@ -3060,7 +3167,8 @@
     const max = spiritualPowerCapacity(cultivation, state.level);
     const meditationFactor = cultivation.meditation && cultivation.meditation.active ? 1.15 : 1;
     const cultivationFactor =
-      (1 + Math.min(1.5, Math.max(0, state.level - 1) / 500)) * Math.sqrt(root.gain || 1);
+      (1 + Math.min(1.5, Math.max(0, state.level - 1) / 500)) *
+      Math.sqrt((root.gain || 1) * attrs.rootGradeMultiplier);
     const basePerSecond = Math.max(0.02, max * 0.00035 * cultivationFactor);
     const environmentFactor =
       region.qi *
@@ -3121,6 +3229,7 @@
     const cultivation = state.cultivation;
     const attrs = C.talentSummary(cultivation && cultivation.attributes);
     const lineage = Math.max(0, Number(attrs.rootLineage) || 0);
+    const techniqueBonus = C.techniqueBonuses(cultivation);
     const total = totalCultivationAmount(cultivation, state.level);
     const level = Math.max(1, Math.min(C.MAX_LEVEL, Math.round(Number(state.level) || 1)));
     const hpGrowth = Math.pow(COMBAT_GROWTH.hp, level - 1);
@@ -3139,7 +3248,8 @@
       Math.round(
         (10 + attrs.insight * 0.035 + Number(cultivation && cultivation.technique) * 0.003) *
           attackGrowth *
-          (1 + lineage * 0.008)
+          (1 + lineage * 0.008) *
+          techniqueBonus.attackMultiplier
       )
     );
     const defense = Math.max(
@@ -3147,7 +3257,8 @@
       Math.round(
         (5 + attrs.daoHeart * 0.025 + lineage * 1.5) *
           defenseGrowth *
-          (1 + lineage * 0.006)
+          (1 + lineage * 0.006) *
+          techniqueBonus.defenseMultiplier
       )
     );
     const blockChance = clamp(
@@ -3167,6 +3278,8 @@
       blockChance,
       dodgeChance,
       cultivationTotal: total,
+      techniqueAttackMultiplier: techniqueBonus.attackMultiplier,
+      techniqueDefenseMultiplier: techniqueBonus.defenseMultiplier,
     };
   }
 
@@ -3183,14 +3296,15 @@
   function towerFoeStats(state, entry, guardian) {
     const stats = combatStats(state);
     const floor = entry.floor;
+    const depthPower = Math.pow(1.16, floor - 1);
     const maxHp = guardian
-      ? Math.max(40, Math.round(stats.attack * (8 + floor * 0.9)))
-      : Math.max(12, Math.round(stats.attack * (1.15 + floor * 0.08)));
+      ? Math.max(40, Math.round(stats.attack * (8 + floor * 0.9) * depthPower))
+      : Math.max(12, Math.round(stats.attack * (1.15 + floor * 0.08) * depthPower));
     const attack = Math.max(
       3,
-      Math.round(stats.defense * (0.62 + floor * 0.035) * (guardian ? 1.9 : 1))
+      Math.round(stats.defense * (0.62 + floor * 0.035) * depthPower * (guardian ? 1.9 : 1))
     );
-    return { maxHp, attack };
+    return { maxHp, attack, depthPower };
   }
 
   function awardTowerFightExperience(state, battle, entry, guardian) {
@@ -3205,8 +3319,10 @@
   }
 
   function blackTowerStatus(state, now) {
-    state.cultivation = C.normalizeCultivation(state.cultivation, now || Date.now());
-    const power = recoverSpiritualPower(state, now || Date.now());
+    const ts = now || Date.now();
+    state.cultivation = C.normalizeCultivation(state.cultivation, ts);
+    settleCultivationEnlightenment(state, ts);
+    const power = recoverSpiritualPower(state, ts);
     const stats = combatStats(state);
     if (!Number.isFinite(Number(state.cultivation.hp))) state.cultivation.hp = stats.maxHp;
     state.cultivation.hp = clamp(Number(state.cultivation.hp) || 0, 0, stats.maxHp);
@@ -3606,8 +3722,10 @@
   }
 
   function cultivationStatus(state, now) {
-    state.cultivation = C.normalizeCultivation(state.cultivation, now || Date.now());
-    const spiritualPower = recoverSpiritualPower(state, now || Date.now());
+    const ts = now || Date.now();
+    state.cultivation = C.normalizeCultivation(state.cultivation, ts);
+    settleCultivationEnlightenment(state, ts);
+    const spiritualPower = recoverSpiritualPower(state, ts);
     const combat = combatStats(state);
     const healthRecovery = combatRecoveryRate(state);
     state.cultivation.hp = clamp(Number(state.cultivation.hp) || 0, 0, combat.maxHp);
@@ -3630,6 +3748,7 @@
     const meditation = C.meditationRate(state.cultivation, state.level);
     const stoneRate = C.stoneAbsorptionRate(state.cultivation, state.level);
     const stoneChances = C.stoneBatchChances(state.cultivation);
+    const enlightenment = state.cultivation.enlightenment || {};
     const stoneSession = state.cultivation.stoneSession;
     const pillUse = state.cultivation.cultivationPillUse;
     if (Number(pillUse.level) !== state.level) {
@@ -3673,6 +3792,10 @@
       permissions: realm.major.permissions.slice(),
       attributes: C.talentSummary(state.cultivation.attributes),
       root: C.ROOTS[state.cultivation.attributes.root] || C.ROOTS.mixed,
+      rootGrade:
+        C.ROOT_GRADES[state.cultivation.attributes.rootGrade] ||
+        C.ROOT_GRADES[C.defaultRootGrade(state.cultivation.attributes.root)],
+      rootTechniquePower: C.rootTechniquePower(state.cultivation.attributes.root),
       technique: Number(state.cultivation.technique) || 0,
       spiritStones: Number(stoneCounts.low) || 0,
       stoneCounts,
@@ -3702,6 +3825,11 @@
         totalSeconds: Number(
           (state.cultivation.meditation && state.cultivation.meditation.totalSeconds) || 0
         ),
+      },
+      enlightenment: {
+        ...enlightenment,
+        active: Boolean(enlightenment.active) && Number(enlightenment.until) > ts,
+        remainingMs: Math.max(0, (Number(enlightenment.until) || 0) - ts),
       },
       spiritualPower,
       combat: {
@@ -3792,6 +3920,13 @@
     if (!technique) return { ok: false, reason: "technique" };
     if (!C.techniqueCompatible(state.cultivation, technique.id)) {
       return { ok: false, reason: "root", requiredRoot: technique.root };
+    }
+    if (state.level < (Number(technique.minLevel) || 1)) {
+      return {
+        ok: false,
+        reason: "level",
+        requiredLevel: Number(technique.minLevel) || 1,
+      };
     }
     const count = Number(state.cultivation.techniqueScrolls[technique.id]) || 0;
     if (count <= 0) return { ok: false, reason: "missing" };
@@ -4050,6 +4185,7 @@
             1,
             qualityFactor *
               root.gain *
+              attrs.rootGradeMultiplier *
               insightFactor *
               demonFactor *
               randomFactor *
@@ -4511,7 +4647,9 @@
     const tierRoll = random() + Math.min(0.25, state.level / 1000) + Math.max(0, region.stoneBonus) * 0.25;
     const tier =
       tierRoll >= 1.08
-        ? C.TECHNIQUE_TIERS[3]
+        ? state.level >= 101
+          ? C.TECHNIQUE_TIERS[4]
+          : C.TECHNIQUE_TIERS[3]
         : tierRoll >= 0.82
           ? C.TECHNIQUE_TIERS[2]
           : tierRoll >= 0.5
@@ -4686,8 +4824,10 @@
     const pillChance = Math.min(1, 0.8 * lootMultiplier);
     if (spot.size === "large") {
       if (random() < techniqueChance) {
-        const candidates = Object.values(C.TECHNIQUES).filter((technique) =>
-          C.techniqueCompatible(state.cultivation, technique.id)
+        const candidates = Object.values(C.TECHNIQUES).filter(
+          (technique) =>
+            C.techniqueCompatible(state.cultivation, technique.id) &&
+            state.level >= (Number(technique.minLevel) || 1)
         );
         const technique = candidates[Math.floor(random() * candidates.length) % candidates.length];
         if (technique) {
@@ -4704,8 +4844,10 @@
       }
     } else if (random() < Math.min(1, 1.2 * lootMultiplier)) {
       if (random() < 0.5) {
-        const candidates = Object.values(C.TECHNIQUES).filter((technique) =>
-          C.techniqueCompatible(state.cultivation, technique.id)
+        const candidates = Object.values(C.TECHNIQUES).filter(
+          (technique) =>
+            C.techniqueCompatible(state.cultivation, technique.id) &&
+            state.level >= (Number(technique.minLevel) || 1)
         );
         const technique = candidates[Math.floor(random() * candidates.length) % candidates.length];
         if (technique) {
@@ -5089,12 +5231,60 @@
     );
   }
 
+  function rebirthPreview(state, now, rng) {
+    const random = typeof rng === "function" ? rng : Math.random;
+    state.cultivation = C.normalizeCultivation(state.cultivation, now || Date.now(), random);
+    const current = C.talentSummary(state.cultivation.attributes);
+    const rolled = C.rollTalents(random);
+    const sameRoot = rolled.root === current.root;
+    const canMerge = C.rootsAreSymbiotic(current.root, rolled.root);
+    const mergedGrade = canMerge
+      ? C.combineRootGrades(current.rootGrade, rolled.rootGrade)
+      : rolled.rootGrade;
+    return {
+      currentRoot: current.root,
+      currentRootName: C.ROOTS[current.root].name,
+      currentRootGrade: current.rootGrade,
+      currentRootGradeName: C.ROOT_GRADES[current.rootGrade].name,
+      generatedRoot: rolled.root,
+      generatedRootName: C.ROOTS[rolled.root].name,
+      generatedRootGrade: rolled.rootGrade,
+      generatedRootGradeName: C.ROOT_GRADES[rolled.rootGrade].name,
+      sameRoot,
+      canMerge,
+      mergedRoot: canMerge ? rolled.root : "",
+      mergedRootName: canMerge ? C.ROOTS[rolled.root].name : "",
+      mergedRootGrade: canMerge ? mergedGrade : "",
+      mergedRootGradeName: canMerge ? C.ROOT_GRADES[mergedGrade].name : "",
+      choices: [
+        {
+          id: "old",
+          label: `保留${C.ROOT_GRADES[current.rootGrade].name}${C.ROOTS[current.root].name}`,
+          available: true,
+        },
+        {
+          id: "new",
+          label: `采用${C.ROOT_GRADES[rolled.rootGrade].name}${C.ROOTS[rolled.root].name}`,
+          available: true,
+        },
+        {
+          id: "merge",
+          label: canMerge
+            ? `同源融合为${C.ROOT_GRADES[mergedGrade].name}${C.ROOTS[rolled.root].name}`
+            : "灵根不同，无法同源升品",
+          available: canMerge,
+        },
+      ],
+    };
+  }
+
   function rebirthStatus(state) {
     const attributes = C.talentSummary(state.cultivation && state.cultivation.attributes);
     const soul = (state.cultivation && state.cultivation.soul) || {
       level: 0,
       count: 0,
       root: "",
+      rootGrade: "",
       attributeBonus: 0,
     };
     const immortal = state.level >= 101;
@@ -5116,7 +5306,11 @@
         level: soul.level,
         count: soul.count,
         root: soul.root,
+        rootGrade: soul.rootGrade,
         rootName: soul.root ? C.ROOTS[soul.root].name : "",
+        rootGradeName: soul.root
+          ? C.ROOT_GRADES[C.rootGradeById(soul.rootGrade, soul.root).id].name
+          : "",
         attributeBonus: soul.attributeBonus,
         nextLevel: nextSoulLevel,
         nextRoot: nextSoulRoot,
@@ -5126,7 +5320,10 @@
       choices: C.ATTRIBUTE_KEYS.map((key) => ({
         key,
         label: C.ATTRIBUTE_META[key].label,
-        value: key === "root" ? C.ROOTS[attributes.root].name : attributes[key],
+        value:
+          key === "root"
+            ? `${C.ROOT_GRADES[attributes.rootGrade].name}${C.ROOTS[attributes.root].name}`
+            : attributes[key],
       })),
     };
   }
@@ -5136,6 +5333,7 @@
     const soulLevel = Math.max(oldSoul.level || 0, previous.level);
     const soulCount = (oldSoul.count || 0) + 1;
     const soulRoot = previous.attributes.root;
+    const soulRootGrade = previous.attributes.rootGrade;
     const attributeBonus = soulAttributeBonus(soulLevel, soulRoot, soulCount);
     resetForNewLife(state, startedAt, nextRng, {
       type: "rebirth",
@@ -5147,6 +5345,7 @@
     const generatedRoot = state.cultivation.attributes.root;
     const rootUpgraded = C.rootsAreSymbiotic(soulRoot, generatedRoot);
     state.cultivation.attributes.root = soulRoot;
+    state.cultivation.attributes.rootGrade = soulRootGrade;
     state.cultivation.attributes.rootLineage = Math.min(
       100,
       (Number(previous.attributes.rootLineage) || 0) + (rootUpgraded ? 1 : 0)
@@ -5175,6 +5374,7 @@
       level: soulLevel,
       count: soulCount,
       root: soulRoot,
+      rootGrade: soulRootGrade,
       attributeBonus,
     };
     state.cultivation.cycle = previous.cycle + 1;
@@ -5186,6 +5386,7 @@
       soulCount,
       soulRoot,
       soulRootName: C.ROOTS[soulRoot].name,
+      soulRootGradeName: C.ROOT_GRADES[soulRootGrade].name,
       generatedRoot,
       generatedRootName: C.ROOTS[generatedRoot].name,
       attributeBonus,
@@ -5194,7 +5395,7 @@
       cycle: state.cultivation.cycle,
       attributes: C.talentSummary(state.cultivation.attributes),
       root: C.ROOTS[state.cultivation.attributes.root],
-      dialogue: `仙人神魂转世：保留Lv.${soulLevel}${C.ROOTS[soulRoot].name}神魂，全属性 +${attributeBonus}；${
+      dialogue: `仙人神魂转世：保留Lv.${soulLevel}${C.ROOT_GRADES[soulRootGrade].name}${C.ROOTS[soulRoot].name}神魂，全属性 +${attributeBonus}；${
         rootUpgraded
           ? `今生随机为${C.ROOTS[generatedRoot].name}，与前世灵根共生，根骨等阶 +1`
           : `今生随机为${C.ROOTS[generatedRoot].name}，未能共生，保留原有根骨等阶`
@@ -5202,7 +5403,7 @@
     };
   }
 
-  function rebirth(state, attributeKey, now, rng) {
+  function rebirth(state, attributeKey, now, rng, options) {
     const startedAt = now || Date.now();
     const random = typeof rng === "function" ? rng : Math.random;
     state.cultivation = C.normalizeCultivation(state.cultivation, startedAt, random);
@@ -5230,8 +5431,62 @@
       carried: attributeKey,
       cycle: previous.cycle + 1,
     });
+    if (attributeKey === "root") {
+      const generatedRoot =
+        options && C.ROOTS[options.generatedRoot]
+          ? options.generatedRoot
+          : state.cultivation.attributes.root;
+      const generatedRootGrade =
+        options && C.ROOT_GRADES[options.generatedRootGrade]
+          ? options.generatedRootGrade
+          : state.cultivation.attributes.rootGrade;
+      const oldRoot = previous.attributes.root;
+      const oldGrade = previous.attributes.rootGrade;
+      const canMerge = C.rootsAreSymbiotic(oldRoot, generatedRoot);
+      const choice = ["old", "new", "merge"].includes(options && options.rootChoice)
+        ? options.rootChoice
+        : "old";
+      const finalChoice = choice === "merge" && !canMerge ? "new" : choice;
+      const finalGrade =
+        finalChoice === "merge"
+          ? C.combineRootGrades(oldGrade, generatedRootGrade)
+          : finalChoice === "old"
+            ? oldGrade
+            : generatedRootGrade;
+      state.cultivation.attributes.root =
+        finalChoice === "old" ? oldRoot : generatedRoot;
+      state.cultivation.attributes.rootGrade = finalGrade;
+      state.cultivation.attributes.rootLineage = Math.min(
+        100,
+        (Number(previous.attributes.rootLineage) || 0) + (finalChoice === "merge" ? 1 : 0)
+      );
+      state.cultivation.cycle = previous.cycle + 1;
+      return {
+        ok: true,
+        previousLevel: previous.level,
+        previousRealmName: previous.realmName,
+        carried: "root",
+        mergeMode: finalChoice,
+        generatedRoot,
+        generatedRootName: C.ROOTS[generatedRoot].name,
+        generatedRootGrade,
+        generatedRootGradeName: C.ROOT_GRADES[generatedRootGrade].name,
+        root: C.ROOTS[state.cultivation.attributes.root],
+        rootGrade: C.ROOT_GRADES[finalGrade],
+        rootLineage: state.cultivation.attributes.rootLineage,
+        cycle: state.cultivation.cycle,
+        attributes: C.talentSummary(state.cultivation.attributes),
+        dialogue:
+          finalChoice === "merge"
+            ? `同源灵根融合，获得${C.ROOT_GRADES[finalGrade].name}${C.ROOTS[generatedRoot].name}`
+            : finalChoice === "old"
+              ? `保留前世${C.ROOT_GRADES[oldGrade].name}${C.ROOTS[oldRoot].name}`
+              : `采用今生${C.ROOT_GRADES[generatedRootGrade].name}${C.ROOTS[generatedRoot].name}`,
+      };
+    }
     const carried = {
       root: previous.attributes.root,
+      rootGrade: previous.attributes.rootGrade,
       insight: previous.attributes.insight,
       fortune: previous.attributes.fortune,
       daoHeart: previous.attributes.daoHeart,
@@ -5640,6 +5895,39 @@
     return until && until > (now || Date.now()) ? until : 0;
   }
 
+  function settleCultivationEnlightenment(state, now, rng) {
+    if (!state || !state.cultivation) return { expired: false, insightGained: 0 };
+    const result = C.settleEnlightenment(state.cultivation, now, rng);
+    if (result.expired && state.buffs) delete state.buffs.enlightenment_tea;
+    return result;
+  }
+
+  function activateCultivationBuff(state, item, now, rng) {
+    if (!item || item.buff !== "enlightenment_tea") return { ok: false, reason: "not-cultivation-buff" };
+    if (!state.cultivation) state.cultivation = C.createCultivation(now || Date.now(), rng);
+    const result = C.activateEnlightenment(
+      state.cultivation,
+      {
+        source: item.name,
+        minutes: item.minutes,
+        insightBonus: item.insightBonus,
+        cultivationMultiplier: item.cultivationMultiplier,
+        techniqueMultiplier: item.techniqueMultiplier,
+        breakthroughBonus: item.breakthroughBonus,
+        attackMultiplier: item.attackMultiplier,
+        defenseMultiplier: item.defenseMultiplier,
+        expireInsightGain: item.expireInsightGain,
+      },
+      now,
+      rng
+    );
+    if (result.ok) {
+      if (!state.buffs) state.buffs = {};
+      state.buffs.enlightenment_tea = result.until;
+    }
+    return result;
+  }
+
   function shopItemPrice(state, item) {
     if (!item) return 0;
     if (item.type !== "cultivation") return Number(item.price) || 0;
@@ -5681,9 +5969,12 @@
     if (item.type === "champion") return { ok: false, reason: "not-sale" };
     if (
       item.type === "technique" &&
-      (!state.cultivation || item.root !== state.cultivation.attributes.root)
+      (!state.cultivation || !C.techniqueCompatible(state.cultivation, item.id))
     ) {
       return { ok: false, reason: "root" };
+    }
+    if (item.type === "technique" && state.level < (Number(item.minLevel) || 1)) {
+      return { ok: false, reason: "level", requiredLevel: Number(item.minLevel) || 1 };
     }
     if (!state.rentals || typeof state.rentals !== "object") {
       state.rentals = { furniture: {}, dress: {} };
@@ -5712,6 +6003,13 @@
     if (item.type === "permanent" && state.perks[item.id]) return { ok: false, reason: "owned" };
     if (item.type === "theme" && state.perks[`theme_${item.theme}`]) return { ok: false, reason: "owned" };
     if (
+      item.buff === "enlightenment_tea" &&
+      C.activeEnlightenmentBonus(state.cultivation).active &&
+      Number(state.cultivation.enlightenment.until) > ts
+    ) {
+      return { ok: false, reason: "active" };
+    }
+    if (
       (item.type === "furniture" && state.room && state.room.furniture.includes(item.furnitureId)) ||
       (item.furnitureId === "companion" && state.companion && state.companion.adopted)
     ) {
@@ -5738,6 +6036,7 @@
     } else if (item.type === "buff") {
       const start = Math.max(ts, activeBuff(state, item.buff, ts));
       state.buffs[item.buff] = start + item.minutes * 60000;
+      if (item.buff === "enlightenment_tea") activateCultivationBuff(state, item, ts);
     } else if (item.type === "permanent") {
       state.perks[item.id] = true;
     } else if (item.type === "theme") {
@@ -6435,6 +6734,7 @@
   function grantGachaBuff(state, item, now) {
     const start = Math.max(Number(now) || Date.now(), activeBuff(state, item.buff, now));
     state.buffs[item.buff] = start + item.minutes * 60000;
+    if (item.buff === "enlightenment_tea") activateCultivationBuff(state, item, now);
     return {
       ok: true,
       type: "buff",
@@ -7237,6 +7537,7 @@
     OPPORTUNITIES: O,
     advanceLifespan,
     rebirthStatus,
+    rebirthPreview,
     rebirth,
     realmLabelForLevel,
     CULTIVATION: C,

@@ -44,11 +44,53 @@
     { id: "mystic", name: "玄阶", rank: 2, price: 3000 },
     { id: "earth", name: "地阶", rank: 3, price: 15000 },
     { id: "heaven", name: "天阶", rank: 4, price: 80000 },
+    { id: "immortal", name: "仙阶", rank: 5, price: 500000, minLevel: 101 },
   ]);
   const TECHNIQUE_GRADES = Object.freeze([
     { id: "lower", name: "下品", rank: 1, priceMultiplier: 1 },
     { id: "middle", name: "中品", rank: 2, priceMultiplier: 1.8 },
     { id: "upper", name: "上品", rank: 3, priceMultiplier: 3 },
+  ]);
+  const ROOT_GRADES = Object.freeze({
+    lower: Object.freeze({
+      id: "lower",
+      name: "下品",
+      rank: 1,
+      cultivationMultiplier: 1,
+      techniqueMultiplier: 1,
+      breakthroughBonus: 0,
+    }),
+    middle: Object.freeze({
+      id: "middle",
+      name: "中品",
+      rank: 2,
+      cultivationMultiplier: 1.15,
+      techniqueMultiplier: 1.16,
+      breakthroughBonus: 0.015,
+    }),
+    upper: Object.freeze({
+      id: "upper",
+      name: "上品",
+      rank: 3,
+      cultivationMultiplier: 1.35,
+      techniqueMultiplier: 1.38,
+      breakthroughBonus: 0.035,
+    }),
+    supreme: Object.freeze({
+      id: "supreme",
+      name: "极品",
+      rank: 4,
+      cultivationMultiplier: 1.65,
+      techniqueMultiplier: 1.7,
+      breakthroughBonus: 0.06,
+    }),
+  });
+  const ROOT_GRADE_ORDER = Object.freeze(["lower", "middle", "upper", "supreme"]);
+  const ROOT_GRADE_DISTRIBUTION = Object.freeze([
+    { id: "lower", rate: 0.5 },
+    { id: "middle", rate: 0.3 },
+    { id: "upper", rate: 0.15 },
+    { id: "supreme", rate: 0.05 },
   ]);
   const TECHNIQUE_CATEGORIES = Object.freeze({
     heart: Object.freeze({
@@ -58,6 +100,8 @@
       desc: "凝练道基，主要提升修炼效率与突破稳定性。",
       gainWeight: 1,
       breakthroughWeight: 1.2,
+      attackWeight: 0.7,
+      defenseWeight: 1,
     }),
     spell: Object.freeze({
       id: "spell",
@@ -66,6 +110,8 @@
       desc: "运转灵气，兼顾修炼速度与功法领悟。",
       gainWeight: 0.8,
       breakthroughWeight: 0.85,
+      attackWeight: 1,
+      defenseWeight: 0.45,
     }),
     combat: Object.freeze({
       id: "combat",
@@ -74,6 +120,8 @@
       desc: "淬炼攻伐之意，偏重突破与功法领悟。",
       gainWeight: 0.5,
       breakthroughWeight: 1,
+      attackWeight: 1.35,
+      defenseWeight: 0.25,
     }),
     movement: Object.freeze({
       id: "movement",
@@ -82,6 +130,8 @@
       desc: "调和身与气，提供较均衡的修炼加成。",
       gainWeight: 0.6,
       breakthroughWeight: 0.75,
+      attackWeight: 0.65,
+      defenseWeight: 0.65,
     }),
     body: Object.freeze({
       id: "body",
@@ -90,11 +140,14 @@
       desc: "以肉身承载灵力，增强突破时的根基。",
       gainWeight: 0.65,
       breakthroughWeight: 1.1,
+      attackWeight: 0.45,
+      defenseWeight: 1.35,
     }),
   });
   const TECHNIQUE_CATEGORY_MATRIX = Object.freeze([
     Object.freeze(["body", "movement", "spell"]),
     Object.freeze(["combat", "movement", "spell"]),
+    Object.freeze(["combat", "spell", "heart"]),
     Object.freeze(["combat", "spell", "heart"]),
     Object.freeze(["combat", "spell", "heart"]),
   ]);
@@ -688,6 +741,45 @@
     }),
   });
 
+  function defaultRootGrade(rootId) {
+    const root = ROOTS[rootId] || ROOTS.mixed;
+    if (root.kind === "innate") return "supreme";
+    if (root.kind === "variant") return "upper";
+    if (root.kind === "single") return "middle";
+    return "lower";
+  }
+
+  function rootGradeById(id, rootId) {
+    return ROOT_GRADES[id] || ROOT_GRADES[defaultRootGrade(rootId)];
+  }
+
+  /**
+   * 灵根越多，可承载的功法越复杂、越强；单灵根更纯粹，多灵根则靠复合功法追回修炼劣势。
+   */
+  function rootTechniquePower(rootId) {
+    const root = ROOTS[rootId] || ROOTS.mixed;
+    const byCount = { 1: 1, 2: 1.2, 3: 1.42, 4: 1.66, 5: 1.95 };
+    let power = byCount[root.elements.length] || 1;
+    if (root.kind === "variant") power += 0.14;
+    if (root.kind === "innate") power = 2.15;
+    if (root.kind === "chaos" || root.id === "chaos") power = 2.05;
+    return Math.round(power * 100) / 100;
+  }
+
+  function mergeRootGrade(previousGrade, generatedGrade) {
+    const previous = ROOT_GRADES[previousGrade] || ROOT_GRADES.lower;
+    const generated = ROOT_GRADES[generatedGrade] || ROOT_GRADES.lower;
+    return ROOT_GRADE_ORDER[Math.min(3, Math.max(previous.rank, generated.rank))];
+  }
+
+  /** 保留两枚同源灵根时，以较高者为基再晋升一阶。 */
+  function combineRootGrades(previousGrade, generatedGrade) {
+    const previous = ROOT_GRADES[previousGrade] || ROOT_GRADES.lower;
+    const generated = ROOT_GRADES[generatedGrade] || ROOT_GRADES.lower;
+    const rank = Math.min(3, Math.max(previous.rank, generated.rank));
+    return ROOT_GRADE_ORDER[rank];
+  }
+
   const ROOT_DISTRIBUTION = Object.freeze([
     { kind: "innate", rate: 0.00000001, ids: Object.freeze(["innate"]) },
     { kind: "variant", rate: 0.000001, ids: Object.freeze(["ice", "thunder", "light", "dark", "chaos"]) },
@@ -740,16 +832,29 @@
                 grade: grade.id,
                 gradeName: grade.name,
                 gradeRank: grade.rank,
+                minLevel: tier.minLevel || 1,
+                immortal: tier.rank >= 5,
+                rootTechniquePower: rootTechniquePower(root.id),
                 category: category.id,
                 categoryName: category.name,
                 categoryIcon: category.icon,
                 price: Math.round(tier.price * grade.priceMultiplier * root.priceFactor),
-                cultivationMultiplier: 1 + tier.rank * 0.06 + grade.rank * 0.02,
-                breakthroughBonus: tier.rank * 0.012 + grade.rank * 0.005,
-                masteryBonus: tier.rank * 5 + grade.rank * 2,
-                desc: `${category.name} · 适合${root.name}·${root.techniqueScope}，修炼效率 +${Math.round(
+                cultivationMultiplier:
+                  (1 + tier.rank * 0.06 + grade.rank * 0.02) * (tier.rank >= 5 ? 1.35 : 1),
+                breakthroughBonus:
+                  (tier.rank * 0.012 + grade.rank * 0.005) * (tier.rank >= 5 ? 1.45 : 1),
+                masteryBonus: (tier.rank * 5 + grade.rank * 2) * (tier.rank >= 5 ? 1.5 : 1),
+                desc: `${category.name} · ${root.elements.length}系灵根复合功法 ×${rootTechniquePower(
+                  root.id
+                )} · ${root.techniqueScope}，修炼效率 +${Math.round(
                   (tier.rank * 0.06 + grade.rank * 0.02) * 100
-                )}%，突破成功率 +${(tier.rank * 1.2 + grade.rank * 0.5).toFixed(1)}%`,
+                )}% × 灵根数量与品阶，突破成功率 +${(tier.rank * 1.2 + grade.rank * 0.5).toFixed(
+                  1
+                )}% × 灵根数量与品阶，攻击权重 ${category.attackWeight.toFixed(
+                  2
+                )}、防御权重 ${category.defenseWeight.toFixed(2)}${
+                  tier.rank >= 5 ? " · 100级后可研习的仙阶功法" : ""
+                }`,
               }),
             ];
           })
@@ -772,6 +877,17 @@
     return "mixed";
   }
 
+  function rollRootGrade(rng) {
+    const random = typeof rng === "function" ? rng : Math.random;
+    const gate = random();
+    let cumulative = 0;
+    for (const group of ROOT_GRADE_DISTRIBUTION) {
+      cumulative += group.rate;
+      if (gate < cumulative) return group.id;
+    }
+    return "lower";
+  }
+
   /**
    * 判断新世随机灵根是否能与前世人灵根共生。
    * 相同灵根直接成立；多灵根只要包含前世灵根的任一属性，就视为可共生。
@@ -782,7 +898,7 @@
     if (!previous || !generated) return false;
     if (previous.id === generated.id) return true;
     const multiKinds = new Set(["dual", "triple", "quad", "mixed"]);
-    if (!multiKinds.has(generated.kind)) return false;
+    if (!multiKinds.has(previous.kind) && !multiKinds.has(generated.kind)) return false;
     return generated.elements.some((element) => previous.elements.includes(element));
   }
 
@@ -960,24 +1076,150 @@
       .filter((technique) => technique && techniqueCompatible(cultivation, technique.id));
   }
 
+  function activeEnlightenmentBonus(cultivation) {
+    const buff = cultivation && cultivation.enlightenment;
+    return buff && buff.active
+      ? buff
+      : {
+          active: false,
+          cultivationMultiplier: 1,
+          techniqueMultiplier: 1,
+          breakthroughBonus: 0,
+          attackMultiplier: 1,
+          defenseMultiplier: 1,
+        };
+  }
+
+  function settleEnlightenment(cultivation, now, rng) {
+    const random = typeof rng === "function" ? rng : Math.random;
+    const buff = cultivation && cultivation.enlightenment;
+    if (!buff || !buff.active) {
+      return { expired: false, insightGained: 0, insight: cultivation && cultivation.attributes ? cultivation.attributes.insight : 0 };
+    }
+    const ts = Number(now) || Date.now();
+    if ((Number(buff.until) || 0) > ts) {
+      return {
+        expired: false,
+        remainingMs: (Number(buff.until) || 0) - ts,
+        insight: cultivation.attributes.insight,
+      };
+    }
+    const attributes = cultivation.attributes || {};
+    const before = clamp(Number(attributes.insight) || 1, 1, MAX_ATTRIBUTE);
+    const temperatureInsight = clamp(Number(buff.insightAdded) || 0, 0, MAX_ATTRIBUTE);
+    const source = String(buff.source || "");
+    const maxInsightGain = Math.max(1, integer(buff.expireInsightGain, 1, 1, 100));
+    const insightGained = 1 + Math.floor(random() * maxInsightGain);
+    attributes.insight = clamp(before - temperatureInsight + insightGained, 1, MAX_ATTRIBUTE);
+    const actualGain = Math.max(0, attributes.insight - Math.max(1, before - temperatureInsight));
+    Object.assign(buff, {
+      active: false,
+      source: "",
+      until: 0,
+      insightAdded: 0,
+      cultivationMultiplier: 1,
+      techniqueMultiplier: 1,
+      breakthroughBonus: 0,
+      attackMultiplier: 1,
+      defenseMultiplier: 1,
+      expireInsightGain: 1,
+    });
+    return {
+      expired: true,
+      insightGained: actualGain,
+      insightBefore: before,
+      insight: attributes.insight,
+      source,
+    };
+  }
+
+  function activateEnlightenment(cultivation, effect, now, rng) {
+    const random = typeof rng === "function" ? rng : Math.random;
+    if (!cultivation || !effect || typeof effect !== "object") {
+      return { ok: false, reason: "effect" };
+    }
+    const ts = Number(now) || Date.now();
+    const minutes = clamp(Number(effect.minutes) || 0, 1, 1440);
+    const until = ts + minutes * 60000;
+    const existing = cultivation.enlightenment;
+    if (existing && existing.active && Number(existing.until) > ts) {
+      existing.until = Math.max(Number(existing.until), until);
+      return {
+        ok: true,
+        extended: true,
+        until: existing.until,
+        insightAdded: existing.insightAdded,
+      };
+    }
+    if (existing && existing.active) settleEnlightenment(cultivation, ts, random);
+    if (!cultivation.attributes) cultivation.attributes = {};
+    const requestedInsight = Math.max(0, Math.round(Number(effect.insightBonus) || 0));
+    const before = clamp(Number(cultivation.attributes.insight) || 1, 1, MAX_ATTRIBUTE);
+    cultivation.attributes.insight = clamp(before + requestedInsight, 1, MAX_ATTRIBUTE);
+    const insightAdded = cultivation.attributes.insight - before;
+    cultivation.enlightenment = {
+      active: true,
+      source: String(effect.source || "悟道茶").slice(0, 40),
+      until,
+      insightAdded,
+      cultivationMultiplier: clamp(Number(effect.cultivationMultiplier) || 1, 1, 20),
+      techniqueMultiplier: clamp(Number(effect.techniqueMultiplier) || 1, 1, 20),
+      breakthroughBonus: clamp(Number(effect.breakthroughBonus) || 0, 0, 1),
+      attackMultiplier: clamp(Number(effect.attackMultiplier) || 1, 1, 20),
+      defenseMultiplier: clamp(Number(effect.defenseMultiplier) || 1, 1, 20),
+      expireInsightGain: integer(effect.expireInsightGain, 1, 1, 100),
+    };
+    return {
+      ok: true,
+      extended: false,
+      until,
+      insightAdded,
+      insight: cultivation.attributes.insight,
+    };
+  }
+
   function techniqueBonuses(cultivation) {
     const techniques = activeTechniques(cultivation);
+    const root = ROOTS[cultivation && cultivation.attributes && cultivation.attributes.root] || ROOTS.mixed;
+    const grade = rootGradeById(
+      cultivation && cultivation.attributes && cultivation.attributes.rootGrade,
+      root.id
+    );
+    const enlightenment = activeEnlightenmentBonus(cultivation);
+    const rootPower =
+      rootTechniquePower(root.id) * grade.techniqueMultiplier * enlightenment.techniqueMultiplier;
     let gain = 0;
     let breakthrough = 0;
     let mastery = 0;
+    let attack = 0;
+    let defense = 0;
     techniques.forEach((technique) => {
       const category = TECHNIQUE_CATEGORIES[technique.category] || TECHNIQUE_CATEGORIES.spell;
       const progress = techniqueProgress(cultivation, technique.id);
       const masteryFactor = 0.15 + (progress / 100) * 0.85;
-      gain += (technique.cultivationMultiplier - 1) * masteryFactor * category.gainWeight;
-      breakthrough += technique.breakthroughBonus * masteryFactor * category.breakthroughWeight;
-      mastery += technique.masteryBonus * masteryFactor;
+      gain +=
+        (technique.cultivationMultiplier - 1) *
+        masteryFactor *
+        category.gainWeight *
+        rootPower;
+      breakthrough +=
+        technique.breakthroughBonus * masteryFactor * category.breakthroughWeight * rootPower;
+      mastery += technique.masteryBonus * masteryFactor * rootPower;
+      const combatWeight =
+        (technique.tierRank * 0.055 + technique.gradeRank * 0.03) * masteryFactor * rootPower;
+      attack += combatWeight * category.attackWeight;
+      defense += combatWeight * category.defenseWeight;
     });
     return {
       techniques,
       cultivationMultiplier: 1 + gain,
       breakthroughBonus: breakthrough,
       masteryBonus: mastery,
+      attackMultiplier: 1 + attack,
+      defenseMultiplier: 1 + defense,
+      rootPower,
+      rootGrade: grade.id,
+      enlightenment,
     };
   }
 
@@ -1060,6 +1302,7 @@
     const rootId = rollRoot(random);
     return {
       root: rootId,
+      rootGrade: rollRootGrade(random),
       insight: randomInt(random, 22, 96),
       fortune: randomInt(random, 18, 96),
       daoHeart: randomInt(random, 28, 98),
@@ -1070,12 +1313,18 @@
 
   function talentSummary(attributes) {
     const root = ROOTS[attributes && attributes.root] || ROOTS.mixed;
+    const grade = rootGradeById(attributes && attributes.rootGrade, root.id);
     const value = (key, fallback) => {
       const parsed = Number(attributes && attributes[key]);
       return Number.isFinite(parsed) ? parsed : fallback;
     };
     return {
       root: root.id,
+      rootGrade: grade.id,
+      rootGradeName: grade.name,
+      rootGradeRank: grade.rank,
+      rootGradeMultiplier: grade.cultivationMultiplier,
+      rootTechniquePower: rootTechniquePower(root.id),
       insight: value("insight", 50),
       fortune: value("fortune", 50),
       daoHeart: value("daoHeart", 50),
@@ -1089,6 +1338,7 @@
       version: VERSION,
       attributes: {
         root: "mixed",
+        rootGrade: "lower",
         insight: 50,
         fortune: 50,
         daoHeart: 60,
@@ -1109,6 +1359,7 @@
       cultivationPillUse: { level: 0, count: 0 },
       stoneSession: {
         active: false,
+        source: "",
         startedAt: 0,
         endsAt: 0,
         completedAt: 0,
@@ -1127,6 +1378,17 @@
       regionId: "qingju_plain",
       formationId: "gathering",
       meditation: { active: false, lastAt: 0, totalSeconds: 0 },
+      enlightenment: {
+        active: false,
+        until: 0,
+        insightAdded: 0,
+        cultivationMultiplier: 1,
+        techniqueMultiplier: 1,
+        breakthroughBonus: 0,
+        attackMultiplier: 1,
+        defenseMultiplier: 1,
+        expireInsightGain: 1,
+      },
       biguUntil: 0,
       spiritualPower: 100,
       spiritualPowerMax: 100,
@@ -1147,7 +1409,7 @@
         visits: 0,
         lastLoot: null,
       },
-      soul: { level: 0, count: 0, root: "", attributeBonus: 0 },
+      soul: { level: 0, count: 0, root: "", rootGrade: "", attributeBonus: 0 },
       techniqueScrolls: {},
       techniquesKnown: [],
       techniqueProgress: {},
@@ -1206,6 +1468,8 @@
       : "low";
     const formationId = FORMATIONS[raw.formationId] ? raw.formationId : "gathering";
     const rawMeditation = raw.meditation && typeof raw.meditation === "object" ? raw.meditation : {};
+    const rawEnlightenment =
+      raw.enlightenment && typeof raw.enlightenment === "object" ? raw.enlightenment : {};
     const rawStoneSession = raw.stoneSession && typeof raw.stoneSession === "object" ? raw.stoneSession : {};
     const rawCave = raw.cave && typeof raw.cave === "object" ? raw.cave : {};
     const rawPillUse =
@@ -1314,6 +1578,7 @@
       version: VERSION,
       attributes: {
         root,
+        rootGrade: rootGradeById(attrs.rootGrade, root).id,
         insight: integer(attrs.insight, fallback.attributes.insight, 1, MAX_ATTRIBUTE),
         fortune: integer(attrs.fortune, fallback.attributes.fortune, 1, MAX_ATTRIBUTE),
         daoHeart: integer(attrs.daoHeart, fallback.attributes.daoHeart, 0, MAX_ATTRIBUTE),
@@ -1362,6 +1627,26 @@
         active: rawMeditation.active === true,
         lastAt: Math.max(0, Number(rawMeditation.lastAt) || timestamp),
         totalSeconds: Math.max(0, Number(rawMeditation.totalSeconds) || 0),
+      },
+      enlightenment: {
+        active: rawEnlightenment.active === true,
+        source: String(rawEnlightenment.source || "").slice(0, 40),
+        until: Math.max(0, Number(rawEnlightenment.until) || 0),
+        insightAdded: integer(rawEnlightenment.insightAdded, 0, 0, MAX_ATTRIBUTE),
+        cultivationMultiplier: clamp(
+          Number(rawEnlightenment.cultivationMultiplier) || 1,
+          1,
+          20
+        ),
+        techniqueMultiplier: clamp(
+          Number(rawEnlightenment.techniqueMultiplier) || 1,
+          1,
+          20
+        ),
+        breakthroughBonus: clamp(Number(rawEnlightenment.breakthroughBonus) || 0, 0, 1),
+        attackMultiplier: clamp(Number(rawEnlightenment.attackMultiplier) || 1, 1, 20),
+        defenseMultiplier: clamp(Number(rawEnlightenment.defenseMultiplier) || 1, 1, 20),
+        expireInsightGain: integer(rawEnlightenment.expireInsightGain, 1, 0, 100),
       },
       biguUntil: Math.max(0, Number(raw.biguUntil) || 0),
       spiritualPower:
@@ -1435,6 +1720,9 @@
         level: integer(rawSoul.level, 0, 0, MAX_LEVEL),
         count: integer(rawSoul.count, 0, 0, 1e9),
         root: Object.prototype.hasOwnProperty.call(ROOTS, rawSoul.root) ? rawSoul.root : "",
+        rootGrade: Object.prototype.hasOwnProperty.call(ROOTS, rawSoul.root)
+          ? rootGradeById(rawSoul.rootGrade, rawSoul.root).id
+          : "",
         attributeBonus: integer(rawSoul.attributeBonus, 0, 0, 999),
       },
       techniqueScrolls,
@@ -1543,10 +1831,13 @@
     const region = regionById(cultivation && cultivation.regionId) || ORANGE_REGIONS[0];
     const formation = formationById(cultivation && cultivation.formationId);
     const techniqueBonus = techniqueBonuses(cultivation);
+    const enlightenment = activeEnlightenmentBonus(cultivation);
     const caveBonus = caveBonuses(cultivation);
     const levelValue = integer(level, 1, 1, MAX_LEVEL);
     const base = 3 + levelValue * (1.8 + levelValue / 100) + attrs.insight * 0.8;
-    const rootFactor = 0.6 + Math.min(10, Math.max(0.1, Number(root.gain) || 0.1)) * 0.08;
+    const rootFactor =
+      (0.6 + Math.min(10, Math.max(0.1, Number(root.gain) || 0.1)) * 0.08) *
+      attrs.rootGradeMultiplier;
     const regionFactor = Math.sqrt(region.qi);
     const demonFactor = cultivation && cultivation.demonized ? 1.12 : 1;
     const perSecond =
@@ -1555,6 +1846,7 @@
       regionFactor *
       formation.multiplier *
       techniqueBonus.cultivationMultiplier *
+      enlightenment.cultivationMultiplier *
       caveBonus.expMultiplier *
       demonFactor;
     return {
@@ -1596,6 +1888,7 @@
     const formation = formationById(cultivation && cultivation.formationId);
     const technique = activeTechnique(cultivation);
     const techniqueBonus = techniqueBonuses(cultivation);
+    const enlightenment = activeEnlightenmentBonus(cultivation);
     const caveBonus = caveBonuses(cultivation);
     const insightFactor = 0.65 + attrs.insight * 0.0085;
     const lineageFactor = 1 + attrs.rootLineage * 0.15;
@@ -1605,11 +1898,13 @@
       required *
       MEDITATION_HOURLY_RATE *
       root.gain *
+      attrs.rootGradeMultiplier *
       insightFactor *
       lineageFactor *
       region.qi *
       formation.multiplier *
       techniqueBonus.cultivationMultiplier *
+      enlightenment.cultivationMultiplier *
       caveBonus.expMultiplier *
       demonFactor;
     return {
@@ -1683,6 +1978,7 @@
     const region = regionById(cultivation.regionId) || ORANGE_REGIONS[0];
     const technique = activeTechnique(cultivation);
     const techniqueBonus = techniqueBonuses(cultivation);
+    const enlightenment = activeEnlightenmentBonus(cultivation);
     const caveBonus = caveBonuses(cultivation);
     const noProgressChance = clamp(root.noProgress - attrs.insight * 0.0007, 0.01, 0.35);
     if (random() < noProgressChance) {
@@ -1705,12 +2001,14 @@
       : clamp(
           qualityFactor *
             root.gain *
+            attrs.rootGradeMultiplier *
             insightFactor *
             demonFactor *
             randomFactor *
             lineageFactor *
             region.qi *
             techniqueBonus.cultivationMultiplier *
+            enlightenment.cultivationMultiplier *
             caveBonus.expMultiplier,
           0,
           1
@@ -1832,6 +2130,7 @@
     const target = realmStatus(targetLevel).major;
     const attrs = talentSummary(cultivation.attributes);
     const root = ROOTS[attrs.root] || ROOTS.mixed;
+    const grade = rootGradeById(attrs.rootGrade, root.id);
     const technique = activeTechnique(cultivation);
     const techniqueBonus = techniqueBonuses(cultivation);
     const caveBonus = caveBonuses(cultivation);
@@ -1856,7 +2155,9 @@
       attrs.fortune * 0.0008 +
       attrs.daoHeart * 0.0007 +
       root.breakthrough +
+      grade.breakthroughBonus +
       techniqueBonus.breakthroughBonus +
+      techniqueBonus.enlightenment.breakthroughBonus +
       caveBonus.breakthroughBonus +
       attrs.rootLineage * 0.015 -
       (Number(cultivation.karma) || 0) * 0.002 -
@@ -1895,6 +2196,7 @@
         daoHeart: neededDaoHeart,
       },
       attributes: attrs,
+      rootGrade: grade,
       technique,
       techniques: techniqueBonus.techniques,
       caveBonus,
@@ -1968,6 +2270,8 @@
     FORMATIONS,
     TECHNIQUE_TIERS,
     TECHNIQUE_GRADES,
+    ROOT_GRADES,
+    ROOT_GRADE_ORDER,
     TECHNIQUE_CATEGORIES,
     TECHNIQUES,
     MEDITATION_HOURLY_RATE,
@@ -1991,6 +2295,12 @@
     createCultivation,
     normalizeCultivation,
     rollRoot,
+    rollRootGrade,
+    defaultRootGrade,
+    rootGradeById,
+    rootTechniquePower,
+    mergeRootGrade,
+    combineRootGrades,
     rootsAreSymbiotic,
     rollTalents,
     talentSummary,
@@ -2010,6 +2320,9 @@
     activeTechniques,
     techniqueProgress,
     techniqueBonuses,
+    activeEnlightenmentBonus,
+    activateEnlightenment,
+    settleEnlightenment,
     caveBonuses,
     addTechniqueProgress,
     advanceEquippedTechniques,
